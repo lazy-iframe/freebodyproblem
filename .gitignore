@@ -1,0 +1,6 @@
+build
+.vscode
+.claude
+
+# imgui artifacts
+imgui.ini
