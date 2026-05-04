@@ -10,6 +10,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 > Only tested with Ardupilot for now. PX4 support pending.
 
+![screen capture of the application](screens/cap0.png)
+
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types

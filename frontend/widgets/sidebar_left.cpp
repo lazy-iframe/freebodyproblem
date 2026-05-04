@@ -68,12 +68,11 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     // ── Tab grid (2-column) ───────────────────────────────────────────────────
     {
         static const char* const tabs[] = {
-            "CONNECTION", "SENSORS",
+            "CONNECTION", "CONSOLE",
             "FLIGHT",     "MAVLINK",
             "PARAMS",     "RADIO",
             "MISSION",    "ESC",
-            "CONSOLE",    "PAYLOAD",
-            "SETTINGS",   "GIMBAL",
+            "SETTINGS",   "SENSORS",
         };
         constexpr int TAB_COUNT = (int)(sizeof(tabs) / sizeof(tabs[0]));
 
@@ -103,12 +102,12 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     }
 
     // ── Dispatch to per-tab panels ────────────────────────────────────────────
-    if (selected == 0)  draw_tab_connection(vs, conn_out, link_status, settings);
-    if (selected == 2)  draw_tab_flight(sender, vs);
-    if (selected == 3)  draw_tab_mavlink(sender, vs, msg_stats, total_messages, total_bytes, parse_errors);
-    if (selected == 4)  draw_tab_params(sender, vs, params);
-    if (selected == 6)  draw_tab_mission(sender, vs, pick);
-    if (selected == 10) draw_tab_themes(settings);
+    if (selected == 0) draw_tab_connection(vs, conn_out, link_status, settings);
+    if (selected == 2) draw_tab_flight(sender, vs);
+    if (selected == 3) draw_tab_mavlink(sender, vs, msg_stats, total_messages, total_bytes, parse_errors);
+    if (selected == 4) draw_tab_params(sender, vs, params);
+    if (selected == 6) draw_tab_mission(sender, vs, pick);
+    if (selected == 8) draw_tab_themes(settings);
 
     ImGui::End();
     ImGui::PopStyleVar(4);

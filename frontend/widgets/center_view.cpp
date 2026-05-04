@@ -112,10 +112,6 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
             ImGuiWindowFlags_NoScrollWithMouse)) {
 
-        // Title — vertically centred
-        ImGui::SetCursorPosY((HEADER_H - ImGui::GetTextLineHeight()) * 0.5f);
-        ImGui::TextColored(accent_col(), "VIDEO PLAYER");
-
         // Mode buttons — right-aligned
         const char*  btn_labels[] = { "VIDEO ONLY", "MAP ONLY", "MAP + VIDEO" };
         const CenterMode btn_modes[] = {
