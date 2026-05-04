@@ -10,7 +10,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 > Only tested with Ardupilot for now. PX4 support pending.
 
-![screen capture of the application](screens/cap0.png)
+![screen capture of splash screen](screens/cap2.png)
 
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
@@ -48,6 +48,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Theme support**: includes Dracula theme and customizable color schemes
 - **Application log**: bottom-bar console with MAVLink events and system messages
 - **Splash screen**: dismissible startup overlay
+
+![screenshot with video player in view](screens/cap1.png)
 
 
 ## Building
@@ -142,6 +144,8 @@ cmake -B build -DMAVLINK_DIALECT=common -DMAVLINK_VERSION=2.0
 2. Select **Dracula** or **Retro Amber** (default)
 3. Create custom themes by editing color values
 4. Themes persist across sessions via `settings.json`
+
+![Dracula theme](screens/cap3.png)
 
 ## Architecture
 
