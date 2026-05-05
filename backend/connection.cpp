@@ -1,5 +1,6 @@
 // Free Body Problem: A modern, simple and minimalist Ground Control Station
 // Copyright (C) 2026  Azhar Tanweer
+// Contact: azhar.tanweer404@gmail.com
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
