@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+################################################################################
+# Copyright (C) 2026  Azhar Tanweer
+# Contact: azhar.tanweer404@gmail.com
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
 """
 Generate mavlink_display_generated.cpp and .hpp from MAVLink XML definitions.
 Parses ardupilotmega.xml transitively (which pulls in common.xml, minimal.xml, etc.)
@@ -8,6 +24,24 @@ Usage: gen_mavlink_display.py <xml_dir> <out_cpp> <out_hpp>
 
 import xml.etree.ElementTree as ET
 import sys
+
+_LICENSE_HEADER = """/**************************************************************************
+ * Copyright (C) 2026  Azhar Tanweer
+ * Contact: azhar.tanweer404@gmail.com
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ **************************************************************************/
+"""
 import os
 
 XML_DIR = ''
@@ -255,6 +289,7 @@ def generate_catalog(out_cpp, out_hpp):
 
     # ── Header ────────────────────────────────────────────────────────────────
     with open(out_hpp, 'w') as f:
+        f.write(_LICENSE_HEADER)
         f.write('// AUTO-GENERATED — do not edit manually.\n')
         f.write('// Regenerate: re-run CMake or call gen_mavlink_display.py directly.\n')
         f.write('#pragma once\n')
@@ -279,6 +314,7 @@ def generate_catalog(out_cpp, out_hpp):
 
     # ── Source ────────────────────────────────────────────────────────────────
     with open(out_cpp, 'w') as f:
+        f.write(_LICENSE_HEADER)
         f.write('// AUTO-GENERATED — do not edit manually.\n')
         f.write('// Regenerate: re-run CMake or call gen_mavlink_display.py directly.\n')
         f.write('#include "mavlink_field_catalog_generated.hpp"\n')
@@ -367,6 +403,7 @@ def generate(xml_dir, out_cpp, out_hpp):
 
     # ── Header ────────────────────────────────────────────────────────────────
     with open(out_hpp, 'w') as f:
+        f.write(_LICENSE_HEADER)
         f.write('// AUTO-GENERATED — do not edit manually.\n')
         f.write('// Regenerate: re-run CMake or call gen_mavlink_display.py directly.\n')
         f.write('#pragma once\n')
@@ -382,6 +419,7 @@ def generate(xml_dir, out_cpp, out_hpp):
 
     # ── Source ────────────────────────────────────────────────────────────────
     with open(out_cpp, 'w') as f:
+        f.write(_LICENSE_HEADER)
         f.write('// AUTO-GENERATED — do not edit manually.\n')
         f.write('// Regenerate: re-run CMake or call gen_mavlink_display.py directly.\n')
         f.write('#include "mavlink_display_generated.hpp"\n')

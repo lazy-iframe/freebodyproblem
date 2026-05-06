@@ -1,0 +1,52 @@
+Free Body Problem
+Copyright (C) 2026  Azhar Tanweer
+Contact: azhar.tanweer404@gmail.com
+
+This product is licensed under the Apache License, Version 2.0.
+A copy of the license is included in the LICENSE file.
+
+-------------------------------------------------------------------------------
+This product includes third-party software with the following notices:
+-------------------------------------------------------------------------------
+
+Dear ImGui
+Copyright (c) 2014-2026 Omar Cornut
+Licensed under the MIT License.
+
+MAVLink (generated headers)
+Copyright (c) 2010-present ArduPilot/MAVLink project contributors
+The MAVLink generator is (L)GPL v3; generated headers are licensed under the
+MIT License per the exception clause in third_party/mavlink/COPYING.
+
+cpp-httplib
+Copyright (c) 2017 yhirose
+Licensed under the MIT License.
+
+nlohmann/json
+Copyright (c) 2013-2022 Niels Lohmann
+Licensed under the MIT License.
+
+stb (stb_image, stb_image_write)
+Copyright (c) 2017 Sean Barrett
+Licensed under the MIT License or Public Domain (your choice).
+
+GLFW
+Copyright (c) 2006-2019 Camilla Löwy
+Licensed under the zlib License.
+
+GStreamer
+Copyright (c) GStreamer project contributors
+Licensed under the GNU Lesser General Public License v2.0 or later (LGPL-2.0+).
+Source available at https://gstreamer.freedesktop.org
+
+OpenSSL
+Copyright (c) 1998-2024 The OpenSSL Project Authors
+Licensed under the Apache License, Version 2.0.
+
+Roboto-Medium font
+Copyright (c) 2011 Google Inc.
+Licensed under the Apache License, Version 2.0.
+
+Geist / GeistMono fonts
+Copyright (c) 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+Licensed under the SIL Open Font License, Version 1.1.

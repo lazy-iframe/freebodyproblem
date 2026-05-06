@@ -4,3 +4,9 @@ build
 
 # imgui artifacts
 imgui.ini
+
+# generated MAVLink display/catalog sources (produced by gen_mavlink_display.py at build time)
+frontend/widgets/sidebar_left/mavlink_display_generated.cpp
+frontend/widgets/sidebar_left/mavlink_display_generated.hpp
+frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp
+frontend/widgets/sidebar_left/mavlink_field_catalog_generated.hpp
