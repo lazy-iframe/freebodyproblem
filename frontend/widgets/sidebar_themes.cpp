@@ -38,6 +38,7 @@ void draw_themes_panel(AppSettings& settings)
     static const BuiltIn k_builtins[] = {
         { THEME_BUILTIN_NAME, []() -> ThemeVars { return ThemeVars{}; } },
         { THEME_DRACULA_NAME, dracula_theme_vars },
+        { THEME_MATRIX_NAME,  matrix_theme_vars  },
     };
 
     ImGui::Spacing();

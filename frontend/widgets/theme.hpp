@@ -377,6 +377,108 @@ inline ThemeVars dracula_theme_vars()
     return t;
 }
 
+// Matrix — phosphor green on near-black; classic falling-code aesthetic with
+// old-Mac-terminal warmth.  Primary: #00FF41.  Background: deep green-black.
+inline ThemeVars matrix_theme_vars()
+{
+    ThemeVars t;
+
+    // ── Palette ───────────────────────────────────────────────────────────────
+    t.accent            = { 0.000f, 1.000f, 0.255f, 1.0f }; // phosphor green #00FF41
+    t.col_data          = { 0.000f, 0.800f, 0.200f, 1.0f }; // mid green      #00CC33
+    t.col_ok            = { 0.000f, 1.000f, 0.000f, 1.0f }; // pure green     #00FF00
+    t.col_warning       = { 0.667f, 1.000f, 0.000f, 1.0f }; // yellow-green   #AAFF00
+    t.col_error         = { 1.000f, 0.133f, 0.200f, 1.0f }; // hot red        #FF2233
+    t.col_error_alt     = { 1.000f, 0.267f, 0.400f, 1.0f };
+    t.col_log           = { 0.000f, 0.400f, 0.067f, 1.0f }; // dim green      #006611
+    t.col_armed         = { 1.000f, 0.133f, 0.200f, 1.0f }; // hot red
+    t.col_disarmed      = { 0.000f, 1.000f, 0.255f, 1.0f }; // phosphor green
+    t.col_no_link       = { 0.000f, 0.533f, 0.133f, 1.0f }; // dim green      #008822
+    t.col_no_link_muted = { 0.000f, 0.267f, 0.067f, 1.0f }; // very dim green
+    t.col_reboot        = { 0.667f, 1.000f, 0.000f, 1.0f }; // yellow-green
+    t.col_active_text   = { 0.008f, 0.039f, 0.008f, 1.0f }; // near-black (text on bright bg)
+
+    // ── Backgrounds ───────────────────────────────────────────────────────────
+    t.bg_panel          = { 0.012f, 0.047f, 0.012f, 1.0f }; // ~#030C03
+    t.bg_topbar         = { 0.008f, 0.031f, 0.008f, 1.0f }; // ~#020803
+    t.bg_bottombar      = { 0.008f, 0.031f, 0.008f, 1.0f };
+    t.bg_sidebar_left   = { 0.016f, 0.055f, 0.016f, 1.0f }; // ~#040E04
+    t.bg_video          = { 0.004f, 0.020f, 0.004f, 1.0f };
+    t.bg_map            = { 0.008f, 0.031f, 0.008f, 1.0f };
+    t.bg_child_dark     = { 0.020f, 0.071f, 0.020f, 1.0f };
+    t.bg_child_darker   = { 0.016f, 0.055f, 0.016f, 1.0f };
+    t.bg_param_list     = { 0.012f, 0.047f, 0.012f, 1.0f };
+
+    // ── Borders ───────────────────────────────────────────────────────────────
+    t.separator         = { 0.000f, 0.600f, 0.150f, 0.70f };
+    t.border_tab        = { 0.000f, 0.600f, 0.150f, 0.60f };
+    t.border_form       = { 0.000f, 0.600f, 0.150f, 0.45f };
+    t.panel_border      = { 0.000f, 0.600f, 0.150f, 0.55f };
+
+    // ── Named buttons ─────────────────────────────────────────────────────────
+    t.btn_arm_base         = { 0.55f,  0.04f,  0.10f,  1.0f }; // dark red
+    t.btn_arm_hov          = { 0.78f,  0.08f,  0.16f,  1.0f };
+    t.btn_disarm_base      = { 0.000f, 0.250f, 0.060f, 1.0f }; // dark green
+    t.btn_disarm_hov       = { 0.000f, 0.370f, 0.090f, 1.0f };
+    t.btn_disconnect_base  = { 0.38f,  0.04f,  0.08f,  1.0f };
+    t.btn_disconnect_hov   = { 0.55f,  0.08f,  0.14f,  1.0f };
+    t.btn_stop_base        = { 0.50f,  0.04f,  0.08f,  0.85f };
+    t.btn_stop_hov         = { 0.72f,  0.08f,  0.14f,  1.00f };
+    t.btn_stop_act         = { 0.38f,  0.03f,  0.06f,  1.00f };
+    t.btn_intlk_on_base    = { 0.000f, 0.300f, 0.070f, 1.0f }; // dark green
+    t.btn_intlk_on_hov     = { 0.000f, 0.450f, 0.110f, 1.0f };
+    t.btn_intlk_off_base   = { 0.016f, 0.055f, 0.016f, 1.0f };
+    t.btn_intlk_off_hov    = { 0.024f, 0.078f, 0.024f, 1.0f };
+    t.btn_mode_active_base = { 0.000f, 0.250f, 0.060f, 1.0f };
+    t.btn_mode_active_hov  = { 0.000f, 0.370f, 0.090f, 1.0f };
+    t.btn_write_base       = { 0.000f, 0.250f, 0.060f, 1.0f };
+    t.btn_write_hov        = { 0.000f, 0.370f, 0.090f, 1.0f };
+    t.btn_tab_active_base  = { 0.000f, 1.000f, 0.255f, 0.65f }; // phosphor semi
+    t.btn_tab_active_hov   = { 0.000f, 1.000f, 0.255f, 0.80f };
+
+    // ── Command flash ─────────────────────────────────────────────────────────
+    t.flash_accepted_base  = { 0.000f, 0.420f, 0.100f, 0.72f }; // green semi
+    t.flash_accepted_hov   = { 0.000f, 0.560f, 0.140f, 0.80f };
+    t.flash_rejected_base  = { 0.65f,  0.06f,  0.12f,  1.0f  }; // red
+    t.flash_rejected_hov   = { 0.82f,  0.10f,  0.18f,  1.0f  };
+    t.flash_pending_base   = { 0.300f, 0.450f, 0.000f, 1.0f  }; // yellow-green
+    t.flash_pending_hov    = { 0.450f, 0.650f, 0.000f, 1.0f  };
+    t.flash_normal_hov     = { 0.000f, 1.000f, 0.255f, 0.14f }; // phosphor glow
+    t.flash_normal_press   = { 0.000f, 1.000f, 0.255f, 0.24f };
+
+    // ── Artificial horizon ────────────────────────────────────────────────────
+    t.ah_sky            = { 0.000f, 0.000f, 0.000f, 0.000f };    // transparent
+    t.ah_ground         = { 0.000f, 0.157f, 0.039f, 0.784f };    // dark green tint
+    t.ah_horizon_line   = { 0.000f, 1.000f, 0.255f, 0.902f };    // phosphor green
+    t.ah_pitch_ladder   = { 0.000f, 0.667f, 0.157f, 0.627f };    // dim green
+    t.ah_pitch_label_bg = { 0.008f, 0.047f, 0.012f, 0.431f };
+    t.ah_pitch_label    = { 0.000f, 0.800f, 0.200f, 0.784f };
+    t.ah_crosshair      = { 0.000f, 1.000f, 0.255f, 1.000f };    // phosphor green
+    t.ah_overlay_bg     = { 0.008f, 0.039f, 0.012f, 0.725f };
+    t.ah_airspeed_text  = { 0.000f, 1.000f, 0.255f, 1.000f };
+    t.ah_throttle_text  = { 0.000f, 0.800f, 0.200f, 1.000f };
+    t.ah_heading_text   = { 0.667f, 1.000f, 0.000f, 0.902f };    // yellow-green
+    t.ah_roll_arc       = { 0.000f, 0.467f, 0.118f, 0.431f };
+    t.ah_roll_tick      = { 0.000f, 0.533f, 0.133f, 0.608f };
+    t.ah_roll_label     = { 0.000f, 0.467f, 0.118f, 0.608f };
+    t.ah_roll_pointer   = { 0.667f, 1.000f, 0.000f, 0.902f };    // yellow-green
+    t.ah_border         = { 0.000f, 0.467f, 0.118f, 0.608f };
+
+    // ── Map ───────────────────────────────────────────────────────────────────
+    t.map_tile_placeholder = { 0.008f, 0.039f, 0.012f, 1.000f };
+    t.map_vehicle_fill     = { 0.000f, 1.000f, 0.255f, 1.000f }; // phosphor green
+    t.map_vehicle_ring     = { 0.667f, 1.000f, 0.000f, 0.824f }; // yellow-green ring
+    t.map_attr_bg          = { 0.008f, 0.039f, 0.012f, 0.784f };
+    t.map_attr_text        = { 0.000f, 0.533f, 0.133f, 0.784f };
+
+    // ── EKF ───────────────────────────────────────────────────────────────────
+    t.ekf_bg      = { 0.008f, 0.039f, 0.012f, 1.000f };
+    t.ekf_outline = { 0.000f, 0.467f, 0.118f, 0.706f };
+    t.ekf_label   = { 0.000f, 0.800f, 0.200f, 0.784f };
+
+    return t;
+}
+
 // ── Section 6: Global ImGui style application ────────────────────────────────
 // Call once at startup and whenever g_theme changes.
 

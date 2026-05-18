@@ -629,6 +629,8 @@ int main()
     {
         if (g_settings.active_theme == THEME_DRACULA_NAME) {
             g_theme = dracula_theme_vars();
+        } else if (g_settings.active_theme == THEME_MATRIX_NAME) {
+            g_theme = matrix_theme_vars();
         } else {
             auto it = g_settings.themes.find(g_settings.active_theme);
             if (it != g_settings.themes.end())
