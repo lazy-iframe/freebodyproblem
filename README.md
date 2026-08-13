@@ -10,7 +10,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 > Only tested with Ardupilot for now. PX4 support pending.
 
-![screen capture of splash screen](screens/cap2.png)
+![screen capture](screens/cap0.png)
 
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
@@ -48,8 +48,6 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Theme support**: Tactical (default), Retro Amber and Matrix built-ins, plus customizable color schemes
 - **Application log**: bottom-bar console with MAVLink events and system messages
 - **Splash screen**: dismissible startup overlay
-
-![screenshot with video player in view](screens/cap1.png)
 
 
 ## Building
