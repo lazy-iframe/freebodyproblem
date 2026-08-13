@@ -41,8 +41,11 @@ void map_view_shutdown();
 //   mission   – fetched mission waypoint list; nullptr = no overlay
 //   pick      – optional shared pick state; when active_index >= 0 the map
 //               captures the next left-click as a lat/lon for that waypoint
+//   alt_rel   – altitude above home in metres, shown in the A/C overlay
+//   gs        – ground speed in m/s, shown in the A/C overlay
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
                    const std::vector<MissionItem>* mission = nullptr,
-                   MissionPickState* pick = nullptr);
+                   MissionPickState* pick = nullptr,
+                   float alt_rel = 0.0f, float gs = 0.0f);

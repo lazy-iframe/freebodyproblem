@@ -18,6 +18,7 @@
 
 #include "sidebar_themes.hpp"
 #include "theme.hpp"
+#include "ui_kit.hpp"
 #include "../settings.hpp"
 #include "map_view.hpp"
 #include "imgui.h"
@@ -37,7 +38,7 @@ void draw_themes_panel(AppSettings& settings)
     struct BuiltIn { const char* name; ThemeVars (*factory)(); };
     static const BuiltIn k_builtins[] = {
         { THEME_BUILTIN_NAME, []() -> ThemeVars { return ThemeVars{}; } },
-        { THEME_DRACULA_NAME, dracula_theme_vars },
+        { THEME_AMBER_NAME,   retro_amber_theme_vars },
         { THEME_MATRIX_NAME,  matrix_theme_vars  },
     };
 
@@ -100,8 +101,10 @@ void draw_themes_panel(AppSettings& settings)
     // RESET + SAVE AS row
     push_flash_colors(CmdFlashState::Normal);
     if (ImGui::Button("RESET##theme", { (avail_w - 4.0f) * 0.5f, 0.0f })) {
-        if (settings.active_theme == THEME_DRACULA_NAME) {
-            g_theme = dracula_theme_vars();
+        if (settings.active_theme == THEME_MATRIX_NAME) {
+            g_theme = matrix_theme_vars();
+        } else if (settings.active_theme == THEME_AMBER_NAME) {
+            g_theme = retro_amber_theme_vars();
         } else if (settings.active_theme == THEME_BUILTIN_NAME) {
             g_theme = ThemeVars{};
         } else {
@@ -120,22 +123,31 @@ void draw_themes_panel(AppSettings& settings)
     ImGui::PopStyleColor(3);
 
     // Save-As popup
+    ui_push_dialog_style();
     if (ImGui::BeginPopup("##saveas_popup")) {
-        ImGui::TextColored(accent_col(), "Save theme as:");
-        ImGui::Spacing();
-        static char save_name[64] = {};
-        if (ImGui::IsWindowAppearing())
-            std::strncpy(save_name, settings.active_theme.c_str(), sizeof(save_name) - 1);
+        constexpr float BODY_W = 280.0f;
+        ui_dialog_title("SAVE THEME AS", BODY_W);
 
-        ImGui::SetNextItemWidth(200.0f);
+        static char save_name[64] = {};
+        if (ImGui::IsWindowAppearing()) {
+            std::strncpy(save_name, settings.active_theme.c_str(), sizeof(save_name) - 1);
+            ImGui::SetKeyboardFocusHere();
+        }
+
+        ImGui::SetNextItemWidth(BODY_W);
         const bool enter = ImGui::InputText("##save_name", save_name, sizeof(save_name),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Spacing();
 
+        constexpr float BW = 130.0f, BGAP = 8.0f;
+        ui_dialog_row(BW * 2.0f + BGAP);
+
         const bool name_ok = save_name[0] != '\0';
         ImGui::BeginDisabled(!name_ok);
-        push_flash_colors(CmdFlashState::Normal);
-        if ((ImGui::Button("SAVE", { 94.0f, 0.0f }) || enter) && name_ok) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        btn_write_base());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_write_hov());
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_write_base());
+        if ((ImGui::Button("SAVE", { BW, UI_DIALOG_BH }) || enter) && name_ok) {
             settings.active_theme        = save_name;
             settings.themes[save_name]   = g_theme;
             settings_save(settings);
@@ -144,15 +156,16 @@ void draw_themes_panel(AppSettings& settings)
         ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
 
-        ImGui::SameLine(0, 4);
+        ImGui::SameLine(0, BGAP);
         push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("CANCEL", { -1.0f, 0.0f }) ||
+        if (ImGui::Button("CANCEL", { BW, UI_DIALOG_BH }) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::PopStyleColor(3);
 
         ImGui::EndPopup();
     }
+    ui_pop_dialog_style();
 
     themed_sep();
     ImGui::Spacing();

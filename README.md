@@ -45,7 +45,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ### UI/UX
 - **Dear ImGui interface**: immediate-mode GUI with low latency
-- **Theme support**: includes Dracula theme and customizable color schemes
+- **Theme support**: Tactical (default), Retro Amber and Matrix built-ins, plus customizable color schemes
 - **Application log**: bottom-bar console with MAVLink events and system messages
 - **Splash screen**: dismissible startup overlay
 
@@ -141,11 +141,9 @@ cmake -B build -DMAVLINK_DIALECT=common -DMAVLINK_VERSION=2.0
 
 ### Themes
 1. Navigate to **SETTINGS** tab
-2. Select **Dracula** or **Retro Amber** (default)
+2. Select **Tactical** (default), **Retro Amber** or **Matrix**
 3. Create custom themes by editing color values
 4. Themes persist across sessions via `settings.json`
-
-![Dracula theme](screens/cap3.png)
 
 ## Architecture
 
@@ -196,7 +194,7 @@ Settings are auto-saved to `settings.json` in the working directory:
 Example `settings.json`:
 ```json
 {
-  "active_theme": "Dracula",
+  "active_theme": "Tactical",
   "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   "tile_attribution": "© OpenStreetMap contributors",
   "video_url": "udp://0.0.0.0:5600",

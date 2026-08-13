@@ -19,6 +19,7 @@
 #include "sidebar_right.hpp"
 #include "layout.hpp"
 #include "theme.hpp"
+#include "ui_kit.hpp"
 #include "imgui.h"
 #include "sidebar_left/mavlink_field_catalog_generated.hpp"
 #include "../settings.hpp"
@@ -30,6 +31,12 @@
 #include <algorithm>
 #include <unordered_set>
 #include <chrono>
+#include <cctype>
+#include <ctime>
+#include <string>
+
+// Height of one telemetry tile in the 3×3 grid.
+static constexpr float GRID_CELL_H = 66.0f;
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -353,29 +360,32 @@ static std::vector<const MavlinkFieldDesc*> picker_fields_for_msg(uint32_t msg_i
 static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
                                AppSettings* settings)
 {
+    ui_push_dialog_style();
     if (!ImGui::BeginPopupModal("##field_picker", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize |
-                                ImGuiWindowFlags_NoTitleBar))
+                                ImGuiWindowFlags_NoTitleBar)) {
+        ui_pop_dialog_style();
         return;
+    }
+
+    const float panel_h = 300.0f;
+    const float left_w  = 190.0f;
+    const float right_w = 230.0f;
+    const float body_w  = left_w + right_w + 6.0f;
 
     char title_buf[48];
-    snprintf(title_buf, sizeof(title_buf), "SELECT FIELD  —  CELL %d",
+    snprintf(title_buf, sizeof(title_buf), "ASSIGN TELEMETRY \xe2\x80\x94 TILE %d",
              s_picker_cell + 1);
-    ImGui::TextColored(accent_col(), "%s", title_buf);
-    ImGui::PushStyleColor(ImGuiCol_Separator, col_separator());
-    ImGui::Separator();
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
+    ui_dialog_title(title_buf, body_w);
 
     // Filter — searches field names / labels.
     // Auto-focus on the first frame the popup appears so typing works immediately.
     if (ImGui::IsWindowAppearing())
         ImGui::SetKeyboardFocusHere();
-    ImGui::SetNextItemWidth(380.0f);
-    bool filter_changed = ImGui::InputText("##filter", s_picker_filter,
-                                           sizeof(s_picker_filter));
-    ImGui::SameLine(0, 4);
-    ImGui::TextDisabled("Search fields");
+    ImGui::SetNextItemWidth(body_w);
+    bool filter_changed = ImGui::InputTextWithHint("##filter", "SEARCH FIELDS\xe2\x80\xa6",
+                                                   s_picker_filter,
+                                                   sizeof(s_picker_filter));
     ImGui::Spacing();
 
     // If the filter changed and the currently selected message no longer has
@@ -388,10 +398,6 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
             s_picker_sel_label[0] = '\0';
         }
     }
-
-    const float panel_h = 300.0f;
-    const float left_w  = 170.0f;
-    const float right_w = 210.0f;
 
     // ── Left: message list ────────────────────────────────────────────────────
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
@@ -489,10 +495,20 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
     const bool can_ok = (s_picker_sel_msg != UINT32_MAX &&
                          s_picker_sel_field[0] != '\0');
 
+    // Centred [ASSIGN][CLEAR][CANCEL] row
+    constexpr float BW = 110.0f, BGAP = 8.0f;
+    ui_dialog_row(BW * 3.0f + BGAP * 2.0f);
+
     if (!can_ok) ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                                       ImGui::GetStyle().Alpha * 0.4f);
 
-    if (ImGui::Button("OK", { 80.0f, 0.0f }) && can_ok) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        btn_write_base());
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_write_hov());
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_write_base());
+    const bool hit_assign = ImGui::Button("ASSIGN", { BW, UI_DIALOG_BH });
+    ImGui::PopStyleColor(3);
+
+    if (hit_assign && can_ok) {
         GridCellConfig& cell = s_cells[s_picker_cell];
         cell.msg_id = s_picker_sel_msg;
         strncpy(cell.field_name, s_picker_sel_field, sizeof(cell.field_name) - 1);
@@ -517,8 +533,11 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
 
     if (!can_ok) ImGui::PopStyleVar();
 
-    ImGui::SameLine(0, 8);
-    if (ImGui::Button("Clear", { 80.0f, 0.0f })) {
+    ImGui::SameLine(0, BGAP);
+    push_flash_colors(CmdFlashState::Normal);
+    const bool hit_clear = ImGui::Button("CLEAR", { BW, UI_DIALOG_BH });
+    ImGui::PopStyleColor(3);
+    if (hit_clear) {
         s_cells[s_picker_cell].msg_id         = UINT32_MAX;
         s_cells[s_picker_cell].field_name[0]  = '\0';
         s_cells[s_picker_cell].title[0]       = '\0';
@@ -526,13 +545,15 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
         ImGui::CloseCurrentPopup();
     }
 
-    ImGui::SameLine(0, 8);
-    if (ImGui::Button("Cancel", { 80.0f, 0.0f }) ||
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    ImGui::SameLine(0, BGAP);
+    push_flash_colors(CmdFlashState::Normal);
+    const bool hit_cancel = ImGui::Button("CANCEL", { BW, UI_DIALOG_BH });
+    ImGui::PopStyleColor(3);
+    if (hit_cancel || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
         ImGui::CloseCurrentPopup();
-    }
 
     ImGui::EndPopup();
+    ui_pop_dialog_style();
 }
 
 // ── Draw 9-cell data grid ─────────────────────────────────────────────────────
@@ -542,38 +563,16 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
 {
     const float avail_w  = ImGui::GetContentRegionAvail().x;
     const float cell_w   = avail_w / 3.0f;
-    const float cell_h   = 70.0f;   // taller cells
-    const float pad      = 3.0f;
-    const float radius   = 4.0f;
+    const float cell_h   = GRID_CELL_H;
+    const float pad      = 1.0f;
 
     ImDrawList*  dl     = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    ImFont*      font   = ImGui::GetFont();
-    const float  fh     = ImGui::GetTextLineHeight();
-    const float  big_sz = fh * 1.75f;   // enlarged value font
 
-    // All cell colours derived from the current theme so they respond to theme changes.
-    auto with_alpha = [](ImVec4 c, float a) -> ImU32 {
-        c.w = a; return ImGui::ColorConvertFloat4ToU32(c);
-    };
-    auto scale_rgb = [](ImVec4 c, float s) -> ImVec4 {
-        c.x *= s; c.y *= s; c.z *= s; return c;
-    };
-
-    // Backgrounds: darker variant for normal, dark for hover
-    const ImU32 col_bg_normal  = ImGui::ColorConvertFloat4ToU32(bg_child_darker());
-    const ImU32 col_bg_hover   = ImGui::ColorConvertFloat4ToU32(bg_child_dark());
-    // Borders: separator colour, brighter on hover
-    const ImU32 col_border     = with_alpha(col_separator(), 0.55f);
-    const ImU32 col_border_hov = with_alpha(accent_col(),    0.78f);
-    // "+" hint in empty cells: very dim accent
-    const ImU32 col_hint       = with_alpha(scale_rgb(accent_col(), 0.5f), 0.70f);
     // "--" when data absent: muted link colour
-    const ImU32 col_no_data    = ImGui::ColorConvertFloat4ToU32(col_no_link_muted());
-    // Field label at cell bottom: separator tone, readable
-    const ImU32 col_lbl        = with_alpha(col_separator(), 0.78f);
+    const ImU32 col_no_data = ui_col(g_theme.col_no_link_muted);
     // Live value text: standard data colour
-    const ImU32 col_val        = ImGui::ColorConvertFloat4ToU32(col_data());
+    const ImU32 col_val     = ui_col_value();
 
     for (int idx = 0; idx < 9; ++idx) {
         const int row = idx / 3;
@@ -590,18 +589,18 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
         const bool hovered = ImGui::IsItemHovered();
         const bool clicked = ImGui::IsItemClicked();
 
-        dl->AddRectFilled(p0, p1, hovered ? col_bg_hover : col_bg_normal, radius);
-        dl->AddRect      (p0, p1, hovered ? col_border_hov : col_border,  radius, 0, 1.2f);
-
         const GridCellConfig& cell = s_cells[idx];
 
         if (cell.msg_id == UINT32_MAX) {
-            // Empty cell — centred "+" hint
-            const float tw = font->CalcTextSizeA(fh, FLT_MAX, 0.0f, "+").x;
-            dl->AddText(font, fh,
-                        { p0.x + (p1.x - p0.x - tw) * 0.5f,
-                          p0.y + (p1.y - p0.y - fh)  * 0.5f },
-                        col_hint, "+");
+            // Empty slot — well with a dim "+ ASSIGN" hint
+            dl->AddRectFilled(p0, p1, hovered ? ui_col_strip() : ui_col_well());
+            ui_frame(dl, p0, p1, hovered ? ui_col_accent() : ui_col(g_theme.separator, 0.5f));
+            const ImU32 col_hint = ui_col(g_theme.col_no_link_muted);
+            const float tw = ui_tracked_width(g_font_micro, UI_SZ_MICRO, "+ ASSIGN");
+            ui_tracked_text(dl, g_font_micro, UI_SZ_MICRO,
+                            { p0.x + (p1.x - p0.x - tw) * 0.5f,
+                              p0.y + (p1.y - p0.y - UI_SZ_MICRO) * 0.5f },
+                            hovered ? ui_col_accent() : col_hint, "+ ASSIGN");
         } else {
             // Read current value
             double  value    = std::numeric_limits<double>::quiet_NaN();
@@ -613,48 +612,23 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
                                                   it->second, &value);
             }
 
-            // ── Value (big, vertically centred above label) ───────────────
+            // ── Value + label, drawn as a tactical readout tile ───────────
             char val_buf[32];
             if (has_data && !std::isnan(value) && !std::isinf(value))
-                snprintf(val_buf, sizeof(val_buf), "%.2g", value);
+                snprintf(val_buf, sizeof(val_buf), "%.4g", value);
             else
                 snprintf(val_buf, sizeof(val_buf), "--");
 
-            const float label_area_h = fh + 5.0f;  // space reserved at bottom for label
-            const float value_area_h = (p1.y - p0.y) - label_area_h;
+            // Field labels are lowercase in the catalog — uppercase them so the
+            // tile matches the rest of the chrome.
+            char lbl_buf[32];
+            size_t li = 0;
+            for (const char* c = cell.title; *c && li < sizeof(lbl_buf) - 1; ++c)
+                lbl_buf[li++] = (char)toupper((unsigned char)*c);
+            lbl_buf[li] = '\0';
 
-            ImVec2 val_sz = font->CalcTextSizeA(big_sz, FLT_MAX, 0.0f, val_buf);
-            const float val_x = p0.x + (p1.x - p0.x - val_sz.x) * 0.5f;
-            const float val_y = p0.y + (value_area_h - big_sz) * 0.5f;
-
-            dl->AddText(font, big_sz, { val_x, val_y },
-                        has_data ? col_val : col_no_data,
-                        val_buf);
-
-            // ── Label (small, centred at bottom) ─────────────────────────
-            if (cell.title[0]) {
-                const char* lbl   = cell.title;
-                const float max_w = p1.x - p0.x - 6.0f;
-
-                // Find the longest prefix that fits
-                const char* lbl_end = lbl + strlen(lbl);
-                float lbl_w = font->CalcTextSizeA(fh, FLT_MAX, 0.0f, lbl).x;
-                if (lbl_w > max_w) {
-                    size_t lo = 0, hi = strlen(lbl);
-                    while (lo + 1 < hi) {
-                        size_t mid_i = (lo + hi) / 2;
-                        if (font->CalcTextSizeA(fh, FLT_MAX, 0.0f, lbl,
-                                                lbl + mid_i).x <= max_w - 10.0f)
-                            lo = mid_i; else hi = mid_i;
-                    }
-                    lbl_end = lbl + lo;
-                    lbl_w   = font->CalcTextSizeA(fh, FLT_MAX, 0.0f, lbl, lbl_end).x;
-                }
-
-                const float lbl_x = p0.x + (p1.x - p0.x - lbl_w) * 0.5f;
-                const float lbl_y = p1.y - fh - 3.0f;
-                dl->AddText(font, fh, { lbl_x, lbl_y }, col_lbl, lbl, lbl_end);
-            }
+            ui_readout_tile(dl, p0, p1, lbl_buf, val_buf,
+                            has_data ? col_val : col_no_data, hovered);
 
             // If this message is configured but not yet received, request it once.
             if (!has_data && sender && vs && vs->has_heartbeat &&
@@ -739,23 +713,28 @@ void draw_sidebar_right(const VehicleState& vs,
         const float avail_h = ImGui::GetContentRegionAvail().y;
         const float avail_w = ImGui::GetContentRegionAvail().x;
 
-        // HUD: capped at 38% so grid gets enough height
-        const float hud_h = std::min(avail_w + 60.0f, avail_h * 0.38f);
+        // HUD: ball + header + the readout strip beneath it
+        const float hud_h = std::min(avail_w + 46.0f, avail_h * 0.40f);
 
-        // Data grid: 3 rows × 70 px + header + spacing
-        const float grid_section_h = 3.0f * 70.0f + 32.0f;
+        // Data grid: 3 rows of tiles + header + spacing
+        const float grid_section_h = 3.0f * GRID_CELL_H + UI_HEADER_H + 14.0f;
 
-        // ── HUD ──────────────────────────────────────────────────────────
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_dark());
-        if (ImGui::BeginChild("##hud", { 0.0f, hud_h })) {
-            ImGui::TextColored(accent_col(), "HUD");
-            ImGui::PushStyleColor(ImGuiCol_Separator, col_separator());
-            ImGui::Separator();
-            ImGui::PopStyleColor();
+        // ── Attitude ─────────────────────────────────────────────────────
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, panel_bg());
+        if (ImGui::BeginChild("##hud", { 0.0f, hud_h }, false,
+                              ImGuiWindowFlags_NoScrollbar)) {
+            char hud_meta[32];
+            if (vs.has_attitude)
+                snprintf(hud_meta, sizeof(hud_meta), "R %+.0f\xc2\xb0  P %+.0f\xc2\xb0",
+                         (double)vs.roll, (double)vs.pitch);
+            else
+                snprintf(hud_meta, sizeof(hud_meta), "NO DATA");
+            ui_panel_header("ATTITUDE \xc2\xb7 ROLL / PITCH", hud_meta);
 
+            const float strip_h = 40.0f;
             if (vs.has_attitude) {
                 const ImVec2 avail = ImGui::GetContentRegionAvail();
-                const float  hs    = avail.x < avail.y - 30.0f ? avail.x : avail.y - 30.0f;
+                const float  hs    = std::min(avail.x, avail.y - strip_h);
                 if (hs > 30.0f) {
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - hs) * 0.5f);
                     draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw,
@@ -763,63 +742,107 @@ void draw_sidebar_right(const VehicleState& vs,
                                             vs.has_vfr ? (int)vs.throttle : -1,
                                             vs.has_vfr, hs);
                 }
+            } else {
+                const ImVec2 avail = ImGui::GetContentRegionAvail();
+                ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - strip_h) });
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - avail.y * 0.5f);
+                ImGui::TextDisabled("   NO ATTITUDE DATA");
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail.y * 0.5f
+                                     - ImGui::GetTextLineHeight());
             }
 
-            if (vs.has_vfr) {
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6.0f, 2.0f });
-                ImGui::TextColored(accent_col(), "GND"); ImGui::SameLine(0, 4);
-                ImGui::TextColored(col_data(), "%.1f m/s", (double)vs.groundspeed); ImGui::SameLine(0, 10);
-                ImGui::TextColored(accent_col(), "HDG"); ImGui::SameLine(0, 4);
-                ImGui::TextColored(col_data(), "%d\xc2\xb0", (int)vs.heading);      ImGui::SameLine(0, 10);
-                ImGui::TextColored(accent_col(), "CLB"); ImGui::SameLine(0, 4);
-                ImGui::TextColored(col_data(), "%+.1f m/s", (double)vs.climb);
-                ImGui::PopStyleVar();
-            } else if (!vs.has_attitude) {
-                ImGui::TextDisabled("NO HUD DATA");
+            // ── GND / HDG / CLB strip ────────────────────────────────────
+            {
+                ImDrawList*  dl = ImGui::GetWindowDrawList();
+                const ImVec2 s0 = ImGui::GetCursorScreenPos();
+                const float  w  = ImGui::GetContentRegionAvail().x;
+                const float  cw = w / 3.0f;
+
+                struct Item { const char* label; char value[16]; };
+                Item items[3] = { { "GND m/s", "--" }, { "HDG", "--" }, { "CLB m/s", "--" } };
+                if (vs.has_vfr) {
+                    snprintf(items[0].value, sizeof(items[0].value), "%.1f", (double)vs.groundspeed);
+                    snprintf(items[1].value, sizeof(items[1].value), "%03d\xc2\xb0", (int)vs.heading);
+                    snprintf(items[2].value, sizeof(items[2].value), "%+.1f", (double)vs.climb);
+                }
+
+                for (int i = 0; i < 3; ++i) {
+                    const ImVec2 p0 = { s0.x + i * cw, s0.y };
+                    const ImVec2 p1 = { p0.x + cw,     s0.y + strip_h };
+                    ui_readout(dl, p0, p1, items[i].label, items[i].value,
+                               vs.has_vfr ? ui_col_value() : ui_col(g_theme.col_no_link_muted),
+                               UI_SZ_BODY + 2.0f);
+                    if (i > 0)
+                        dl->AddLine({ p0.x, p0.y + 4.0f }, { p0.x, p1.y - 4.0f },
+                                    ui_col(g_theme.separator, 0.6f), 1.0f);
+                }
+                ImGui::Dummy({ w, strip_h });
             }
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // ── Data Grid ────────────────────────────────────────────────────
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_dark());
+        // ── Telemetry tiles ──────────────────────────────────────────────
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, panel_bg());
         if (ImGui::BeginChild("##datagrid", { 0.0f, grid_section_h },
                               false, ImGuiWindowFlags_NoScrollbar)) {
-            ImGui::TextColored(accent_col(), "DATA GRID");
-            ImGui::PushStyleColor(ImGuiCol_Separator, col_separator());
-            ImGui::Separator();
-            ImGui::PopStyleColor();
-            ImGui::Spacing();
-
+            ui_panel_header("TELEMETRY", "CLICK A TILE TO ASSIGN");
             draw_data_grid(&vs, sender, settings);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // ── System Messages ───────────────────────────────────────────────
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
+        // ── Event log ────────────────────────────────────────────────────
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, panel_bg());
         if (ImGui::BeginChild("##sysmsg", { 0.0f, 0.0f },
                               false, ImGuiWindowFlags_NoScrollbar)) {
-            ImGui::TextColored(accent_col(), "SYSTEM MESSAGES");
-            ImGui::PushStyleColor(ImGuiCol_Separator, col_separator());
-            ImGui::Separator();
-            ImGui::PopStyleColor();
+            char log_meta[24];
+            snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)status_texts.size());
+            ui_panel_header("EVENT LOG", log_meta);
 
+            // Wall-clock stamps, captured as each message arrives.
+            static std::vector<std::string> s_stamps;
+            if (status_texts.size() < s_stamps.size()) s_stamps.clear();
+            while (s_stamps.size() < status_texts.size()) {
+                const std::time_t t  = std::time(nullptr);
+                std::tm            lt{};
+#ifdef _WIN32
+                localtime_s(&lt, &t);
+#else
+                localtime_r(&t, &lt);
+#endif
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                         lt.tm_hour, lt.tm_min, lt.tm_sec);
+                s_stamps.emplace_back(buf);
+            }
+
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
             const ImVec2 inner_sz = { 0.0f, ImGui::GetContentRegionAvail().y };
             if (ImGui::BeginChild("##sysmsg_scroll", inner_sz, false,
                                   ImGuiWindowFlags_HorizontalScrollbar)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6.0f, 3.0f });
                 if (status_texts.empty()) {
-                    ImGui::TextDisabled("NO MESSAGES");
+                    ImGui::PushStyleColor(ImGuiCol_Text, col_no_link_muted());
+                    ImGui::TextUnformatted("AWAITING VEHICLE MESSAGES");
+                    ImGui::PopStyleColor();
                 } else {
-                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 4.0f, 2.0f });
-                    for (const auto& st : status_texts)
-                        ImGui::TextColored(col_status_severity(st.severity), "%s", st.text);
-                    ImGui::PopStyleVar();
+                    for (size_t i = 0; i < status_texts.size(); ++i) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, col_log());
+                        ImGui::TextUnformatted(i < s_stamps.size() ? s_stamps[i].c_str()
+                                                                   : "--:--:--");
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine(0, 8);
+                        ImGui::TextColored(col_status_severity(status_texts[i].severity),
+                                           "%s", status_texts[i].text);
+                    }
                     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
                         ImGui::SetScrollHereY(1.0f);
                 }
+                ImGui::PopStyleVar();
             }
             ImGui::EndChild();
+            ImGui::PopStyleColor();
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();

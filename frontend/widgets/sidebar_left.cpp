@@ -19,6 +19,7 @@
 #include "sidebar_left.hpp"
 #include "sidebar_themes.hpp"
 #include "layout.hpp"
+#include "ui_kit.hpp"
 #include "imgui.h"
 #include "sidebar_left/sidebar_internal.hpp"
 
@@ -64,51 +65,43 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                     col32_panel_border(), PANEL_BORDER_THICKNESS);
     }
 
-    static int selected = 0;
+    // Tab identity, so the dispatch below never drifts when the grid changes.
+    enum class Tab { Connection, Console, Flight, Mavlink, Params, Mission, Settings };
+    static Tab selected = Tab::Connection;
 
-    // ── Tab grid (2-column) ───────────────────────────────────────────────────
+    // ── Station header + tab grid (2-column) ──────────────────────────────────
+    ui_panel_header("CONTROL STATION");
+
     {
-        static const char* const tabs[] = {
-            "CONNECTION", "CONSOLE",
-            "FLIGHT",     "MAVLINK",
-            "PARAMS",     "RADIO",
-            "MISSION",    "ESC",
-            "SETTINGS",   "SENSORS",
+        struct TabDef { const char* label; Tab id; };
+        static const TabDef tabs[] = {
+            { "CONNECTION", Tab::Connection }, { "CONSOLE", Tab::Console  },
+            { "FLIGHT",     Tab::Flight     }, { "MAVLINK", Tab::Mavlink  },
+            { "PARAMS",     Tab::Params     }, { "MISSION", Tab::Mission  },
+            { "SETTINGS",   Tab::Settings   },
         };
         constexpr int TAB_COUNT = (int)(sizeof(tabs) / sizeof(tabs[0]));
 
         const float btn_w = (ImGui::GetContentRegionAvail().x - 2.0f) * 0.5f;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
-        ImGui::PushStyleColor(ImGuiCol_Border, col_border_tab());
-
         for (int i = 0; i < TAB_COUNT; ++i) {
             if (i % 2 == 1) ImGui::SameLine(0, 2);
-            const bool active = (selected == i);
-            if (active) {
-                ImGui::PushStyleColor(ImGuiCol_Button,        btn_tab_active_base());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_tab_active_hov());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_tab_active_base());
-                ImGui::PushStyleColor(ImGuiCol_Text,          { 1.0f, 1.0f, 1.0f, 1.0f });
-            } else {
-                push_flash_colors(CmdFlashState::Normal);
-            }
-            if (ImGui::Button(tabs[i], { btn_w, 26.0f }))
-                selected = i;
-            ImGui::PopStyleColor(active ? 4 : 3);
+            if (ui_tab_button(tabs[i].label, { btn_w, 28.0f }, selected == tabs[i].id))
+                selected = tabs[i].id;
         }
-
-        ImGui::PopStyleColor(); // Border
-        ImGui::PopStyleVar();   // FrameBorderSize
     }
 
     // ── Dispatch to per-tab panels ────────────────────────────────────────────
-    if (selected == 0) draw_tab_connection(vs, conn_out, link_status, settings);
-    if (selected == 2) draw_tab_flight(sender, vs);
-    if (selected == 3) draw_tab_mavlink(sender, vs, msg_stats, total_messages, total_bytes, parse_errors);
-    if (selected == 4) draw_tab_params(sender, vs, params);
-    if (selected == 6) draw_tab_mission(sender, vs, pick);
-    if (selected == 8) draw_tab_themes(settings);
+    switch (selected) {
+    case Tab::Connection: draw_tab_connection(vs, conn_out, link_status, settings); break;
+    case Tab::Flight:     draw_tab_flight(sender, vs);                              break;
+    case Tab::Mavlink:    draw_tab_mavlink(sender, vs, msg_stats, total_messages,
+                                           total_bytes, parse_errors);              break;
+    case Tab::Params:     draw_tab_params(sender, vs, params);                      break;
+    case Tab::Mission:    draw_tab_mission(sender, vs, pick);                       break;
+    case Tab::Settings:   draw_tab_themes(settings);                                break;
+    case Tab::Console:    break;   // no panel yet — reserved
+    }
 
     ImGui::End();
     ImGui::PopStyleVar(4);

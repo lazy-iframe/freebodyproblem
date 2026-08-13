@@ -213,27 +213,12 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
     {
         const float tab_w = (ImGui::GetContentRegionAvail().x - 2.0f) * 0.5f;
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
-        ImGui::PushStyleColor(ImGuiCol_Border, col_border_tab());
         static const char* const sub_labels[] = { "SERVO", "AUX" };
         for (int i = 0; i < 2; ++i) {
             if (i > 0) ImGui::SameLine(0, 2);
-            const bool active = (s_flight_subtab == i);
-            if (active) {
-                ImGui::PushStyleColor(ImGuiCol_Button,        btn_tab_active_base());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_tab_active_hov());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_tab_active_base());
-                ImGui::PushStyleColor(ImGuiCol_Text,          { 1.0f, 1.0f, 1.0f, 1.0f });
-            } else {
-                push_flash_colors(CmdFlashState::Normal);
-            }
-            if (ImGui::Button(sub_labels[i], { tab_w, 22.0f }))
+            if (ui_tab_button(sub_labels[i], { tab_w, 24.0f }, s_flight_subtab == i))
                 s_flight_subtab = i;
-            ImGui::PopStyleColor(active ? 4 : 3);
         }
-        ImGui::PopStyleColor(); // Border
-        ImGui::PopStyleVar(2);  // FrameRounding, FrameBorderSize
     }
 
     ImGui::Spacing();
@@ -257,12 +242,12 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
             ImGui::BeginDisabled(!connected);
 
             const float row_w = ImGui::GetContentRegionAvail().x;
-            const float pwm_w = 68.0f;
-            const float btn_w = 46.0f;
+            const float pwm_w = 110.0f;
+            const float btn_w = 76.0f;
             const float lbl_w = row_w - pwm_w - btn_w - 12.0f;
 
             for (int i = 0; i < 16; ++i) {
-                char lbl[12]; snprintf(lbl, sizeof(lbl), "SRV %2d", i + 1);
+                char lbl[24]; snprintf(lbl, sizeof(lbl), "SERVO CHANNEL %d", i + 1);
                 ImGui::PushID(i);
 
                 ImGui::AlignTextToFramePadding();

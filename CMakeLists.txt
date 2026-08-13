@@ -207,6 +207,7 @@ add_executable(freebodyproblem
     frontend/widgets/map_view.cpp
     frontend/widgets/stb_impl.cpp
     frontend/widgets/sidebar_right.cpp
+    frontend/widgets/ui_kit.cpp
     backend/mavlink_parser.cpp
 )
 target_include_directories(freebodyproblem PRIVATE
@@ -223,7 +224,8 @@ target_link_libraries(freebodyproblem PRIVATE
     ${GST_LIBRARIES}
 )
 target_compile_definitions(freebodyproblem PRIVATE
-    GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
+    GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
+    GCS_FONT_FALLBACK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
 )
 if(WIN32)
     target_link_libraries(freebodyproblem PRIVATE ws2_32)

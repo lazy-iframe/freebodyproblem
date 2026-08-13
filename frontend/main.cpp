@@ -77,6 +77,7 @@ static inline void cleanup_sockets() {}
 
 // Widgets
 #include "widgets/theme.hpp"
+#include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
 #include "widgets/sidebar_left.hpp"
 #include "widgets/center_view.hpp"
@@ -627,22 +628,40 @@ int main()
     settings_load(g_settings);
     map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
     {
-        if (g_settings.active_theme == THEME_DRACULA_NAME) {
-            g_theme = dracula_theme_vars();
-        } else if (g_settings.active_theme == THEME_MATRIX_NAME) {
+        if (g_settings.active_theme == THEME_MATRIX_NAME) {
             g_theme = matrix_theme_vars();
+        } else if (g_settings.active_theme == THEME_AMBER_NAME) {
+            g_theme = retro_amber_theme_vars();
         } else {
             auto it = g_settings.themes.find(g_settings.active_theme);
             if (it != g_settings.themes.end())
                 g_theme = it->second;
-            // else: "Retro Amber" or unknown — ThemeVars defaults apply
+            // else: "Tactical" or unknown — ThemeVars defaults apply
         }
     }
     apply_global_theme(ImGui::GetStyle());
 
 #ifdef GCS_FONT_PATH
-    ImGui::GetIO().Fonts->AddFontFromFileTTF(GCS_FONT_PATH, 15.0f);
-    g_font_splash_title = ImGui::GetIO().Fonts->AddFontFromFileTTF(GCS_FONT_PATH, 38.0f);
+    // Monospace throughout — columns of telemetry stay aligned frame to frame.
+    // Latin-1 plus the punctuation the panels use: en/em dash, middot, arrows.
+    static const ImWchar kGlyphRanges[] = {
+        0x0020, 0x00FF,   // basic Latin + Latin-1 supplement (°, ·, ×)
+        0x2010, 0x2027,   // dashes, quotes, ellipsis
+        0x2190, 0x2199,   // arrows
+        0,
+    };
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    g_font_ui           = atlas->AddFontFromFileTTF(GCS_FONT_PATH, UI_SZ_BODY,  nullptr, kGlyphRanges);
+    g_font_micro        = atlas->AddFontFromFileTTF(GCS_FONT_PATH, UI_SZ_MICRO, nullptr, kGlyphRanges);
+    g_font_value        = atlas->AddFontFromFileTTF(GCS_FONT_PATH, 26.0f,       nullptr, kGlyphRanges);
+    g_font_splash_title = atlas->AddFontFromFileTTF(GCS_FONT_PATH, 38.0f,       nullptr, kGlyphRanges);
+    if (!g_font_ui) {   // font file missing — fall back to the bundled Roboto
+        g_font_ui           = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, UI_SZ_BODY);
+        g_font_micro        = g_font_ui;
+        g_font_value        = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, 26.0f);
+        g_font_splash_title = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, 38.0f);
+    }
+    ImGui::GetIO().FontDefault = g_font_ui;
 #endif
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -714,7 +733,7 @@ int main()
         int fb_w, fb_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.04f, 0.02f, 0.00f, 1.0f);
+        glClearColor(g_theme.bg_panel.x, g_theme.bg_panel.y, g_theme.bg_panel.z, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);

@@ -102,8 +102,8 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         search_upper[i] = (char)toupper((unsigned char)param_search[i]);
 
     const float avail_h = ImGui::GetContentRegionAvail().y;
-    const float val_w   = 90.0f;
-    const float btn_w   = 46.0f;
+    const float val_w   = 150.0f;
+    const float btn_w   = 86.0f;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_param_list());
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
@@ -186,10 +186,9 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 if (ImGui::Button(btn_lbl, { val_w, 0.0f }))
                     ImGui::OpenPopup("##bitmask_popup");
 
+                ui_push_dialog_style();
                 if (ImGui::BeginPopup("##bitmask_popup")) {
-                    ImGui::TextColored(accent_col(), "%s", p.param_id);
-                    ImGui::Separator();
-                    ImGui::Spacing();
+                    ui_dialog_title(p.param_id, 240.0f);
                     for (int b = 0; b < meta->bitmask_count; ++b) {
                         bool set = (bitmask_val >> meta->bitmask_bits[b].bit) & 1;
                         if (ImGui::Checkbox(meta->bitmask_bits[b].label, &set)) {
@@ -199,10 +198,13 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                         }
                     }
                     ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Text("Value: 0x%04X (%d)", bitmask_val, bitmask_val);
+                    char val_line[48];
+                    snprintf(val_line, sizeof(val_line), "0x%04X  (%d)",
+                             bitmask_val, bitmask_val);
+                    ui_dialog_text(val_line, ui_col_accent());
                     ImGui::EndPopup();
                 }
+                ui_pop_dialog_style();
 
             } else {
                 ImGui::SetNextItemWidth(val_w);

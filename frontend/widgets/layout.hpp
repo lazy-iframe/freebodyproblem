@@ -32,8 +32,11 @@
 // Adjust LEFT_FRAC / RIGHT_FRAC to reflow all panels simultaneously.
 
 static constexpr float TOPBAR_H    = 60.0f;
-static constexpr float LEFT_FRAC  = 0.20f;
-static constexpr float RIGHT_FRAC = 0.22f;
+
+// The centre column is sized so its 16:9 video box leaves roughly half the
+// column height for the map — widening the sidebars is what buys map height.
+static constexpr float LEFT_FRAC  = 0.26f;
+static constexpr float RIGHT_FRAC = 0.27f;
 
 struct GcsLayout {
     float top;       // y where panels start (= TOPBAR_H)
@@ -63,8 +66,8 @@ struct GcsLayout {
         l.center_w = sw - l.left_w - l.right_w;
         l.center_x = l.left_w;
 
-        // Derive video_h for the aspect ratio; map gets whatever height remains.
-        l.video_h = l.center_w * (9.0f / 20.0f);
+        // Derive video_h for the 16:9 aspect ratio; map gets the height left over.
+        l.video_h = l.center_w * (9.0f / 16.0f);
         l.map_h   = l.total_h - l.video_h;
         if (l.map_h < 80.0f) {        // clamp on very wide / short windows
             l.map_h   = 80.0f;

@@ -60,23 +60,11 @@ void draw_tab_connection(const VehicleState* vs,
     constexpr int N_BAUDS = (int)(sizeof(baud_rates) / sizeof(baud_rates[0]));
 
     const float tab_w = (ImGui::GetContentRegionAvail().x - 2.0f * 2.0f) / 3.0f;
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
     for (int i = 0; i < 3; ++i) {
         if (i > 0) ImGui::SameLine(0, 2);
-        const bool active = (conn_tab == i);
-        if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button,        btn_tab_active_base());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_tab_active_hov());
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_tab_active_base());
-            ImGui::PushStyleColor(ImGuiCol_Text,          { 1.0f, 1.0f, 1.0f, 1.0f });
-        } else {
-            push_flash_colors(CmdFlashState::Normal);
-        }
-        if (ImGui::Button(tab_labels[i], { tab_w, 22.0f }))
+        if (ui_tab_button(tab_labels[i], { tab_w, 24.0f }, conn_tab == i))
             conn_tab = i;
-        ImGui::PopStyleColor(active ? 4 : 3);
     }
-    ImGui::PopStyleVar(); // FrameRounding
     ImGui::Spacing();
 
     if (conn_tab == 0) {

@@ -23,12 +23,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // theme.hpp — Centralized GCS color and style tokens
 //
-// Palette: amber phosphor terminal
-//   Background : warm near-black (dark brown-black)
-//   Primary    : amber  #FFB000  (labels, headings, accents)
-//   Data       : gold   #FFD040  (telemetry values)
-//   Danger     : hot red  #ff1a33
-//   Warning    : bright amber  #FF8C00
+// Palette: tactical olive (default)
+//   Background : dark olive-black  #12160C / panels #1B2012
+//   Chrome     : header strips #242A19, seams #46552F
+//   Primary    : amber  #ECB94E  (labels, chips, active state)
+//   Data       : pale green  #97EA89  (live telemetry values)
+//   Muted      : dim olive  #6E7B55  (field labels, log)
+//   Danger     : salmon red  #EF8271
+//   Warning    : amber-orange  #E0913A
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum class CmdFlashState;   // defined in backend/mavlink_sender.hpp
@@ -40,97 +42,97 @@ enum class CmdFlashState;   // defined in backend/mavlink_sender.hpp
 
 struct ThemeVars {
     // ── Palette ───────────────────────────────────────────────────────────────
-    ImVec4 accent             = { 1.0f,  0.69f, 0.0f,  1.0f }; // bright amber #FFB000
-    ImVec4 col_data           = { 1.0f,  0.82f, 0.15f, 1.0f }; // gold — telemetry values
-    ImVec4 col_ok             = { 1.0f,  0.85f, 0.18f, 1.0f }; // bright gold — OK/good state
-    ImVec4 col_warning        = { 1.0f,  0.55f, 0.0f,  1.0f }; // orange-amber
-    ImVec4 col_error          = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
-    ImVec4 col_error_alt      = { 1.0f,  0.22f, 0.30f, 1.0f };
-    ImVec4 col_log            = { 0.72f, 0.46f, 0.0f,  1.0f }; // dim amber — console log
-    ImVec4 col_armed          = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
-    ImVec4 col_disarmed       = { 1.0f,  0.69f, 0.0f,  1.0f }; // amber
-    ImVec4 col_no_link        = { 0.80f, 0.50f, 0.0f,  1.0f }; // dim amber
-    ImVec4 col_no_link_muted  = { 0.42f, 0.26f, 0.0f,  1.0f };
-    ImVec4 col_reboot         = { 1.0f,  0.60f, 0.0f,  1.0f }; // amber-orange
-    ImVec4 col_active_text    = { 0.06f, 0.03f, 0.00f, 1.0f }; // dark — text on bright bg
+    ImVec4 accent             = { 0.925f, 0.725f, 0.306f, 1.0f }; // amber #ECB94E — labels, chips
+    ImVec4 col_data           = { 0.592f, 0.918f, 0.537f, 1.0f }; // pale green #97EA89 — live values
+    ImVec4 col_ok             = { 0.592f, 0.918f, 0.537f, 1.0f }; // pale green — nominal state
+    ImVec4 col_warning        = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange #E0913A
+    ImVec4 col_error          = { 0.937f, 0.510f, 0.443f, 1.0f }; // salmon red #EF8271
+    ImVec4 col_error_alt      = { 0.945f, 0.604f, 0.541f, 1.0f };
+    ImVec4 col_log            = { 0.431f, 0.482f, 0.333f, 1.0f }; // dim olive #6E7B55 — labels/log
+    ImVec4 col_armed          = { 0.937f, 0.420f, 0.353f, 1.0f }; // hot salmon red
+    ImVec4 col_disarmed       = { 0.925f, 0.725f, 0.306f, 1.0f }; // amber
+    ImVec4 col_no_link        = { 0.431f, 0.482f, 0.333f, 1.0f }; // dim olive
+    ImVec4 col_no_link_muted  = { 0.278f, 0.318f, 0.216f, 1.0f };
+    ImVec4 col_reboot         = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange
+    ImVec4 col_active_text    = { 0.055f, 0.067f, 0.043f, 1.0f }; // near-black — text on amber
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
-    ImVec4 bg_panel           = { 0.05f, 0.03f, 0.00f, 1.0f };
-    ImVec4 bg_topbar          = { 0.04f, 0.02f, 0.00f, 1.0f };
-    ImVec4 bg_bottombar       = { 0.04f, 0.02f, 0.00f, 1.0f };
-    ImVec4 bg_sidebar_left    = { 0.05f, 0.03f, 0.01f, 1.0f };
-    ImVec4 bg_video           = { 0.03f, 0.02f, 0.00f, 1.0f };
-    ImVec4 bg_map             = { 0.04f, 0.02f, 0.00f, 1.0f };
-    ImVec4 bg_child_dark      = { 0.07f, 0.04f, 0.01f, 1.0f };
-    ImVec4 bg_child_darker    = { 0.05f, 0.03f, 0.01f, 1.0f };
-    ImVec4 bg_param_list      = { 0.04f, 0.02f, 0.00f, 1.0f };
+    ImVec4 bg_panel           = { 0.106f, 0.125f, 0.071f, 1.0f }; // #1B2012
+    ImVec4 bg_topbar          = { 0.071f, 0.086f, 0.047f, 1.0f }; // #12160C
+    ImVec4 bg_bottombar       = { 0.071f, 0.086f, 0.047f, 1.0f };
+    ImVec4 bg_sidebar_left    = { 0.086f, 0.106f, 0.059f, 1.0f }; // #161B0F
+    ImVec4 bg_video           = { 0.047f, 0.059f, 0.031f, 1.0f }; // #0C0F08
+    ImVec4 bg_map             = { 0.047f, 0.059f, 0.031f, 1.0f };
+    ImVec4 bg_child_dark      = { 0.141f, 0.165f, 0.098f, 1.0f }; // #242A19 — header strips
+    ImVec4 bg_child_darker    = { 0.094f, 0.114f, 0.063f, 1.0f }; // #181D10 — tiles / wells
+    ImVec4 bg_param_list      = { 0.071f, 0.086f, 0.047f, 1.0f };
 
     // ── Borders ───────────────────────────────────────────────────────────────
-    ImVec4 separator          = { 0.62f, 0.38f, 0.0f,  1.0f };
-    ImVec4 border_tab         = { 0.68f, 0.42f, 0.0f,  0.75f };
-    ImVec4 border_form        = { 0.55f, 0.34f, 0.0f,  0.65f };
-    ImVec4 panel_border       = { 0.608f, 0.373f, 0.0f, 0.784f }; // panel seam lines
+    ImVec4 separator          = { 0.243f, 0.290f, 0.173f, 1.0f }; // #3E4A2C
+    ImVec4 border_tab         = { 0.243f, 0.290f, 0.173f, 0.90f };
+    ImVec4 border_form        = { 0.243f, 0.290f, 0.173f, 0.70f };
+    ImVec4 panel_border       = { 0.275f, 0.333f, 0.184f, 0.95f }; // panel seam lines
 
     // ── Named buttons ─────────────────────────────────────────────────────────
-    ImVec4 btn_arm_base         = { 0.55f, 0.04f, 0.10f, 1.0f };
-    ImVec4 btn_arm_hov          = { 0.78f, 0.08f, 0.16f, 1.0f };
-    ImVec4 btn_disarm_base      = { 0.38f, 0.23f, 0.0f,  1.0f };
-    ImVec4 btn_disarm_hov       = { 0.54f, 0.34f, 0.0f,  1.0f };
-    ImVec4 btn_disconnect_base  = { 0.38f, 0.04f, 0.08f, 1.0f };
-    ImVec4 btn_disconnect_hov   = { 0.55f, 0.08f, 0.14f, 1.0f };
-    ImVec4 btn_stop_base        = { 0.50f, 0.04f, 0.08f, 0.85f };
-    ImVec4 btn_stop_hov         = { 0.72f, 0.08f, 0.14f, 1.00f };
-    ImVec4 btn_stop_act         = { 0.38f, 0.03f, 0.06f, 1.00f };
-    ImVec4 btn_intlk_on_base    = { 0.44f, 0.27f, 0.0f,  1.0f };
-    ImVec4 btn_intlk_on_hov     = { 0.62f, 0.38f, 0.0f,  1.0f };
-    ImVec4 btn_intlk_off_base   = { 0.10f, 0.06f, 0.01f, 1.0f };
-    ImVec4 btn_intlk_off_hov    = { 0.16f, 0.10f, 0.02f, 1.0f };
-    ImVec4 btn_mode_active_base = { 0.38f, 0.23f, 0.0f,  1.0f };
-    ImVec4 btn_mode_active_hov  = { 0.54f, 0.34f, 0.0f,  1.0f };
-    ImVec4 btn_write_base       = { 0.38f, 0.24f, 0.0f,  1.0f };
-    ImVec4 btn_write_hov        = { 0.55f, 0.35f, 0.0f,  1.0f };
-    ImVec4 btn_tab_active_base  = { 1.0f,  0.75f, 0.0f,  0.70f };
-    ImVec4 btn_tab_active_hov   = { 1.0f,  0.75f, 0.0f,  0.80f };
+    ImVec4 btn_arm_base         = { 0.278f, 0.086f, 0.059f, 1.0f };
+    ImVec4 btn_arm_hov          = { 0.420f, 0.129f, 0.090f, 1.0f };
+    ImVec4 btn_disarm_base      = { 0.204f, 0.243f, 0.129f, 1.0f };
+    ImVec4 btn_disarm_hov       = { 0.294f, 0.345f, 0.176f, 1.0f };
+    ImVec4 btn_disconnect_base  = { 0.278f, 0.086f, 0.059f, 1.0f };
+    ImVec4 btn_disconnect_hov   = { 0.420f, 0.129f, 0.090f, 1.0f };
+    ImVec4 btn_stop_base        = { 0.310f, 0.098f, 0.067f, 0.90f };
+    ImVec4 btn_stop_hov         = { 0.463f, 0.145f, 0.098f, 1.00f };
+    ImVec4 btn_stop_act         = { 0.235f, 0.075f, 0.051f, 1.00f };
+    ImVec4 btn_intlk_on_base    = { 0.353f, 0.259f, 0.086f, 1.0f };
+    ImVec4 btn_intlk_on_hov     = { 0.482f, 0.357f, 0.118f, 1.0f };
+    ImVec4 btn_intlk_off_base   = { 0.110f, 0.133f, 0.075f, 1.0f };
+    ImVec4 btn_intlk_off_hov    = { 0.169f, 0.200f, 0.114f, 1.0f };
+    ImVec4 btn_mode_active_base = { 0.353f, 0.259f, 0.086f, 1.0f };
+    ImVec4 btn_mode_active_hov  = { 0.482f, 0.357f, 0.118f, 1.0f };
+    ImVec4 btn_write_base       = { 0.353f, 0.259f, 0.086f, 1.0f };
+    ImVec4 btn_write_hov        = { 0.482f, 0.357f, 0.118f, 1.0f };
+    ImVec4 btn_tab_active_base  = { 0.925f, 0.725f, 0.306f, 0.88f };
+    ImVec4 btn_tab_active_hov   = { 0.980f, 0.780f, 0.360f, 0.95f };
 
     // ── Command flash ─────────────────────────────────────────────────────────
-    ImVec4 flash_accepted_base  = { 0.08f, 0.52f, 0.16f, 0.72f }; // semi-transparent green
-    ImVec4 flash_accepted_hov   = { 0.12f, 0.68f, 0.22f, 0.80f };
-    ImVec4 flash_rejected_base  = { 0.65f, 0.06f, 0.12f, 1.0f };
-    ImVec4 flash_rejected_hov   = { 0.82f, 0.10f, 0.18f, 1.0f };
-    ImVec4 flash_pending_base   = { 0.50f, 0.30f, 0.0f,  1.0f };
-    ImVec4 flash_pending_hov    = { 0.68f, 0.42f, 0.0f,  1.0f };
-    ImVec4 flash_normal_hov     = { 1.0f,  0.69f, 0.0f,  0.14f };
-    ImVec4 flash_normal_press   = { 1.0f,  0.69f, 0.0f,  0.24f };
+    ImVec4 flash_accepted_base  = { 0.204f, 0.412f, 0.153f, 0.80f };
+    ImVec4 flash_accepted_hov   = { 0.278f, 0.541f, 0.204f, 0.88f };
+    ImVec4 flash_rejected_base  = { 0.451f, 0.129f, 0.090f, 1.0f };
+    ImVec4 flash_rejected_hov   = { 0.600f, 0.176f, 0.122f, 1.0f };
+    ImVec4 flash_pending_base   = { 0.353f, 0.259f, 0.086f, 1.0f };
+    ImVec4 flash_pending_hov    = { 0.482f, 0.357f, 0.118f, 1.0f };
+    ImVec4 flash_normal_hov     = { 0.925f, 0.725f, 0.306f, 0.14f };
+    ImVec4 flash_normal_press   = { 0.925f, 0.725f, 0.306f, 0.26f };
 
     // ── Artificial horizon ────────────────────────────────────────────────────
-    ImVec4 ah_sky            = { 0.000f, 0.000f, 0.000f, 0.000f };
-    ImVec4 ah_ground         = { 0.314f, 0.180f, 0.000f, 0.784f };
-    ImVec4 ah_horizon_line   = { 1.000f, 0.690f, 0.000f, 0.902f };
-    ImVec4 ah_pitch_ladder   = { 0.824f, 0.529f, 0.000f, 0.627f };
-    ImVec4 ah_pitch_label_bg = { 0.047f, 0.027f, 0.004f, 0.431f };
-    ImVec4 ah_pitch_label    = { 0.902f, 0.580f, 0.000f, 0.784f };
-    ImVec4 ah_crosshair      = { 1.000f, 0.690f, 0.000f, 1.000f };
-    ImVec4 ah_overlay_bg     = { 0.047f, 0.027f, 0.004f, 0.725f };
-    ImVec4 ah_airspeed_text  = { 1.000f, 0.690f, 0.000f, 1.000f };
-    ImVec4 ah_throttle_text  = { 1.000f, 0.824f, 0.235f, 1.000f };
-    ImVec4 ah_heading_text   = { 1.000f, 0.784f, 0.392f, 0.902f };
-    ImVec4 ah_roll_arc       = { 0.627f, 0.373f, 0.000f, 0.431f };
-    ImVec4 ah_roll_tick      = { 0.824f, 0.510f, 0.000f, 0.608f };
-    ImVec4 ah_roll_label     = { 0.745f, 0.463f, 0.000f, 0.608f };
-    ImVec4 ah_roll_pointer   = { 1.000f, 0.824f, 0.157f, 0.902f };
-    ImVec4 ah_border         = { 0.588f, 0.353f, 0.000f, 0.608f };
+    ImVec4 ah_sky            = { 0.227f, 0.310f, 0.369f, 1.000f }; // #3A4F5E
+    ImVec4 ah_ground         = { 0.286f, 0.243f, 0.145f, 1.000f }; // #493E25
+    ImVec4 ah_horizon_line   = { 0.902f, 0.918f, 0.878f, 0.950f }; // bone
+    ImVec4 ah_pitch_ladder   = { 0.722f, 0.761f, 0.702f, 0.800f }; // #B8C2B3
+    ImVec4 ah_pitch_label_bg = { 0.047f, 0.059f, 0.031f, 0.000f };
+    ImVec4 ah_pitch_label    = { 0.827f, 0.855f, 0.812f, 0.850f };
+    ImVec4 ah_crosshair      = { 0.969f, 0.812f, 0.396f, 1.000f }; // #F7CF65
+    ImVec4 ah_overlay_bg     = { 0.047f, 0.059f, 0.031f, 0.700f };
+    ImVec4 ah_airspeed_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
+    ImVec4 ah_throttle_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
+    ImVec4 ah_heading_text   = { 0.925f, 0.725f, 0.306f, 0.950f };
+    ImVec4 ah_roll_arc       = { 0.722f, 0.761f, 0.702f, 0.350f };
+    ImVec4 ah_roll_tick      = { 0.827f, 0.855f, 0.812f, 0.600f };
+    ImVec4 ah_roll_label     = { 0.722f, 0.761f, 0.702f, 0.600f };
+    ImVec4 ah_roll_pointer   = { 0.969f, 0.812f, 0.396f, 0.950f };
+    ImVec4 ah_border         = { 0.275f, 0.333f, 0.184f, 0.900f };
 
     // ── Map ───────────────────────────────────────────────────────────────────
-    ImVec4 map_tile_placeholder = { 0.047f, 0.027f, 0.004f, 1.000f };
-    ImVec4 map_vehicle_fill     = { 1.000f, 0.690f, 0.000f, 1.000f };
-    ImVec4 map_vehicle_ring     = { 1.000f, 0.824f, 0.235f, 0.824f };
-    ImVec4 map_attr_bg          = { 0.047f, 0.027f, 0.004f, 0.784f };
-    ImVec4 map_attr_text        = { 0.824f, 0.529f, 0.000f, 0.784f };
+    ImVec4 map_tile_placeholder = { 0.047f, 0.059f, 0.031f, 1.000f };
+    ImVec4 map_vehicle_fill     = { 0.592f, 0.918f, 0.537f, 1.000f };
+    ImVec4 map_vehicle_ring     = { 0.925f, 0.725f, 0.306f, 0.850f };
+    ImVec4 map_attr_bg          = { 0.047f, 0.059f, 0.031f, 0.800f };
+    ImVec4 map_attr_text        = { 0.431f, 0.482f, 0.333f, 0.850f };
 
     // ── EKF ───────────────────────────────────────────────────────────────────
-    ImVec4 ekf_bg      = { 0.047f, 0.027f, 0.004f, 1.000f };
-    ImVec4 ekf_outline = { 0.549f, 0.333f, 0.000f, 0.706f };
-    ImVec4 ekf_label   = { 0.902f, 0.580f, 0.000f, 0.784f };
+    ImVec4 ekf_bg      = { 0.094f, 0.114f, 0.063f, 1.000f };
+    ImVec4 ekf_outline = { 0.243f, 0.290f, 0.173f, 0.900f };
+    ImVec4 ekf_label   = { 0.431f, 0.482f, 0.333f, 0.900f };
 };
 
 // Single runtime-mutable instance — all color functions read from here.
@@ -235,8 +237,8 @@ inline void push_flash_colors(CmdFlashState fs)
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_pending_hov);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_pending_base);
         break;
-    default: // Normal — transparent with themed amber hover glow
-        ImGui::PushStyleColor(ImGuiCol_Button,        { 0.0f, 0.0f, 0.0f, 0.0f });
+    default: // Normal — dark plate with themed amber hover glow
+        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.btn_intlk_off_base);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_normal_hov);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_normal_press);
         break;
@@ -271,108 +273,102 @@ inline void push_solid_flash_colors(CmdFlashState fs, ImVec4 base_btn, ImVec4 ba
 
 // ── Section 6: Built-in theme factories ──────────────────────────────────────
 
-// Dracula — https://draculatheme.com/spec
-// Background #282A36  Current Line #44475A  Foreground #F8F8F2
-// Comment #6272A4  Red #FF5555  Orange #FFB86C  Yellow #F1FA8C
-// Green #50FA7B  Cyan #8BE9FD  Purple #BD93F9  Pink #FF79C6
-inline ThemeVars dracula_theme_vars()
+// Retro Amber — the original phosphor-terminal palette (amber on warm black).
+inline ThemeVars retro_amber_theme_vars()
 {
     ThemeVars t;
 
-    // ── Palette ───────────────────────────────────────────────────────────────
-    t.accent            = { 0.741f, 0.576f, 0.976f, 1.0f }; // Purple  #BD93F9
-    t.col_data          = { 0.545f, 0.914f, 0.992f, 1.0f }; // Cyan    #8BE9FD
-    t.col_ok            = { 0.314f, 0.980f, 0.482f, 1.0f }; // Green   #50FA7B
-    t.col_warning       = { 1.0f,   0.722f, 0.424f, 1.0f }; // Orange  #FFB86C
-    t.col_error         = { 1.0f,   0.333f, 0.333f, 1.0f }; // Red     #FF5555
-    t.col_error_alt     = { 1.0f,   0.475f, 0.776f, 1.0f }; // Pink    #FF79C6
-    t.col_log           = { 0.384f, 0.447f, 0.643f, 1.0f }; // Comment #6272A4
-    t.col_armed         = { 1.0f,   0.333f, 0.333f, 1.0f }; // Red     #FF5555
-    t.col_disarmed      = { 0.314f, 0.980f, 0.482f, 1.0f }; // Green   #50FA7B
-    t.col_no_link       = { 0.384f, 0.447f, 0.643f, 1.0f }; // Comment #6272A4
-    t.col_no_link_muted = { 0.240f, 0.278f, 0.400f, 1.0f }; // Comment dimmed
-    t.col_reboot        = { 1.0f,   0.722f, 0.424f, 1.0f }; // Orange  #FFB86C
-    t.col_active_text   = { 0.157f, 0.165f, 0.212f, 1.0f }; // Background (dark text on bright bg)
-    t.col_warning       = { 1.0f,   0.722f, 0.424f, 1.0f };
+    t.accent                 = { 1.0f,  0.69f, 0.0f,  1.0f }; // bright amber #FFB000
+    t.col_data               = { 1.0f,  0.82f, 0.15f, 1.0f }; // gold — telemetry values
+    t.col_ok                 = { 1.0f,  0.85f, 0.18f, 1.0f }; // bright gold — OK/good state
+    t.col_warning            = { 1.0f,  0.55f, 0.0f,  1.0f }; // orange-amber
+    t.col_error              = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
+    t.col_error_alt          = { 1.0f,  0.22f, 0.30f, 1.0f };
+    t.col_log                = { 0.72f, 0.46f, 0.0f,  1.0f }; // dim amber — console log
+    t.col_armed              = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
+    t.col_disarmed           = { 1.0f,  0.69f, 0.0f,  1.0f }; // amber
+    t.col_no_link            = { 0.80f, 0.50f, 0.0f,  1.0f }; // dim amber
+    t.col_no_link_muted      = { 0.42f, 0.26f, 0.0f,  1.0f };
+    t.col_reboot             = { 1.0f,  0.60f, 0.0f,  1.0f }; // amber-orange
+    t.col_active_text        = { 0.06f, 0.03f, 0.00f, 1.0f }; // dark — text on bright bg
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
-    // #282A36 = 40,42,54   darker variant #21222C = 33,34,44
-    t.bg_panel          = { 0.157f, 0.165f, 0.212f, 1.0f }; // #282A36
-    t.bg_topbar         = { 0.129f, 0.133f, 0.173f, 1.0f }; // #21222C
-    t.bg_bottombar      = { 0.129f, 0.133f, 0.173f, 1.0f };
-    t.bg_sidebar_left   = { 0.149f, 0.157f, 0.200f, 1.0f }; // slightly lighter than topbar
-    t.bg_video          = { 0.110f, 0.114f, 0.149f, 1.0f };
-    t.bg_map            = { 0.110f, 0.114f, 0.149f, 1.0f };
-    t.bg_child_dark     = { 0.196f, 0.204f, 0.259f, 1.0f }; // Current Line #44475A tinted
-    t.bg_child_darker   = { 0.149f, 0.157f, 0.200f, 1.0f };
-    t.bg_param_list     = { 0.157f, 0.165f, 0.212f, 1.0f };
+    t.bg_panel               = { 0.05f, 0.03f, 0.00f, 1.0f };
+    t.bg_topbar              = { 0.04f, 0.02f, 0.00f, 1.0f };
+    t.bg_bottombar           = { 0.04f, 0.02f, 0.00f, 1.0f };
+    t.bg_sidebar_left        = { 0.05f, 0.03f, 0.01f, 1.0f };
+    t.bg_video               = { 0.03f, 0.02f, 0.00f, 1.0f };
+    t.bg_map                 = { 0.04f, 0.02f, 0.00f, 1.0f };
+    t.bg_child_dark          = { 0.07f, 0.04f, 0.01f, 1.0f };
+    t.bg_child_darker        = { 0.05f, 0.03f, 0.01f, 1.0f };
+    t.bg_param_list          = { 0.04f, 0.02f, 0.00f, 1.0f };
 
     // ── Borders ───────────────────────────────────────────────────────────────
-    t.separator         = { 0.384f, 0.447f, 0.643f, 0.70f }; // Comment
-    t.border_tab        = { 0.384f, 0.447f, 0.643f, 0.60f };
-    t.border_form       = { 0.384f, 0.447f, 0.643f, 0.45f };
-    t.panel_border      = { 0.384f, 0.447f, 0.643f, 0.55f };
+    t.separator              = { 0.62f, 0.38f, 0.0f,  1.0f };
+    t.border_tab             = { 0.68f, 0.42f, 0.0f,  0.75f };
+    t.border_form            = { 0.55f, 0.34f, 0.0f,  0.65f };
+    t.panel_border           = { 0.608f, 0.373f, 0.0f, 0.784f }; // panel seam lines
 
     // ── Named buttons ─────────────────────────────────────────────────────────
-    t.btn_arm_base         = { 0.55f, 0.10f, 0.10f, 1.0f }; // dark red
-    t.btn_arm_hov          = { 0.80f, 0.20f, 0.20f, 1.0f };
-    t.btn_disarm_base      = { 0.10f, 0.38f, 0.17f, 1.0f }; // dark green
-    t.btn_disarm_hov       = { 0.16f, 0.56f, 0.26f, 1.0f };
-    t.btn_disconnect_base  = { 0.50f, 0.10f, 0.10f, 1.0f };
-    t.btn_disconnect_hov   = { 0.70f, 0.16f, 0.16f, 1.0f };
-    t.btn_stop_base        = { 0.50f, 0.10f, 0.10f, 0.85f };
-    t.btn_stop_hov         = { 0.72f, 0.16f, 0.16f, 1.0f };
-    t.btn_stop_act         = { 0.38f, 0.08f, 0.08f, 1.0f };
-    t.btn_intlk_on_base    = { 0.30f, 0.22f, 0.44f, 1.0f }; // dark purple
-    t.btn_intlk_on_hov     = { 0.46f, 0.34f, 0.65f, 1.0f };
-    t.btn_intlk_off_base   = { 0.196f, 0.204f, 0.259f, 1.0f };
-    t.btn_intlk_off_hov    = { 0.267f, 0.278f, 0.353f, 1.0f };
-    t.btn_mode_active_base = { 0.30f, 0.22f, 0.44f, 1.0f };
-    t.btn_mode_active_hov  = { 0.46f, 0.34f, 0.65f, 1.0f };
-    t.btn_write_base       = { 0.30f, 0.22f, 0.44f, 1.0f };
-    t.btn_write_hov        = { 0.46f, 0.34f, 0.65f, 1.0f };
-    t.btn_tab_active_base  = { 0.741f, 0.576f, 0.976f, 0.65f }; // Purple semi
-    t.btn_tab_active_hov   = { 0.741f, 0.576f, 0.976f, 0.80f };
+    t.btn_arm_base           = { 0.55f, 0.04f, 0.10f, 1.0f };
+    t.btn_arm_hov            = { 0.78f, 0.08f, 0.16f, 1.0f };
+    t.btn_disarm_base        = { 0.38f, 0.23f, 0.0f,  1.0f };
+    t.btn_disarm_hov         = { 0.54f, 0.34f, 0.0f,  1.0f };
+    t.btn_disconnect_base    = { 0.38f, 0.04f, 0.08f, 1.0f };
+    t.btn_disconnect_hov     = { 0.55f, 0.08f, 0.14f, 1.0f };
+    t.btn_stop_base          = { 0.50f, 0.04f, 0.08f, 0.85f };
+    t.btn_stop_hov           = { 0.72f, 0.08f, 0.14f, 1.00f };
+    t.btn_stop_act           = { 0.38f, 0.03f, 0.06f, 1.00f };
+    t.btn_intlk_on_base      = { 0.44f, 0.27f, 0.0f,  1.0f };
+    t.btn_intlk_on_hov       = { 0.62f, 0.38f, 0.0f,  1.0f };
+    t.btn_intlk_off_base     = { 0.10f, 0.06f, 0.01f, 1.0f };
+    t.btn_intlk_off_hov      = { 0.16f, 0.10f, 0.02f, 1.0f };
+    t.btn_mode_active_base   = { 0.38f, 0.23f, 0.0f,  1.0f };
+    t.btn_mode_active_hov    = { 0.54f, 0.34f, 0.0f,  1.0f };
+    t.btn_write_base         = { 0.38f, 0.24f, 0.0f,  1.0f };
+    t.btn_write_hov          = { 0.55f, 0.35f, 0.0f,  1.0f };
+    t.btn_tab_active_base    = { 1.0f,  0.75f, 0.0f,  0.70f };
+    t.btn_tab_active_hov     = { 1.0f,  0.75f, 0.0f,  0.80f };
 
     // ── Command flash ─────────────────────────────────────────────────────────
-    t.flash_accepted_base  = { 0.08f,  0.52f,  0.16f,  0.72f }; // green semi-transparent
-    t.flash_accepted_hov   = { 0.12f,  0.68f,  0.22f,  0.80f };
-    t.flash_rejected_base  = { 0.55f,  0.10f,  0.10f,  1.0f  }; // red
-    t.flash_rejected_hov   = { 0.80f,  0.20f,  0.20f,  1.0f  };
-    t.flash_pending_base   = { 0.46f,  0.34f,  0.10f,  1.0f  }; // dark yellow
-    t.flash_pending_hov    = { 0.65f,  0.50f,  0.15f,  1.0f  };
-    t.flash_normal_hov     = { 0.741f, 0.576f, 0.976f, 0.14f }; // purple glow
-    t.flash_normal_press   = { 0.741f, 0.576f, 0.976f, 0.26f };
+    t.flash_accepted_base    = { 0.08f, 0.52f, 0.16f, 0.72f }; // semi-transparent green
+    t.flash_accepted_hov     = { 0.12f, 0.68f, 0.22f, 0.80f };
+    t.flash_rejected_base    = { 0.65f, 0.06f, 0.12f, 1.0f };
+    t.flash_rejected_hov     = { 0.82f, 0.10f, 0.18f, 1.0f };
+    t.flash_pending_base     = { 0.50f, 0.30f, 0.0f,  1.0f };
+    t.flash_pending_hov      = { 0.68f, 0.42f, 0.0f,  1.0f };
+    t.flash_normal_hov       = { 1.0f,  0.69f, 0.0f,  0.14f };
+    t.flash_normal_press     = { 1.0f,  0.69f, 0.0f,  0.24f };
 
     // ── Artificial horizon ────────────────────────────────────────────────────
-    t.ah_sky            = { 0.000f, 0.000f, 0.000f, 0.000f };             // transparent
-    t.ah_ground         = { 0.267f, 0.278f, 0.353f, 0.784f };             // Selection #44475A
-    t.ah_horizon_line   = { 0.545f, 0.914f, 0.992f, 0.902f };             // Cyan #8BE9FD
-    t.ah_pitch_ladder   = { 0.384f, 0.447f, 0.643f, 0.627f };             // Comment #6272A4
-    t.ah_pitch_label_bg = { 0.157f, 0.165f, 0.212f, 0.431f };             // Background #282A36
-    t.ah_pitch_label    = { 0.545f, 0.914f, 0.992f, 0.784f };             // Cyan
-    t.ah_crosshair      = { 0.545f, 0.914f, 0.992f, 1.000f };             // Cyan
-    t.ah_overlay_bg     = { 0.157f, 0.165f, 0.212f, 0.725f };             // Background
-    t.ah_airspeed_text  = { 0.545f, 0.914f, 0.992f, 1.000f };             // Cyan
-    t.ah_throttle_text  = { 0.314f, 0.980f, 0.482f, 1.000f };             // Green #50FA7B
-    t.ah_heading_text   = { 0.741f, 0.576f, 0.976f, 0.902f };             // Purple #BD93F9
-    t.ah_roll_arc       = { 0.384f, 0.447f, 0.643f, 0.431f };             // Comment dim
-    t.ah_roll_tick      = { 0.384f, 0.447f, 0.643f, 0.608f };             // Comment
-    t.ah_roll_label     = { 0.384f, 0.447f, 0.643f, 0.608f };             // Comment
-    t.ah_roll_pointer   = { 0.945f, 0.980f, 0.549f, 0.902f };             // Yellow #F1FA8C
-    t.ah_border         = { 0.384f, 0.447f, 0.643f, 0.608f };             // Comment
+    t.ah_sky                 = { 0.000f, 0.000f, 0.000f, 0.000f };
+    t.ah_ground              = { 0.314f, 0.180f, 0.000f, 0.784f };
+    t.ah_horizon_line        = { 1.000f, 0.690f, 0.000f, 0.902f };
+    t.ah_pitch_ladder        = { 0.824f, 0.529f, 0.000f, 0.627f };
+    t.ah_pitch_label_bg      = { 0.047f, 0.027f, 0.004f, 0.431f };
+    t.ah_pitch_label         = { 0.902f, 0.580f, 0.000f, 0.784f };
+    t.ah_crosshair           = { 1.000f, 0.690f, 0.000f, 1.000f };
+    t.ah_overlay_bg          = { 0.047f, 0.027f, 0.004f, 0.725f };
+    t.ah_airspeed_text       = { 1.000f, 0.690f, 0.000f, 1.000f };
+    t.ah_throttle_text       = { 1.000f, 0.824f, 0.235f, 1.000f };
+    t.ah_heading_text        = { 1.000f, 0.784f, 0.392f, 0.902f };
+    t.ah_roll_arc            = { 0.627f, 0.373f, 0.000f, 0.431f };
+    t.ah_roll_tick           = { 0.824f, 0.510f, 0.000f, 0.608f };
+    t.ah_roll_label          = { 0.745f, 0.463f, 0.000f, 0.608f };
+    t.ah_roll_pointer        = { 1.000f, 0.824f, 0.157f, 0.902f };
+    t.ah_border              = { 0.588f, 0.353f, 0.000f, 0.608f };
 
     // ── Map ───────────────────────────────────────────────────────────────────
-    t.map_tile_placeholder = { 0.157f, 0.165f, 0.212f, 1.000f };          // Background
-    t.map_vehicle_fill     = { 0.545f, 0.914f, 0.992f, 1.000f };          // Cyan
-    t.map_vehicle_ring     = { 0.741f, 0.576f, 0.976f, 0.824f };          // Purple
-    t.map_attr_bg          = { 0.157f, 0.165f, 0.212f, 0.784f };          // Background
-    t.map_attr_text        = { 0.384f, 0.447f, 0.643f, 0.784f };          // Comment
+    t.map_tile_placeholder   = { 0.047f, 0.027f, 0.004f, 1.000f };
+    t.map_vehicle_fill       = { 1.000f, 0.690f, 0.000f, 1.000f };
+    t.map_vehicle_ring       = { 1.000f, 0.824f, 0.235f, 0.824f };
+    t.map_attr_bg            = { 0.047f, 0.027f, 0.004f, 0.784f };
+    t.map_attr_text          = { 0.824f, 0.529f, 0.000f, 0.784f };
 
     // ── EKF ───────────────────────────────────────────────────────────────────
-    t.ekf_bg      = { 0.157f, 0.165f, 0.212f, 1.000f };                   // Background
-    t.ekf_outline = { 0.384f, 0.447f, 0.643f, 0.706f };                   // Comment
-    t.ekf_label   = { 0.545f, 0.914f, 0.992f, 0.784f };                   // Cyan
+    t.ekf_bg                 = { 0.047f, 0.027f, 0.004f, 1.000f };
+    t.ekf_outline            = { 0.549f, 0.333f, 0.000f, 0.706f };
+    t.ekf_label              = { 0.902f, 0.580f, 0.000f, 0.784f };
 
     return t;
 }
@@ -490,7 +486,9 @@ inline void apply_global_theme(ImGuiStyle& s)
     s.GrabRounding      = 0.0f;
     s.TabRounding       = 0.0f;
     s.WindowBorderSize  = 1.0f;
-    s.FrameBorderSize   = 0.0f;
+    s.FrameBorderSize   = 1.0f;   // every control reads as a boxed cell
+    s.ScrollbarSize     = 10.0f;
+    s.FramePadding      = { 6.0f, 4.0f };
 
     const ImVec4& a  = g_theme.accent;
     const ImVec4& bg = g_theme.bg_panel;
@@ -508,7 +506,7 @@ inline void apply_global_theme(ImGuiStyle& s)
     c[ImGuiCol_BorderShadow]          = { 0.0f, 0.0f, 0.0f, 0.0f  };
 
     // Text
-    c[ImGuiCol_Text]                  = { 0.88f, 0.84f, 0.72f, 1.0f };
+    c[ImGuiCol_Text]                  = { 0.812f, 0.831f, 0.769f, 1.0f }; // bone, olive-tinted
     c[ImGuiCol_TextDisabled]          = g_theme.col_no_link_muted;
 
     // Frames (input fields, combos)
@@ -533,8 +531,8 @@ inline void apply_global_theme(ImGuiStyle& s)
     c[ImGuiCol_SliderGrab]            = { a.x * 0.60f, a.y * 0.37f, a.z * 0.60f, 1.0f };
     c[ImGuiCol_SliderGrabActive]      = g_theme.accent;
 
-    // Buttons
-    c[ImGuiCol_Button]                = { 0.0f, 0.0f, 0.0f, 0.0f };
+    // Buttons — dark plate, amber wash on hover
+    c[ImGuiCol_Button]                = g_theme.btn_intlk_off_base;
     c[ImGuiCol_ButtonHovered]         = g_theme.flash_normal_hov;
     c[ImGuiCol_ButtonActive]          = g_theme.flash_normal_press;
 

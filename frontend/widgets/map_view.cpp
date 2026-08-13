@@ -35,6 +35,7 @@
 
 #include "map_view.hpp"
 #include "layout.hpp"
+#include "ui_kit.hpp"
 #include "imgui.h"
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
@@ -463,7 +464,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
                    const std::vector<MissionItem>* mission,
-                   MissionPickState* pick)
+                   MissionPickState* pick,
+                   float alt_rel, float gs)
 {
     ensure_started();
     drain_upload_queue();
@@ -702,6 +704,69 @@ void draw_map_view(double lat, double lon, bool has_pos,
                               { hx + hsz.x,  hy + hsz.y  },
                               IM_COL32(0, 0, 0, 180), 4.0f);
             dl->AddText({ hx, hy }, IM_COL32(255, 230, 60, 255), hint);
+        }
+
+        // ── Tactical overlay: A/C block, scale bar, north pointer ─────────────
+        {
+            ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
+            const ImU32 lbl = ui_col_label();
+            const ImU32 val = ui_col_value();
+
+            // A/C state block, top-left.
+            char l1[64], l2[64];
+            if (has_pos)
+                snprintf(l1, sizeof(l1), "A/C  %.5f%c %.5f%c",
+                         lat < 0 ? -lat : lat, lat < 0 ? 'S' : 'N',
+                         lon < 0 ? -lon : lon, lon < 0 ? 'W' : 'E');
+            else
+                snprintf(l1, sizeof(l1), "A/C  NO POSITION");
+            snprintf(l2, sizeof(l2), "HDG %s  ALT %.0f AGL  GS %.0f",
+                     has_hdg ? "" : "---", (double)alt_rel, (double)gs);
+            if (has_hdg)
+                snprintf(l2, sizeof(l2), "HDG %03d  ALT %.0f AGL  GS %.0f",
+                         (int)heading, (double)alt_rel, (double)gs);
+
+            const float w1 = ui_tracked_width(fm, UI_SZ_MICRO, l1);
+            const float w2 = ui_tracked_width(fm, UI_SZ_MICRO, l2);
+            const float bw = std::max(w1, w2) + 16.0f;
+            const ImVec2 b0 = { wp.x + 8.0f, wp.y + 8.0f };
+            const ImVec2 b1 = { b0.x + bw,   b0.y + 40.0f };
+            dl->AddRectFilled(b0, b1, ui_col(g_theme.bg_topbar, 0.78f));
+            ui_frame(dl, b0, b1, ui_col(g_theme.separator, 0.7f));
+            ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 8.0f },
+                            has_pos ? val : lbl, l1);
+            ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 23.0f },
+                            lbl, l2);
+
+            // Scale bar, bottom-left: 120 px of ground truth at this latitude.
+            {
+                constexpr float BAR_PX = 120.0f;
+                const double m_per_px = 156543.03392 *
+                                        std::cos(g_map.center_lat * M_PI / 180.0) /
+                                        (double)(1 << g_map.zoom);
+                const double span = m_per_px * BAR_PX;
+                char scale_s[48];
+                if (span >= 1000.0) snprintf(scale_s, sizeof(scale_s), "%.1f km  \xc2\xb7  Z%d", span / 1000.0, g_map.zoom);
+                else                snprintf(scale_s, sizeof(scale_s), "%.0f m  \xc2\xb7  Z%d",  span,          g_map.zoom);
+
+                const float sx = wp.x + 10.0f;
+                const float sy = wp.y + win_h - 16.0f;
+                dl->AddLine({ sx, sy }, { sx + BAR_PX, sy }, lbl, 1.5f);
+                dl->AddLine({ sx, sy - 4.0f }, { sx, sy + 4.0f }, lbl, 1.5f);
+                dl->AddLine({ sx + BAR_PX, sy - 4.0f }, { sx + BAR_PX, sy + 4.0f }, lbl, 1.5f);
+                ui_tracked_text(dl, fm, UI_SZ_MICRO, { sx, sy - 17.0f }, lbl, scale_s);
+            }
+
+            // North pointer, bottom-right above the attribution line.
+            {
+                const float nx = wp.x + win_w - 22.0f;
+                const float ny = wp.y + win_h - 40.0f;
+                dl->AddTriangleFilled({ nx, ny - 10.0f },
+                                      { nx - 5.0f, ny + 4.0f },
+                                      { nx + 5.0f, ny + 4.0f },
+                                      ui_col_accent());
+                ui_tracked_text(dl, fm, UI_SZ_MICRO, { nx - 3.0f, ny + 6.0f }, lbl, "N");
+            }
         }
 
         // ── Tile source attribution ───────────────────────────────────────────

@@ -18,6 +18,7 @@
 
 #include "center_view.hpp"
 #include "layout.hpp"
+#include "ui_kit.hpp"
 #include "map_view.hpp"
 #include "video_player.hpp"
 #include "../app_log.hpp"
@@ -41,7 +42,7 @@ static int  s_proto_sel    = 0;   // 0 = RTSP, 1 = UDP
 enum class CenterMode { MapAndVideo, VideoOnly, MapOnly };
 static CenterMode s_mode = CenterMode::MapAndVideo;
 
-static constexpr float HEADER_H = 28.0f;
+static constexpr float HEADER_H = 30.0f;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -113,32 +114,33 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
             ImGuiWindowFlags_NoScrollWithMouse)) {
 
-        // Mode buttons — right-aligned
-        const char*  btn_labels[] = { "VIDEO ONLY", "MAP ONLY", "MAP + VIDEO" };
+        // Title strip: what the centre column is currently showing.
+        {
+            ImDrawList*  dl = ImGui::GetWindowDrawList();
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const char*  title =
+                (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED \xe2\x80\x94 FWD"
+              : (s_mode == CenterMode::MapOnly)   ? "TACTICAL MAP \xe2\x80\x94 2D / NORTH-UP"
+                                                  : "SENSOR FEED / TACTICAL MAP";
+            ui_panel_header_at(dl, { wp.x, wp.y }, l.center_w, title, nullptr,
+                               1.0f, HEADER_H);
+        }
+
+        // Mode buttons — right-aligned segmented control
+        const char*  btn_labels[] = { "VIDEO##m0", "MAP##m1", "MAP + VIDEO##m2" };
         const CenterMode btn_modes[] = {
             CenterMode::VideoOnly, CenterMode::MapOnly, CenterMode::MapAndVideo };
-        constexpr float BTN_W = 82.f, BTN_H = 20.f, BTN_GAP = 4.f;
+        constexpr float BTN_W = 108.f, BTN_H = 22.f, BTN_GAP = 3.f;
         constexpr int   N = 3;
         const float     btns_total = BTN_W * N + BTN_GAP * (N - 1);
         const float     btns_x     = l.center_w - btns_total - 8.f;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
         for (int i = 0; i < N; ++i) {
-            const bool active = (s_mode == btn_modes[i]);
-            ImGui::SameLine(btns_x + i * (BTN_W + BTN_GAP));
-            ImGui::SetCursorPosY((HEADER_H - BTN_H) * 0.5f);
-            if (active) {
-                ImGui::PushStyleColor(ImGuiCol_Button,        btn_tab_active_base());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_tab_active_hov());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_tab_active_base());
-            } else {
-                push_flash_colors(CmdFlashState::Normal);
-            }
-            if (ImGui::Button(btn_labels[i], {BTN_W, BTN_H}))
+            ImGui::SetCursorPos({ btns_x + i * (BTN_W + BTN_GAP),
+                                  (HEADER_H - BTN_H) * 0.5f });
+            if (ui_tab_button(btn_labels[i], { BTN_W, BTN_H }, s_mode == btn_modes[i]))
                 s_mode = btn_modes[i];
-            ImGui::PopStyleColor(3);
         }
-        ImGui::PopStyleVar(); // FrameRounding
     }
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -148,8 +150,9 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
     const float content_top = l.top + HEADER_H;
     const float content_h   = l.total_h - HEADER_H;
 
-    // Re-derive video/map split from the reduced content height
-    float vid_h = l.center_w * (9.f / 20.f);
+    // Video pane is a true 16:9 box across the centre column; the map takes
+    // whatever height is left below it.
+    float vid_h = l.center_w * (9.f / 16.f);
     float map_h = content_h - vid_h;
     if (map_h < 80.f) { map_h = 80.f; vid_h = content_h - map_h; }
 
@@ -173,6 +176,9 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
 
     if (ImGui::Begin("##video", nullptr, win_flags)) {
         const VideoState state = s_vp.state.load(std::memory_order_acquire);
+
+        // Feed banner — drawn last so it sits over the frame (see below).
+        const ImVec2 vwp = ImGui::GetWindowPos();
 
         // ── Playing ───────────────────────────────────────────────────────────
         if (state == VideoState::Playing) {
@@ -203,7 +209,7 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             }
 
             // Small red stop button — upper-left corner
-            ImGui::SetCursorPos({ 8.0f, 8.0f });
+            ImGui::SetCursorPos({ 8.0f, UI_HEADER_H + 8.0f });
             ImGui::PushStyleColor(ImGuiCol_Button,        btn_stop_base());
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_stop_hov());
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_stop_act());
@@ -226,7 +232,7 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             ImGui::TextDisabled("%s", msg);
 
             // Stop button while connecting
-            ImGui::SetCursorPos({ 8.0f, 8.0f });
+            ImGui::SetCursorPos({ 8.0f, UI_HEADER_H + 8.0f });
             ImGui::PushStyleColor(ImGuiCol_Button,        btn_stop_base());
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_stop_hov());
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_stop_act());
@@ -259,21 +265,9 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             // ── Protocol selector ─────────────────────────────────────────────
             const char* const proto_labels[] = { "RTSP", "UDP" };
             const char* const proto_prefixes[] = { "rtsp://", "udp://" };
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
-            ImGui::PushStyleColor(ImGuiCol_Border, col_border_form());
             for (int i = 0; i < 2; ++i) {
                 if (i > 0) ImGui::SameLine(0, 4);
-                const bool active = (s_proto_sel == i);
-                if (active) {
-                    ImGui::PushStyleColor(ImGuiCol_Button,        btn_tab_active_base());
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_tab_active_hov());
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_tab_active_base());
-                    ImGui::PushStyleColor(ImGuiCol_Text,          { 1.0f, 1.0f, 1.0f, 1.0f });
-                } else {
-                    push_flash_colors(CmdFlashState::Normal);
-                }
-                if (ImGui::Button(proto_labels[i], { 70.0f, 22.0f })) {
+                if (ui_tab_button(proto_labels[i], { 80.0f, 24.0f }, s_proto_sel == i)) {
                     s_proto_sel = i;
                     // Replace only if the current url matches the old prefix
                     const char* old_pfx = proto_prefixes[1 - i];
@@ -282,10 +276,7 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
                                       "%s%s", proto_prefixes[i],
                                       s_url_buf + std::strlen(old_pfx));
                 }
-                ImGui::PopStyleColor(active ? 4 : 3);
             }
-            ImGui::PopStyleColor(); // Border
-            ImGui::PopStyleVar(2);  // FrameRounding, FrameBorderSize
 
             // ── URL input ─────────────────────────────────────────────────────
             ImGui::Spacing();
@@ -317,6 +308,31 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
 
             ImGui::EndGroup();
         }
+
+        // ── Feed banner ───────────────────────────────────────────────────────
+        // Semi-transparent strip over the top of the frame: source on the left,
+        // pipeline state on the right, with a live REC pip while streaming.
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const char* state_s = (state == VideoState::Playing)    ? "LIVE"
+                                : (state == VideoState::Connecting) ? "ACQUIRING"
+                                : (state == VideoState::Error)      ? "FAULT"
+                                                                    : "STANDBY";
+            char meta[128];
+            snprintf(meta, sizeof(meta), "%s \xc2\xb7 %s",
+                     s_vp.url[0] ? s_vp.url : "NO SOURCE", state_s);
+            ui_panel_header_at(dl, vwp, l.center_w, "EO / IR FEED \xe2\x80\x94 FWD",
+                               meta, 0.82f);
+
+            // Blinking REC pip while the pipeline is running.
+            if (state == VideoState::Playing && fmodf((float)ImGui::GetTime(), 1.4f) < 0.9f) {
+                ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
+                const float mw  = ui_tracked_width(fm, UI_SZ_MICRO, meta);
+                const ImVec2 c  = { vwp.x + l.center_w - mw - 20.0f,
+                                    vwp.y + UI_HEADER_H * 0.5f };
+                dl->AddCircleFilled(c, 3.0f, ui_col(g_theme.col_error));
+            }
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -333,7 +349,8 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
                       (float)vs.heading, vs.has_vfr,
                       l.center_x, content_top + vid_h,
                       l.center_w, map_h,
-                      map_mission, pick);
+                      map_mission, pick,
+                      vs.alt_rel, vs.groundspeed);
     }
 }
 

@@ -33,8 +33,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Names reserved for hard-coded built-in themes — never removed from the UI.
-static constexpr const char* THEME_BUILTIN_NAME  = "Retro Amber";
-static constexpr const char* THEME_DRACULA_NAME  = "Dracula";
+static constexpr const char* THEME_BUILTIN_NAME  = "Tactical";
+static constexpr const char* THEME_AMBER_NAME    = "Retro Amber";
 static constexpr const char* THEME_MATRIX_NAME   = "Matrix";
 
 // Saved connection profile (type: 0=Serial, 1=TCP, 2=UDP — matches conn_tab).
