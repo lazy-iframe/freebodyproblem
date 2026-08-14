@@ -38,7 +38,11 @@
 #include "ui_kit.hpp"
 #include "imgui.h"
 
-#define CPPHTTPLIB_OPENSSL_SUPPORT
+// The httplib CMake target already defines this; guard so the two definitions
+// (empty here vs. 1 on the command line) do not collide.
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+#  define CPPHTTPLIB_OPENSSL_SUPPORT
+#endif
 #include "httplib.h"
 
 #include "stb_image.h"
@@ -51,7 +55,13 @@
 #  include <errno.h>
 #  include <sys/stat.h>
 #endif
-#include <GL/gl.h>
+
+// macOS ships OpenGL as a framework, so the header is <OpenGL/gl.h>.
+#ifdef __APPLE__
+#  include <OpenGL/gl.h>
+#else
+#  include <GL/gl.h>
+#endif
 
 #ifndef GL_CLAMP_TO_EDGE
 #  define GL_CLAMP_TO_EDGE 0x812F
