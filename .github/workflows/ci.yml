@@ -37,11 +37,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      # dpkg-dev provides dpkg-shlibdeps, which CPACK_DEBIAN_PACKAGE_SHLIBDEPS
+      # uses to derive the package's Depends from the linked ELF objects.
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config \
+            ninja-build pkg-config dpkg-dev \
             libglfw3-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libssl-dev \
@@ -53,46 +55,20 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: freebodyproblem-linux-x86_64
-          path: build/freebodyproblem
-          if-no-files-found: error
+      - name: Package
+        run: cpack -G DEB --config build/CPackConfig.cmake -B build/packages
 
-  # ── macOS ────────────────────────────────────────────────────────────────────
-  macos:
-    name: macOS (Apple Silicon / Clang)
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      # Homebrew merged gst-plugins-{base,good,bad,ugly} into the `gstreamer`
-      # formula, so this single package provides gstreamer-1.0 and
-      # gstreamer-app-1.0 to pkg-config.
-      - name: Install dependencies
-        run: brew install ninja pkg-config glfw gstreamer openssl@3
-
-      - name: Configure
+      - name: Show package contents
         run: |
-          cmake -B build -S . -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
-            -DCMAKE_CXX_FLAGS="-DGL_SILENCE_DEPRECATION"
-
-      - name: Build
-        run: cmake --build build --parallel
+          deb=$(ls build/packages/*.deb)
+          echo "== $deb =="
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: freebodyproblem-macos-arm64
-          path: build/freebodyproblem
+          name: freebodyproblem-linux-deb
+          path: build/packages/*.deb
           if-no-files-found: error
 
   # ── Windows ──────────────────────────────────────────────────────────────────
@@ -200,8 +176,28 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      # The runner image ships NSIS, but install it if that ever changes rather
+      # than failing at the packaging step.
+      - name: Ensure NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install -y --no-progress nsis
+            "C:\Program Files (x86)\NSIS" | Out-File -Append $env:GITHUB_PATH
+          }
+          makensis /VERSION
+
+      - name: Package
+        run: cpack -G NSIS --config build/CPackConfig.cmake -B build/packages
+
+      - name: Report installer size
+        shell: pwsh
+        run: |
+          Get-ChildItem build\packages\*.exe |
+            ForEach-Object { "{0} — {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
       - uses: actions/upload-artifact@v4
         with:
-          name: freebodyproblem-windows-x86_64
-          path: build/freebodyproblem.exe
+          name: freebodyproblem-windows-installer
+          path: build/packages/*.exe
           if-no-files-found: error

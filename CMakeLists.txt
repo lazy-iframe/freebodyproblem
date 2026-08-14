@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem CXX)
+project(freebodyproblem VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -104,6 +104,10 @@ find_package(OpenSSL REQUIRED)
 
 set(HTTPLIB_REQUIRE_OPENSSL ON  CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE ON CACHE BOOL "" FORCE)
+# Vendored dependencies must not contribute their own install rules — otherwise
+# the package ships their headers, static libs and CMake config, and
+# /usr/include/GLFW/glfw3.h collides with the system libglfw3-dev package.
+set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(httplib
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
@@ -112,6 +116,8 @@ FetchContent_Declare(httplib
 FetchContent_MakeAvailable(httplib)
 
 # ── Third-party: nlohmann/json (header-only JSON) ─────────────────────────────
+
+set(JSON_Install OFF CACHE BOOL "" FORCE)  # see HTTPLIB_INSTALL above
 
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -132,6 +138,7 @@ if(NOT glfw3_FOUND)
     set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)  # see HTTPLIB_INSTALL above
     FetchContent_MakeAvailable(glfw)
 endif()
 
@@ -304,3 +311,84 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
     )
 endif()
+
+# ── Install ───────────────────────────────────────────────────────────────────
+#
+# Layout is prefix-relative and matches what find_asset() in frontend/main.cpp
+# looks for: the binary in bin/, runtime assets in share/freebodyproblem/.
+# GCS_FONT_PATH remains a build-time absolute path, but it is now only the last
+# resort for running straight out of the build tree.
+
+include(GNUInstallDirs)
+
+install(TARGETS freebodyproblem
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(FILES
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
+        DESTINATION share/freebodyproblem/fonts)
+
+if(WIN32)
+    # Windows has no system package manager to satisfy these, so the installer
+    # carries the full runtime. GStreamer locates its plugins relative to the
+    # directory holding gstreamer-1.0-0.dll, so the SDK's bin/ + lib/ split has
+    # to be preserved exactly.
+    install(DIRECTORY "${GSTREAMER_ROOT}/bin/"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+            FILES_MATCHING PATTERN "*.dll")
+
+    install(DIRECTORY "${GSTREAMER_ROOT}/lib/gstreamer-1.0/"
+            DESTINATION lib/gstreamer-1.0
+            FILES_MATCHING PATTERN "*.dll")
+
+    # OpenSSL ships its DLLs beside the import libraries.
+    file(GLOB _openssl_dlls "${OPENSSL_ROOT_DIR}/bin/*.dll")
+    if(_openssl_dlls)
+        install(FILES ${_openssl_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    # msvcp140.dll and friends, so the installer works on a machine with no
+    # Visual Studio redistributable present.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+    include(InstallRequiredSystemLibraries)
+endif()
+
+# ── Packaging ─────────────────────────────────────────────────────────────────
+
+set(CPACK_PACKAGE_NAME              "freebodyproblem")
+set(CPACK_PACKAGE_VENDOR            "Azhar Tanweer")
+set(CPACK_PACKAGE_VERSION           "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Ground control station for ArduPilot and PX4 autopilots")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "freebodyproblem")
+set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_CONTACT           "azhar.tanweer404@gmail.com")
+
+if(WIN32)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_NSIS_PACKAGE_NAME     "freebodyproblem")
+    set(CPACK_NSIS_DISPLAY_NAME     "freebodyproblem")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "${CMAKE_INSTALL_BINDIR}/freebodyproblem.exe")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MODIFY_PATH OFF)
+    set(CPACK_PACKAGE_EXECUTABLES   "freebodyproblem;freebodyproblem")
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\freebodyproblem.lnk' '$INSTDIR\\\\${CMAKE_INSTALL_BINDIR}\\\\freebodyproblem.exe'")
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete '$SMPROGRAMS\\\\$START_MENU\\\\freebodyproblem.lnk'")
+
+elseif(UNIX)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Azhar Tanweer <azhar.tanweer404@gmail.com>")
+    set(CPACK_DEBIAN_PACKAGE_SECTION    "science")
+    set(CPACK_DEBIAN_FILE_NAME          "DEB-DEFAULT")
+    # Derive Depends from the actual ELF linkage rather than a hand-kept list,
+    # which silently rots as dependencies change. Needs dpkg-dev at package time.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS  ON)
+    # GStreamer loads these at runtime via dlopen, so shlibdeps cannot see them.
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
+        "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav")
+endif()
+
+include(CPack)

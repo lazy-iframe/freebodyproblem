@@ -28,6 +28,7 @@
 #  endif
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
+#  include <windows.h>   // GetModuleFileNameA / MAX_PATH — must follow winsock2.h
    typedef int ssize_t;
 #  define close_socket closesocket
 static inline void init_sockets()    { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); }
@@ -48,7 +49,9 @@ static inline void cleanup_sockets() {}
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <fstream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -125,6 +128,50 @@ void gcs_log(const char* fmt, ...)
 
 // Outbound command queue — enqueued by UI thread, flushed by link thread
 static MavlinkSender  g_sender;
+
+// ── Asset resolution ──────────────────────────────────────────────────────────
+//
+// Fonts have to be found in three situations: from an installed package, from a
+// portable directory sitting next to the binary, and from the source tree during
+// development. Everything is resolved relative to the executable so the install
+// prefix stays relocatable — a path baked in at build time only ever works on
+// the machine that did the build.
+
+static std::string executable_dir()
+{
+#ifdef _WIN32
+    char buf[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    if (n == 0) return ".";
+    const std::string p(buf, n);
+#else
+    char buf[4096] = {};
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return ".";
+    const std::string p(buf, static_cast<size_t>(n));
+#endif
+    const size_t slash = p.find_last_of("/\\");
+    return (slash == std::string::npos) ? std::string(".") : p.substr(0, slash);
+}
+
+// First readable candidate wins; empty string when the asset is nowhere.
+static std::string find_asset(const std::string& relative,
+                              const char*        build_time_path)
+{
+    const std::string exe = executable_dir();
+    std::vector<std::string> candidates = {
+        exe + "/../share/freebodyproblem/" + relative,  // installed prefix
+        exe + "/" + relative,                           // portable, side-by-side
+    };
+    if (build_time_path && *build_time_path)
+        candidates.emplace_back(build_time_path);       // source tree, dev build
+
+    for (const std::string& c : candidates) {
+        std::ifstream f(c, std::ios::binary);
+        if (f.good()) return c;
+    }
+    return {};
+}
 
 // ── Link thread ───────────────────────────────────────────────────────────────
 
@@ -629,17 +676,26 @@ int main()
         0,
     };
     ImFontAtlas* atlas = ImGui::GetIO().Fonts;
-    g_font_ui           = atlas->AddFontFromFileTTF(GCS_FONT_PATH, UI_SZ_BODY,  nullptr, kGlyphRanges);
-    g_font_micro        = atlas->AddFontFromFileTTF(GCS_FONT_PATH, UI_SZ_MICRO, nullptr, kGlyphRanges);
-    g_font_value        = atlas->AddFontFromFileTTF(GCS_FONT_PATH, 26.0f,       nullptr, kGlyphRanges);
-    g_font_splash_title = atlas->AddFontFromFileTTF(GCS_FONT_PATH, 38.0f,       nullptr, kGlyphRanges);
-    if (!g_font_ui) {   // font file missing — fall back to the bundled Roboto
-        g_font_ui           = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, UI_SZ_BODY);
-        g_font_micro        = g_font_ui;
-        g_font_value        = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, 26.0f);
-        g_font_splash_title = atlas->AddFontFromFileTTF(GCS_FONT_FALLBACK_PATH, 38.0f);
+
+    const std::string mono = find_asset("fonts/GeistMono-Regular.ttf", GCS_FONT_PATH);
+    if (!mono.empty()) {
+        g_font_ui           = atlas->AddFontFromFileTTF(mono.c_str(), UI_SZ_BODY,  nullptr, kGlyphRanges);
+        g_font_micro        = atlas->AddFontFromFileTTF(mono.c_str(), UI_SZ_MICRO, nullptr, kGlyphRanges);
+        g_font_value        = atlas->AddFontFromFileTTF(mono.c_str(), 26.0f,       nullptr, kGlyphRanges);
+        g_font_splash_title = atlas->AddFontFromFileTTF(mono.c_str(), 38.0f,       nullptr, kGlyphRanges);
     }
-    ImGui::GetIO().FontDefault = g_font_ui;
+    if (!g_font_ui) {   // font file missing — fall back to the bundled Roboto
+        const std::string alt = find_asset("fonts/Roboto-Medium.ttf", GCS_FONT_FALLBACK_PATH);
+        if (!alt.empty()) {
+            g_font_ui           = atlas->AddFontFromFileTTF(alt.c_str(), UI_SZ_BODY);
+            g_font_micro        = g_font_ui;
+            g_font_value        = atlas->AddFontFromFileTTF(alt.c_str(), 26.0f);
+            g_font_splash_title = atlas->AddFontFromFileTTF(alt.c_str(), 38.0f);
+        }
+    }
+    // Both missing: leave FontDefault null so ImGui uses its built-in font
+    // rather than rendering nothing.
+    if (g_font_ui) ImGui::GetIO().FontDefault = g_font_ui;
 #endif
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
