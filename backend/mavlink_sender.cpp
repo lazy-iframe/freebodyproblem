@@ -25,6 +25,18 @@
 #  include <unistd.h>
 #endif
 
+// Winsock has no write() for sockets; send() is the portable spelling and works
+// identically on POSIX. Serial goes through serial_write() instead — on Windows
+// a port is a HANDLE, not a socket, so the two paths cannot share a call.
+static inline int socket_write(int fd, const char* buf, int len)
+{
+#ifdef _WIN32
+    return ::send(static_cast<SOCKET>(fd), buf, len, 0);
+#else
+    return static_cast<int>(::send(fd, buf, len, 0));
+#endif
+}
+
 #include <chrono>
 #include <mavlink/ardupilotmega/mavlink.h>
 
@@ -253,9 +265,19 @@ void MavlinkSender::flush_stream(int fd)
     std::lock_guard<std::mutex> lk(mtx_);
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        ::write(fd,
-                reinterpret_cast<const char*>(frame.data()),
-                static_cast<int>(frame.size()));
+        socket_write(fd,
+                     reinterpret_cast<const char*>(frame.data()),
+                     static_cast<int>(frame.size()));
+        queue_.pop();
+    }
+}
+
+void MavlinkSender::flush_serial(SerialHandle h)
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    while (!queue_.empty()) {
+        const auto& frame = queue_.front();
+        serial_write(h, frame.data(), frame.size());
         queue_.pop();
     }
 }

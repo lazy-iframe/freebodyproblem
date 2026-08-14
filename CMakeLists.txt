@@ -290,5 +290,17 @@ target_compile_definitions(freebodyproblem PRIVATE
     GCS_FONT_FALLBACK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
 )
 if(WIN32)
-    target_link_libraries(freebodyproblem PRIVATE ws2_32)
+    # setupapi: serial port enumeration in backend/connection.cpp
+    target_link_libraries(freebodyproblem PRIVATE ws2_32 setupapi)
+    target_compile_definitions(freebodyproblem PRIVATE
+        # <windows.h> defines min/max as macros, which breaks every std::min /
+        # std::max call site that sees it transitively.
+        # (WIN32_LEAN_AND_MEAN is deliberately not set here — the two files that
+        # include <windows.h> define it themselves, and defining it on the
+        # command line as well would be a C4005 mismatched redefinition.)
+        NOMINMAX
+        # Silences C4996 on strncpy/getenv. The POSIX spellings are correct and
+        # portable; the _s variants are MSVC-only.
+        _CRT_SECURE_NO_WARNINGS
+    )
 endif()

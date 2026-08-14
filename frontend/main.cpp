@@ -40,7 +40,6 @@ static inline void cleanup_sockets() { WSACleanup(); }
 #  include <sys/time.h>
 #  include <unistd.h>
 #  include <fcntl.h>
-#  include <termios.h>
 #  define close_socket close
 static inline void init_sockets()    {}
 static inline void cleanup_sockets() {}
@@ -127,25 +126,6 @@ void gcs_log(const char* fmt, ...)
 // Outbound command queue — enqueued by UI thread, flushed by link thread
 static MavlinkSender  g_sender;
 
-// ── Serial helpers (POSIX) ────────────────────────────────────────────────────
-
-#ifndef _WIN32
-static speed_t baud_to_speed(int baud)
-{
-    switch (baud) {
-    case 9600:   return B9600;
-    case 19200:  return B19200;
-    case 38400:  return B38400;
-    case 57600:  return B57600;
-    case 115200: return B115200;
-    case 230400: return B230400;
-    case 460800: return B460800;
-    case 921600: return B921600;
-    default:     return B57600;
-    }
-}
-#endif
-
 // ── Link thread ───────────────────────────────────────────────────────────────
 
 struct LinkConfig {
@@ -163,8 +143,10 @@ static void link_thread_fn(LinkConfig cfg)
     init_sockets();
     g_link_status.store(LinkStatus::Connecting);
 
-    int  fd        = -1;
-    bool is_stream = false;
+    int          fd        = -1;
+    SerialHandle ser       = SERIAL_INVALID;
+    bool         is_stream = false;
+    const bool   is_serial = (cfg.type == ConnType::Serial);
 
     sockaddr_in vehicle_addr{};
     bool        vehicle_addr_set = false;
@@ -262,23 +244,13 @@ static void link_thread_fn(LinkConfig cfg)
         is_stream = true;
 
     } else { // Serial
-#ifndef _WIN32
-        fd = open(cfg.device, O_RDWR | O_NOCTTY);
-        if (fd < 0) {
-            perror("open serial");
+        ser = serial_open(cfg.device, cfg.baud);
+        if (ser == SERIAL_INVALID) {
+            gcs_log("failed to open serial port %s", cfg.device);
             g_link_status.store(LinkStatus::Error);
+            cleanup_sockets();
             return;
         }
-        termios tio{};
-        tcgetattr(fd, &tio);
-        cfmakeraw(&tio);
-        const speed_t spd = baud_to_speed(cfg.baud);
-        cfsetispeed(&tio, spd);
-        cfsetospeed(&tio, spd);
-        tio.c_cc[VTIME] = 2; // 0.2 s read timeout
-        tio.c_cc[VMIN]  = 0;
-        tcsetattr(fd, TCSANOW, &tio);
-#endif
         is_stream = true;
     }
 
@@ -308,10 +280,13 @@ static void link_thread_fn(LinkConfig cfg)
                 vehicle_addr     = src;
                 vehicle_addr_set = true;
             }
+        } else if (is_serial) {
+            n = serial_read(ser, buf, sizeof(buf));
+            if (n > 0 && !vehicle_addr_set)
+                vehicle_addr_set = true;
         } else {
-#ifndef _WIN32
-            n = read(fd, buf, sizeof(buf));
-#endif
+            // recv(), not read(): Winsock sockets are not CRT file descriptors.
+            n = recv(fd, (char*)buf, sizeof(buf), 0);
             if (n > 0 && !vehicle_addr_set)
                 vehicle_addr_set = true;
         }
@@ -475,7 +450,9 @@ static void link_thread_fn(LinkConfig cfg)
 
         // Flush outbound commands
         if (vehicle_addr_set) {
-            if (!is_stream)
+            if (is_serial)
+                g_sender.flush_serial(ser);
+            else if (!is_stream)
                 g_sender.flush(fd, vehicle_addr);
             else
                 g_sender.flush_stream(fd);
@@ -513,7 +490,8 @@ static void link_thread_fn(LinkConfig cfg)
         }
     }
 
-    close_socket(fd);
+    if (is_serial) serial_close(ser);
+    else           close_socket(fd);
     cleanup_sockets();
 }
 

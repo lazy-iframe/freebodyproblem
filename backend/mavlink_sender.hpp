@@ -34,6 +34,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "connection.hpp"      // for SerialHandle
 #include "mavlink_parser.hpp"  // for MissionItem
 
 // Visual feedback state for a sent command
@@ -136,8 +137,11 @@ public:
     // Drain all queued frames via sendto() (UDP).
     void flush(int fd, const sockaddr_in& dest);
 
-    // Drain all queued frames via write() (TCP socket or serial fd).
+    // Drain all queued frames to a connected TCP socket.
     void flush_stream(int fd);
+
+    // Drain all queued frames to an open serial port.
+    void flush_serial(SerialHandle h);
 
     bool has_pending() const;
 
