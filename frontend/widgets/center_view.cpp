@@ -27,6 +27,13 @@
 #include <GLFW/glfw3.h>   // brings in OpenGL3 core header
 #include <cstring>
 
+// The Windows SDK ships the OpenGL 1.1 headers; GL_CLAMP_TO_EDGE is 1.2.
+// The runtime supports it fine — only the declaration is missing.
+// (Same workaround as map_view.cpp.)
+#ifndef GL_CLAMP_TO_EDGE
+#  define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 // ── Module-level state ────────────────────────────────────────────────────────
 
 static VideoPlayer s_vp;
