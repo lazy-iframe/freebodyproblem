@@ -50,6 +50,14 @@ static std::string read_sysfs_attr(const std::string& path)
     return s;
 }
 
+// speed_t encoding is libc-dependent: musl and glibc before 2.42 use opaque
+// indices (B9600 == 13), while glibc 2.42+, macOS and the BSDs use the literal
+// rate (B9600 == 9600). Routing through the B-constants is correct under both.
+//
+// Only the top two rates need guarding: POSIX mandates everything up to
+// B230400, but macOS stops there. A platform that omits a constant is by
+// definition one of the literal-encoding ones, so the rate itself is already
+// the correct value — cfsetspeed() rejects it if the driver cannot produce it.
 static speed_t baud_to_speed(int baud)
 {
     switch (baud) {
@@ -59,10 +67,15 @@ static speed_t baud_to_speed(int baud)
     case 57600:  return B57600;
     case 115200: return B115200;
     case 230400: return B230400;
+#ifdef B460800
     case 460800: return B460800;
+#endif
+#ifdef B921600
     case 921600: return B921600;
-    default:     return B57600;
+#endif
+    default:     break;
     }
+    return static_cast<speed_t>(baud);
 }
 #endif
 
