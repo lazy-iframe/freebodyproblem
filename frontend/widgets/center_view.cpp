@@ -119,9 +119,9 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
             ImDrawList*  dl = ImGui::GetWindowDrawList();
             const ImVec2 wp = ImGui::GetWindowPos();
             const char*  title =
-                (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED \xe2\x80\x94 FWD"
-              : (s_mode == CenterMode::MapOnly)   ? "TACTICAL MAP \xe2\x80\x94 2D / NORTH-UP"
-                                                  : "SENSOR FEED / TACTICAL MAP";
+                (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED"
+              : (s_mode == CenterMode::MapOnly)   ? "CARTOGRAPH \xe2\x80\x94 2D / NORTH-UP"
+                                                  : "SENSOR FEED / CARTOGRAPH";
             ui_panel_header_at(dl, { wp.x, wp.y }, l.center_w, title, nullptr,
                                1.0f, HEADER_H);
         }

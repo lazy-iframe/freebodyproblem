@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same branch cancels an in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # ── Linux ────────────────────────────────────────────────────────────────────
+  linux:
+    name: Linux (Ubuntu / GCC)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # A standalone Python avoids PEP 668 "externally-managed-environment",
+      # which blocks the `pip install -r pymavlink/requirements.txt` that
+      # third_party/mavlink/CMakeLists.txt runs during header generation.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libglfw3-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libssl-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev
+
+      - name: Configure
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebodyproblem-linux-x86_64
+          path: build/freebodyproblem
+          if-no-files-found: error
+
+  # ── macOS ────────────────────────────────────────────────────────────────────
+  macos:
+    name: macOS (Apple Silicon / Clang)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Homebrew merged gst-plugins-{base,good,bad,ugly} into the `gstreamer`
+      # formula, so this single package provides gstreamer-1.0 and
+      # gstreamer-app-1.0 to pkg-config.
+      - name: Install dependencies
+        run: brew install ninja pkg-config glfw gstreamer openssl@3
+
+      - name: Configure
+        run: |
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
+            -DCMAKE_CXX_FLAGS="-DGL_SILENCE_DEPRECATION"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebodyproblem-macos-arm64
+          path: build/freebodyproblem
+          if-no-files-found: error
+
+  # ── Windows ──────────────────────────────────────────────────────────────────
+  #
+  # Marked continue-on-error: the Windows port is incomplete — serial transport
+  # is compiled out (frontend/main.cpp) and list_serial_ports() returns empty
+  # (backend/connection.cpp). This job exists to surface compile breakage while
+  # that work happens. Remove continue-on-error once it is reliably green.
+  windows:
+    name: Windows (MSVC) [porting]
+    runs-on: windows-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # pkgconfiglite satisfies the pkg_check_modules(GST ...) call in
+      # CMakeLists.txt; gstreamer-devel ships the matching .pc files.
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          choco install -y --no-progress pkgconfiglite ninja
+          choco install -y --no-progress gstreamer gstreamer-devel
+
+      - name: Locate GStreamer and OpenSSL
+        shell: pwsh
+        run: |
+          $gst = "C:\gstreamer\1.0\msvc_x86_64"
+          if (-not (Test-Path "$gst\lib\pkgconfig")) {
+            throw "GStreamer devel pkgconfig not found under $gst"
+          }
+          "PKG_CONFIG_PATH=$gst\lib\pkgconfig"    | Out-File -Append $env:GITHUB_ENV
+          "$gst\bin"                              | Out-File -Append $env:GITHUB_PATH
+
+          $ssl = @(
+            "C:\Program Files\OpenSSL",
+            "C:\Program Files\OpenSSL-Win64"
+          ) | Where-Object { Test-Path "$_\include\openssl\ssl.h" } | Select-Object -First 1
+          if (-not $ssl) { throw "No OpenSSL development headers found" }
+          "OPENSSL_ROOT_DIR=$ssl" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -B build -S . -G Ninja `
+            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebodyproblem-windows-x86_64
+          path: build/freebodyproblem.exe
+          if-no-files-found: error
