@@ -16,6 +16,8 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
+  # Last series shipping the MSI pair with a separate -devel- package.
+  GSTREAMER_VERSION: '1.26.11'
 
 jobs:
   # ── Linux ────────────────────────────────────────────────────────────────────
@@ -115,23 +117,66 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # pkgconfiglite satisfies the pkg_check_modules(GST ...) call in
-      # CMakeLists.txt; gstreamer-devel ships the matching .pc files.
-      - name: Install dependencies
+      - name: Install Ninja
+        run: choco install -y --no-progress ninja
+
+      # Pinned to the 1.26 series deliberately: 1.28+ replaced the MSI pair with
+      # a single ~500 MB .exe and dropped the separate -devel- package, and the
+      # Chocolatey gstreamer packages are stalled at 1.22.
+      - name: Cache GStreamer installers
+        id: gst-cache
+        uses: actions/cache@v4
+        with:
+          path: gst-msi
+          key: gstreamer-msvc-x86_64-${{ env.GSTREAMER_VERSION }}
+
+      - name: Download GStreamer
+        if: steps.gst-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          choco install -y --no-progress pkgconfiglite ninja
-          choco install -y --no-progress gstreamer gstreamer-devel
+          $base = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc"
+          New-Item -ItemType Directory -Force -Path gst-msi | Out-Null
+          foreach ($n in @("gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.msi",
+                           "gstreamer-1.0-devel-msvc-x86_64-$env:GSTREAMER_VERSION.msi")) {
+            Write-Host "Downloading $n"
+            curl.exe -fSL --retry 3 -o "gst-msi\$n" "$base/$n"
+            if ($LASTEXITCODE -ne 0) { throw "Download failed: $base/$n" }
+          }
+
+      # ADDLOCAL=ALL is required. The MSI's default silent feature set omits the
+      # headers and .lib files, which is what makes a plain /quiet install look
+      # like it succeeded while leaving nothing to compile against.
+      - name: Install GStreamer
+        shell: pwsh
+        run: |
+          foreach ($msi in Get-ChildItem gst-msi\*.msi) {
+            Write-Host "Installing $($msi.Name)"
+            $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList `
+              "/i", "`"$($msi.FullName)`"", "/quiet", "/qn", "/norestart", "ADDLOCAL=ALL"
+            if ($p.ExitCode -ne 0) { throw "msiexec failed ($($p.ExitCode)) for $($msi.Name)" }
+          }
 
       - name: Locate GStreamer and OpenSSL
         shell: pwsh
         run: |
-          $gst = "C:\gstreamer\1.0\msvc_x86_64"
-          if (-not (Test-Path "$gst\lib\pkgconfig")) {
-            throw "GStreamer devel pkgconfig not found under $gst"
+          # The installer sets this machine-wide, but not in the current process.
+          $gst = [Environment]::GetEnvironmentVariable(
+                   'GSTREAMER_1_0_ROOT_MSVC_X86_64', 'Machine')
+          if (-not $gst) { $gst = "C:\gstreamer\1.0\msvc_x86_64" }
+          $gst = $gst.TrimEnd('\')
+
+          if (-not (Test-Path "$gst\include\gstreamer-1.0\gst\gst.h")) {
+            Write-Host "::error::GStreamer headers missing under $gst"
+            Write-Host "--- contents of C:\gstreamer (2 levels) ---"
+            if (Test-Path C:\gstreamer) {
+              Get-ChildItem C:\gstreamer -Depth 2 | Select-Object FullName |
+                Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+            } else { Write-Host "C:\gstreamer does not exist" }
+            throw "GStreamer devel install incomplete"
           }
-          "PKG_CONFIG_PATH=$gst\lib\pkgconfig"    | Out-File -Append $env:GITHUB_ENV
-          "$gst\bin"                              | Out-File -Append $env:GITHUB_PATH
+
+          "GSTREAMER_ROOT=$gst" | Out-File -Append $env:GITHUB_ENV
+          "$gst\bin"           | Out-File -Append $env:GITHUB_PATH
 
           $ssl = @(
             "C:\Program Files\OpenSSL",
@@ -145,6 +190,7 @@ jobs:
         run: |
           cmake -B build -S . -G Ninja `
             -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DGSTREAMER_ROOT="$env:GSTREAMER_ROOT" `
             -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT_DIR"
 
       - name: Build

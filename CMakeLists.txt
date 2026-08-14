@@ -163,11 +163,73 @@ add_custom_command(
 )
 
 # ── GStreamer (video streaming) ────────────────────────────────────────────────
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GST REQUIRED
-    gstreamer-1.0
-    gstreamer-app-1.0
-)
+#
+# On Unix, pkg-config is authoritative. On Windows it is not usable: the MSVC
+# GStreamer SDK ships .pc files with a non-relocatable baked-in prefix, and the
+# common pkg-config build for Windows (pkgconfiglite, pkg-config 0.28) predates
+# --define-prefix. Locate the SDK directly there instead.
+#
+# Both branches populate GST_INCLUDE_DIRS / GST_LIBRARIES so consumers below are
+# identical across platforms.
+
+if(WIN32)
+    # Set by the official GStreamer MSVC installer.
+    if(DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
+        file(TO_CMAKE_PATH "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}" _GST_ROOT_DEFAULT)
+    else()
+        set(_GST_ROOT_DEFAULT "C:/gstreamer/1.0/msvc_x86_64")
+    endif()
+    set(GSTREAMER_ROOT "${_GST_ROOT_DEFAULT}" CACHE PATH
+        "Root of the GStreamer MSVC SDK")
+
+    find_path(GST_MAIN_INCLUDE_DIR gst/gst.h
+        HINTS "${GSTREAMER_ROOT}/include/gstreamer-1.0" NO_DEFAULT_PATH)
+    find_path(GST_GLIB_INCLUDE_DIR glib.h
+        HINTS "${GSTREAMER_ROOT}/include/glib-2.0" NO_DEFAULT_PATH)
+    # glibconfig.h is generated per-ABI and lives under lib/, not include/.
+    find_path(GST_GLIBCONFIG_INCLUDE_DIR glibconfig.h
+        HINTS "${GSTREAMER_ROOT}/lib/glib-2.0/include" NO_DEFAULT_PATH)
+
+    if(NOT GST_MAIN_INCLUDE_DIR OR NOT GST_GLIB_INCLUDE_DIR
+       OR NOT GST_GLIBCONFIG_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "GStreamer development headers not found under '${GSTREAMER_ROOT}'.\n"
+            "Install the GStreamer MSVC *devel* package, or pass "
+            "-DGSTREAMER_ROOT=<path to msvc_x86_64>.")
+    endif()
+
+    set(GST_INCLUDE_DIRS
+        "${GST_MAIN_INCLUDE_DIR}"
+        "${GST_GLIB_INCLUDE_DIR}"
+        "${GST_GLIBCONFIG_INCLUDE_DIR}"
+    )
+
+    set(GST_LIBRARIES "")
+    foreach(_gst_lib gstreamer-1.0 gstapp-1.0 gstbase-1.0 gobject-2.0 glib-2.0)
+        find_library(GST_LIB_${_gst_lib} NAMES ${_gst_lib}
+            HINTS "${GSTREAMER_ROOT}/lib" NO_DEFAULT_PATH)
+        if(NOT GST_LIB_${_gst_lib})
+            # List what is actually there, so a naming/ABI mismatch in the SDK is
+            # visible from the build log instead of costing another CI round-trip.
+            file(GLOB _gst_available "${GSTREAMER_ROOT}/lib/*.lib")
+            string(REPLACE ";" "\n  " _gst_available "${_gst_available}")
+            message(FATAL_ERROR
+                "GStreamer library '${_gst_lib}' not found under "
+                "'${GSTREAMER_ROOT}/lib'.\n"
+                "Import libraries present:\n  ${_gst_available}")
+        endif()
+        list(APPEND GST_LIBRARIES "${GST_LIB_${_gst_lib}}")
+    endforeach()
+
+    message(STATUS "GStreamer: using MSVC SDK at ${GSTREAMER_ROOT}")
+
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GST REQUIRED
+        gstreamer-1.0
+        gstreamer-app-1.0
+    )
+endif()
 
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
 
