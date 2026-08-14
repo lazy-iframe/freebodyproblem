@@ -27,7 +27,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map
 
 ### Connection
-- **Multiple transport layers**: UDP, TCP, Serial (POSIX)
+- **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
 - **Auto-discovery**: serial port enumeration with device descriptions
 - **Configurable baud rates**: 9600 to 921600
 - **Automatic telemetry rate configuration**: requests optimal message rates on connect
@@ -50,7 +50,116 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Splash screen**: dismissible startup overlay
 
 
-## Building
+## Install
+
+Prebuilt packages are attached to each release on the
+[Releases page](https://github.com/lazy-iframe/freebodyproblem/releases).
+If you only want to run the application, use these — building from source is
+not required.
+
+### Linux (Ubuntu)
+
+**1. Refresh the package index.** The `.deb` does not vendor its runtime
+libraries; apt pulls them from your configured repositories, and it can only do
+that against a current index. On a fresh install this step is not optional:
+
+```bash
+sudo apt update
+```
+
+**2. Install the package.** Pass the path with a leading `./` so apt treats it
+as a file rather than a package name:
+
+```bash
+sudo apt install ./freebodyproblem_0.1.0_amd64.deb
+```
+
+This reads the package's `Depends` and installs everything needed — GStreamer,
+OpenSSL, GLib, OpenGL, and the C/C++ runtimes. There is no separate list of
+libraries to install beforehand.
+
+Do **not** use `dpkg -i`: it installs the package without resolving
+dependencies and leaves it unconfigured. If you already did, recover with:
+
+```bash
+sudo apt --fix-broken install
+```
+
+**3. Run it.** The binary lands in `/usr/bin`, so it is already on your `PATH`:
+
+```bash
+freebodyproblem
+```
+
+Remove it later with `sudo apt remove freebodyproblem`.
+
+#### Distribution compatibility
+
+The dependency list is generated at build time from the machine that produced
+the package, so it inherits that machine's library versions as a *minimum*.
+Check what a given `.deb` actually requires before installing:
+
+```bash
+dpkg-deb --info freebodyproblem_0.1.0_amd64.deb | grep Depends
+```
+
+Two consequences worth knowing:
+
+- **Older Ubuntu releases may refuse it.** If apt reports something like
+  `libc6 (>= 2.43) but 2.39-0ubuntu8.3 is to be installed`, your release is
+  older than the build machine. Build from source instead — there is no way to
+  satisfy a newer glibc on an older system.
+- **Debian is not covered.** The package depends on `libssl3t64` and
+  `libglib2.0-0t64`, names introduced by Ubuntu's 64-bit `time_t` transition.
+  Debian calls these `libssl3` and `libglib2.0-0`, so the dependencies cannot
+  be satisfied there. Build from source on Debian.
+
+#### Video streaming plugins
+
+GStreamer loads its codecs at runtime, so they cannot be detected as hard
+dependencies. They are listed under `Recommends` and apt installs them by
+default. If you run apt with `--no-install-recommends`, add them yourself or
+video will fail to start:
+
+```bash
+sudo apt install gstreamer1.0-plugins-{base,good,bad} gstreamer1.0-libav
+```
+
+#### Graphics driver
+
+The UI needs an OpenGL 3.3+ core profile. Verify with `glxinfo` (from
+`mesa-utils`):
+
+```bash
+glxinfo | grep "OpenGL core profile version"
+```
+
+Anything below 3.3 — common on bare VMs with no GPU passthrough — will fail at
+window creation.
+
+### Windows
+
+**Nothing needs installing first.** The installer is self-contained: it bundles
+the GStreamer runtime and its plugins, the OpenSSL libraries, and the Visual C++
+runtime. Download `freebodyproblem-<version>-win64.exe` and run it.
+
+It installs to `C:\Program Files\freebodyproblem` by default and adds a Start
+Menu entry. Uninstall from **Settings → Apps**, or with the uninstaller in the
+install directory.
+
+Two things to expect:
+
+- The installer is unsigned, so SmartScreen warns on first run. Choose
+  **More info → Run anyway**.
+- As on Linux, the UI needs an OpenGL 3.3+ driver. A fresh VM running on the
+  Microsoft Basic Display Adapter does not provide one — install your GPU
+  vendor's driver first.
+
+---
+
+## Building from Source
+
+Only needed for development, or to run on a platform without a prebuilt package.
 
 ### Dependencies
 - **CMake** ≥ 3.13
@@ -71,7 +180,7 @@ sudo apt install cmake g++ libglfw3-dev libgstreamer1.0-dev \
 ### Build Steps
 ```bash
 # Clone with submodules (includes MAVLink definitions and Dear ImGui)
-git clone --recursive https://github.com/your-username/freebodyproblem.git
+git clone --recursive https://github.com/lazy-iframe/freebodyproblem.git
 cd freebodyproblem
 
 # Configure and build
@@ -82,6 +191,9 @@ cmake --build build --parallel
 ./build/freebodyproblem
 ```
 
+Running straight out of the build tree works: fonts are located next to the
+executable, then in the installed prefix, then in the source tree.
+
 #### Build Options
 - **MAVLINK_DIALECT**: Default `ardupilotmega`. Supports all the dialects that MAVLink main repo does.
 - **MAVLINK_VERSION**: Default `2.0` (MAVLink 2.0 wire protocol)
@@ -89,6 +201,79 @@ cmake --build build --parallel
 ```bash
 cmake -B build -DMAVLINK_DIALECT=common -DMAVLINK_VERSION=2.0
 ```
+
+### Building the Packages
+
+Packaging is handled by CPack, which ships with CMake. The generator is selected per platform, so no `-G` argument is needed.
+
+```bash
+cmake --build build --target package
+```
+
+The result lands in `build/` — `freebodyproblem_<version>_amd64.deb` on Linux,
+`freebodyproblem-<version>-win64.exe` on Windows.
+
+Extra tooling per platform:
+
+| Platform | Generator | Requires                                                                                         |
+|----------|-----------|--------------------------------------------------------------------------------------------------|
+| Linux    | `DEB`     | `dpkg-dev` (for `dpkg-shlibdeps`, which derives the dependency list)                             |
+| Windows  | `NSIS`    | [NSIS](https://nsis.sourceforge.io/) (`choco install nsis`) and the GStreamer MSVC **devel** SDK |
+
+Inspect a built `.deb` with:
+
+```bash
+dpkg-deb --info build/freebodyproblem_0.1.0_amd64.deb      # metadata and dependencies
+dpkg-deb --contents build/freebodyproblem_0.1.0_amd64.deb  # file listing
+```
+
+### Releasing
+
+Pushing a `v*` tag builds both packages and publishes them to a
+[GitHub Release](https://github.com/lazy-iframe/freebodyproblem/releases)
+(`.github/workflows/cd.yml`).
+
+The version in `CMakeLists.txt` is the single source of truth — CPack stamps it
+into the package filenames and metadata — so it must be bumped *before* tagging:
+
+```bash
+# 1. Bump the version
+#    CMakeLists.txt:  project(freebodyproblem VERSION 0.2.0 LANGUAGES CXX)
+git commit -am "release 0.2.0"
+git push
+
+# 2. Tag and push
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The pipeline verifies the tag against `project(... VERSION ...)` before building
+anything, and fails within seconds if they disagree:
+
+```text
+Tag v0.2.0 does not match project() VERSION 0.1.0 in CMakeLists.txt.
+```
+
+To recover from that, bump the version, commit, then move the tag:
+
+```bash
+git tag -d v0.2.0
+git push origin :refs/tags/v0.2.0
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+#### Prereleases
+
+A hyphen in the tag marks the release as a prerelease on GitHub. The suffix is
+ignored when matching against `CMakeLists.txt`, so `v0.2.0-rc1` is valid while
+the project version reads `0.2.0`:
+
+```bash
+git tag v0.2.0-rc1 && git push origin v0.2.0-rc1
+```
+
+This is the safest way to exercise the release pipeline end to end without
+publishing a headline version.
 
 ## Usage
 
@@ -183,7 +368,22 @@ freebodyproblem/
 
 ## Configuration
 
-Settings are auto-saved to `settings.json` in the working directory:
+Settings are auto-saved to a per-user location, not the working directory:
+
+| Platform | Path                                                                                           |
+|----------|------------------------------------------------------------------------------------------------|
+| Linux    | `$XDG_CONFIG_HOME/freebodyproblem/settings.json`, or `~/.config/freebodyproblem/settings.json` |
+| Windows  | `%APPDATA%\freebodyproblem\settings.json`                                                      |
+
+If neither environment variable is set, it falls back to
+`./freebodyproblem_settings.json` in the working directory.
+
+Map tiles are cached separately, under
+`$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and
+`%LOCALAPPDATA%\freebodyproblem\tiles` on Windows. Deleting that directory is
+safe — tiles are refetched on demand.
+
+Settings contents:
 - **Active theme**: Selected color scheme
 - **Custom themes**: User-defined color palettes
 - **Tile server**: URL template and attribution string
@@ -218,7 +418,7 @@ Example `settings.json`:
 
 - **No firmware upload**: Use ArduPilot's `uploader.py` or Mission Planner for bootloader operations
 - **No log download**: Access DataFlash logs via MAVLink file transfer in other tools
-- **OS support**: Tested on POSIX only (Linux/macOS), although can be build on windows in theory. Some features such as serial connection would have to be updated accordingly to support windows.
+- **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No geofence editor**: Geofence/rally point management not implemented yet
 
@@ -227,7 +427,7 @@ Example `settings.json`:
 - Implementations of "Console", "Radio" and "ESC" tabs which are for Mavlink Console, Radio Controller calibration and connection management, and ESC configuration along with motor test respectively.
 - Multi-Vehicle Support
 - PX4 Support
-- Windows Support
+- macOS Support
 - Video AI features
 
 ## Contributing
@@ -236,7 +436,7 @@ This is a personal project built for speed and clarity over feature completeness
 - Bug fixes
 - Performance improvements
 - Additional MAVLink message handlers
-- Windows support
+- macOS support
 - Telemetry graph overlays
 - Other features which are essential during a flight
 

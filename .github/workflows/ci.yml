@@ -5,11 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Lets cd.yml run these exact jobs on a tag instead of duplicating the build
+  # and dependency setup. Called jobs share the caller's run, so the artifacts
+  # they upload are downloadable by the release job.
+  workflow_call:
 
 permissions:
   contents: read
 
-# A new push to the same branch cancels an in-flight run.
+# A new push to the same branch cancels an in-flight run. Tag builds are keyed
+# by the tag ref, so a release is never cancelled by branch activity.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

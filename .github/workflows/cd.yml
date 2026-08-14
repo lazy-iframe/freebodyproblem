@@ -1,0 +1,95 @@
+name: CD
+
+# Publishes the Linux .deb and Windows installer to a GitHub Release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The project version in CMakeLists.txt is the single source of truth — it is
+# what CPack stamps into the package filenames and metadata. This workflow
+# refuses to build if the tag disagrees with it, so a release can never ship
+# packages whose version contradicts the tag that produced them.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs before the build so a mistyped or forgotten version bump fails in
+  # seconds rather than after a full Windows GStreamer install.
+  verify-version:
+    name: Verify tag matches project version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare tag against project() VERSION
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # Strip any prerelease suffix: v0.2.0-rc1 compares as 0.2.0, because
+          # CMake's project(VERSION) accepts only numeric components.
+          tag_base="${tag%%-*}"
+
+          proj=$(grep -Po 'project\(freebodyproblem\s+VERSION\s+\K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
+          if [ -z "$proj" ]; then
+            echo "::error::Could not read project() VERSION from CMakeLists.txt"
+            exit 1
+          fi
+
+          echo "tag             : ${GITHUB_REF_NAME}"
+          echo "tag base version: ${tag_base}"
+          echo "CMakeLists.txt  : ${proj}"
+
+          if [ "$tag_base" != "$proj" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match project() VERSION ${proj} in CMakeLists.txt. Bump the version, commit it, delete the tag, then re-tag."
+            exit 1
+          fi
+          echo "Versions agree."
+
+  # Reuses the CI build jobs verbatim rather than copying the dependency setup.
+  build:
+    name: Build
+    needs: verify-version
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create the release
+    steps:
+      - name: Download packages built by the CI jobs
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Show what will be published
+        run: ls -lhR artifacts
+
+      # Guard against publishing an empty or half-built release if an upload
+      # name ever changes upstream.
+      - name: Verify both packages are present
+        run: |
+          deb=$(find artifacts -name '*.deb' | wc -l)
+          exe=$(find artifacts -name '*.exe' | wc -l)
+          echo "found ${deb} .deb and ${exe} .exe"
+          if [ "$deb" -eq 0 ] || [ "$exe" -eq 0 ]; then
+            echo "::error::Expected at least one .deb and one .exe; refusing to publish an incomplete release."
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.deb
+            artifacts/*.exe
+          # A hyphen in the tag (v0.2.0-rc1, v1.0.0-beta) marks a prerelease.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
