@@ -185,13 +185,17 @@ jobs:
           if (-not $ssl) { throw "No OpenSSL development headers found" }
           "OPENSSL_ROOT_DIR=$ssl" | Out-File -Append $env:GITHUB_ENV
 
+      # Values are interpolated by Actions before pwsh sees them. A bare
+      # -DFOO=$env:BAR token is NOT expanded by PowerShell in argument mode, so
+      # it reaches CMake literally; quoting is also required because the
+      # GStreamer and OpenSSL roots contain spaces.
       - name: Configure
         shell: pwsh
         run: |
           cmake -B build -S . -G Ninja `
-            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
-            -DGSTREAMER_ROOT="$env:GSTREAMER_ROOT" `
-            -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT_DIR"
+            -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" `
+            -DGSTREAMER_ROOT="${{ env.GSTREAMER_ROOT }}" `
+            -DOPENSSL_ROOT_DIR="${{ env.OPENSSL_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
