@@ -330,22 +330,43 @@ install(FILES
         DESTINATION share/freebodyproblem/fonts)
 
 if(WIN32)
+    # These roots arrive on the command line as native paths ("C:\Program
+    # Files\OpenSSL"). Globbed results keep the backslashes, and CMake then
+    # fails to parse its own generated cmake_install.cmake ("Invalid character
+    # escape '\P'"), so normalise to forward slashes before any use below.
+    #
+    # Deliberately not file(TO_CMAKE_PATH): that treats its input as a search
+    # path, and on a Unix host it splits the drive letter on ':' and yields
+    # "C;/Program Files/...". A plain replace does the one thing wanted and
+    # behaves identically on every host.
+    string(REPLACE "\\" "/" _gst_root "${GSTREAMER_ROOT}")
+    string(REPLACE "\\" "/" _ssl_root "${OPENSSL_ROOT_DIR}")
+
     # Windows has no system package manager to satisfy these, so the installer
     # carries the full runtime. GStreamer locates its plugins relative to the
     # directory holding gstreamer-1.0-0.dll, so the SDK's bin/ + lib/ split has
     # to be preserved exactly.
-    install(DIRECTORY "${GSTREAMER_ROOT}/bin/"
+    install(DIRECTORY "${_gst_root}/bin/"
             DESTINATION ${CMAKE_INSTALL_BINDIR}
             FILES_MATCHING PATTERN "*.dll")
 
-    install(DIRECTORY "${GSTREAMER_ROOT}/lib/gstreamer-1.0/"
+    install(DIRECTORY "${_gst_root}/lib/gstreamer-1.0/"
             DESTINATION lib/gstreamer-1.0
             FILES_MATCHING PATTERN "*.dll")
 
-    # OpenSSL ships its DLLs beside the import libraries.
-    file(GLOB _openssl_dlls "${OPENSSL_ROOT_DIR}/bin/*.dll")
+    # Only the two runtime libraries. The rest of OpenSSL's bin/ is optional
+    # providers and test engines — ossltest, p_test, dasync, padlock — which
+    # have no business in a release installer.
+    file(GLOB _openssl_dlls
+        "${_ssl_root}/bin/libssl-*.dll"
+        "${_ssl_root}/bin/libcrypto-*.dll")
     if(_openssl_dlls)
         install(FILES ${_openssl_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        # Not fatal: a static OpenSSL build legitimately has no DLLs to ship.
+        message(WARNING
+            "No OpenSSL runtime DLLs under ${_ssl_root}/bin — if OpenSSL was "
+            "linked dynamically, the installed app will fail to start.")
     endif()
 
     # msvcp140.dll and friends, so the installer works on a machine with no
