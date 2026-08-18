@@ -1,10 +1,14 @@
-# Free Body Problem
+<p align="center">
+  <img src="screens/splash.svg" alt="Free Body Problem — ground control station" width="520">
+</p>
 
-[![integration](https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/ci.yml?branch=main&style=flat-square&label=integration&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/actions/workflows/ci.yml)
-[![build](https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/cd.yml?style=flat-square&label=build&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/actions/workflows/cd.yml)
-[![release](https://img.shields.io/github/v/release/lazy-iframe/freebodyproblem?style=flat-square&label=release&labelColor=12160C&color=ECB94E)](https://github.com/lazy-iframe/freebodyproblem/releases/latest)
-[![changelog](https://img.shields.io/badge/changelog-release%20notes-6E7B55?style=flat-square&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/releases)
-[![docs](https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=12160C&color=97EA89)](https://github.com/lazy-iframe/freebodyproblem#readme)
+<p align="center">
+  <a href="https://github.com/lazy-iframe/freebodyproblem/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/ci.yml?branch=main&style=flat-square&label=integration&labelColor=36441E" alt="integration"></a>
+  <a href="https://github.com/lazy-iframe/freebodyproblem/actions/workflows/cd.yml"><img src="https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/cd.yml?style=flat-square&label=build&labelColor=36441E" alt="build"></a>
+  <a href="https://github.com/lazy-iframe/freebodyproblem/releases/latest"><img src="https://img.shields.io/github/v/release/lazy-iframe/freebodyproblem?style=flat-square&label=release&labelColor=36441E&color=ECB94E" alt="release"></a>
+  <a href="https://github.com/lazy-iframe/freebodyproblem/releases"><img src="https://img.shields.io/badge/changelog-release%20notes-6E7B55?style=flat-square&labelColor=36441E" alt="changelog"></a>
+  <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a>
+</p>
 
 A modern, fast ground control station for ArduPilot and PX4 autopilots. Built for operators who know what they're doing. The development is in its early stages.
 
