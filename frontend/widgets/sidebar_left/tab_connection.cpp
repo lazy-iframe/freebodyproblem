@@ -102,15 +102,13 @@ void draw_tab_connection(const VehicleState* vs,
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(s_ports.empty());
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("CONNECT##serial", { -1.0f, 0.0f }) && !s_ports.empty()) {
+        if (ui_grid_button("CONNECT##serial", { -1.0f, 0.0f }) && !s_ports.empty()) {
             conn_out->type = ConnType::Serial;
             strncpy(conn_out->device, s_ports[serial_sel].device.c_str(),
                     sizeof(conn_out->device) - 1);
             conn_out->baud      = baud_rates[baud_sel];
             conn_out->requested = true;
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
 
     } else if (conn_tab == 1) {
@@ -123,14 +121,12 @@ void draw_tab_connection(const VehicleState* vs,
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputInt("##tcp_port", &tcp_port, 0, 0);
         ImGui::Spacing();
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("CONNECT##tcp", { -1.0f, 0.0f })) {
+        if (ui_grid_button("CONNECT##tcp", { -1.0f, 0.0f })) {
             conn_out->type = ConnType::TCP;
             strncpy(conn_out->host, tcp_host, sizeof(conn_out->host) - 1);
             conn_out->port      = tcp_port;
             conn_out->requested = true;
         }
-        ImGui::PopStyleColor(3);
 
     } else {
         // UDP
@@ -142,14 +138,12 @@ void draw_tab_connection(const VehicleState* vs,
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputInt("##udp_port", &udp_port, 0, 0);
         ImGui::Spacing();
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("CONNECT##udp", { -1.0f, 0.0f })) {
+        if (ui_grid_button("CONNECT##udp", { -1.0f, 0.0f })) {
             conn_out->type = ConnType::UDP;
             strncpy(conn_out->host, udp_host, sizeof(conn_out->host) - 1);
             conn_out->port      = udp_port;
             conn_out->requested = true;
         }
-        ImGui::PopStyleColor(3);
     }
 
     // Connection status + disconnect button
@@ -174,12 +168,9 @@ void draw_tab_connection(const VehicleState* vs,
     }
     if (is_active) {
         ImGui::SameLine(0, 8);
-        ImGui::PushStyleColor(ImGuiCol_Button,        btn_disconnect_base());
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_disconnect_hov());
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_disconnect_base());
-        if (ImGui::Button("DISCONNECT"))
+        if (ui_solid_button("DISCONNECT", { 0.0f, 0.0f },
+                            btn_disconnect_base(), btn_disconnect_hov()))
             conn_out->disconnect = true;
-        ImGui::PopStyleColor(3);
     }
 
     // ── Connection profiles ───────────────────────────────────────────────────
@@ -199,8 +190,7 @@ void draw_tab_connection(const VehicleState* vs,
         ImGui::SameLine(0, 4);
         const bool name_ok = profile_name[0] != '\0';
         ImGui::BeginDisabled(!name_ok);
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("SAVE##profile", { save_w, 0.0f }) && name_ok) {
+        if (ui_grid_button("SAVE##profile", { save_w, 0.0f }) && name_ok) {
             ConnectionProfile p;
             p.name = profile_name;
             p.type = conn_tab;
@@ -218,7 +208,6 @@ void draw_tab_connection(const VehicleState* vs,
             settings_save(*settings);
             profile_name[0] = '\0';
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
 
         // Saved profiles list
@@ -253,8 +242,7 @@ void draw_tab_connection(const VehicleState* vs,
                 ImGui::SameLine(btn_x);
 
                 // CONNECT button
-                push_flash_colors(CmdFlashState::Normal);
-                if (ImGui::Button("CONNECT##cp", { 64.0f, 0.0f })) {
+                if (ui_grid_button("CONNECT##cp", { 64.0f, 0.0f })) {
                     if (p.type == 0) {
                         conn_tab = 0;
                         conn_out->type = ConnType::Serial;
@@ -282,17 +270,13 @@ void draw_tab_connection(const VehicleState* vs,
                         conn_out->requested = true;
                     }
                 }
-                ImGui::PopStyleColor(3);
 
                 ImGui::SameLine(0, 4);
 
-                // Delete (X) button
-                ImGui::PushStyleColor(ImGuiCol_Button,        btn_disconnect_base());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_disconnect_hov());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_disconnect_base());
-                if (ImGui::Button("X##del", { 22.0f, 0.0f }))
+                // Delete (X) button — solid red, it destroys a saved profile.
+                if (ui_solid_button("X##del", { 22.0f, 0.0f },
+                                    btn_disconnect_base(), btn_disconnect_hov()))
                     to_delete = i;
-                ImGui::PopStyleColor(3);
 
                 ImGui::PopID();
             }

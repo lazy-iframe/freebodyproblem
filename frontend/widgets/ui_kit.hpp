@@ -113,6 +113,26 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 
 // Flat tactical button: dark plate, 1 px seam, tracked uppercase caption.
 // `active` fills it with amber and inverts the caption.
+// The chrome idiom shared by the 3x3 telemetry tiles and every button in the
+// app: a dark well that lifts to the header strip on hover, with the seam
+// brightening to accent and the caption picking it up too.
+//
+// `size` follows ImGui::Button's conventions — 0 fits the label / one frame
+// tall, negative means available space minus that much.
+//
+//   active — persistent "current selection" (tab open, flight mode engaged);
+//            paints the bright amber plate and pins the seam to accent
+//   flash  — transient command-ACK feedback; overrides the fill only, so the
+//            hover response stays identical in every state
+bool ui_grid_button(const char* label, ImVec2 size, bool active = false,
+                    CmdFlashState flash = CmdFlashState::Normal);
+
+// Same chrome and the same hover response, but keeping a semantic fill instead
+// of the neutral well — for buttons whose colour carries meaning on its own
+// (arm/disarm, disconnect, stop, destructive actions).
+bool ui_solid_button(const char* label, ImVec2 size, ImVec4 fill, ImVec4 fill_hov,
+                     CmdFlashState flash = CmdFlashState::Normal);
+
 bool ui_tab_button(const char* label, ImVec2 size, bool active);
 
 // ── Dialogs ──────────────────────────────────────────────────────────────────

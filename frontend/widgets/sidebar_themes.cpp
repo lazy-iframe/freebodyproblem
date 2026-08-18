@@ -90,17 +90,14 @@ void draw_themes_panel(AppSettings& settings)
     for (const auto& bi : k_builtins)
         if (settings.active_theme == bi.name) { is_builtin = true; break; }
     ImGui::BeginDisabled(is_builtin);
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("SAVE##theme", { -1.0f, 0.0f })) {
+    if (ui_grid_button("SAVE##theme", { -1.0f, 0.0f })) {
         settings.themes[settings.active_theme] = g_theme;
         settings_save(settings);
     }
-    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
     // RESET + SAVE AS row
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("RESET##theme", { (avail_w - 4.0f) * 0.5f, 0.0f })) {
+    if (ui_grid_button("RESET##theme", { (avail_w - 4.0f) * 0.5f, 0.0f })) {
         if (settings.active_theme == THEME_MATRIX_NAME) {
             g_theme = matrix_theme_vars();
         } else if (settings.active_theme == THEME_AMBER_NAME) {
@@ -113,14 +110,11 @@ void draw_themes_panel(AppSettings& settings)
         }
         apply_global_theme(ImGui::GetStyle());
     }
-    ImGui::PopStyleColor(3);
 
     ImGui::SameLine(0, 4);
 
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("SAVE AS##theme", { -1.0f, 0.0f }))
+    if (ui_grid_button("SAVE AS##theme", { -1.0f, 0.0f }))
         ImGui::OpenPopup("##saveas_popup");
-    ImGui::PopStyleColor(3);
 
     // Save-As popup
     ui_push_dialog_style();
@@ -144,24 +138,19 @@ void draw_themes_panel(AppSettings& settings)
 
         const bool name_ok = save_name[0] != '\0';
         ImGui::BeginDisabled(!name_ok);
-        ImGui::PushStyleColor(ImGuiCol_Button,        btn_write_base());
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_write_hov());
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_write_base());
-        if ((ImGui::Button("SAVE", { BW, UI_DIALOG_BH }) || enter) && name_ok) {
+        if ((ui_solid_button("SAVE", { BW, UI_DIALOG_BH },
+                             btn_write_base(), btn_write_hov()) || enter) && name_ok) {
             settings.active_theme        = save_name;
             settings.themes[save_name]   = g_theme;
             settings_save(settings);
             ImGui::CloseCurrentPopup();
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
 
         ImGui::SameLine(0, BGAP);
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("CANCEL", { BW, UI_DIALOG_BH }) ||
+        if (ui_grid_button("CANCEL", { BW, UI_DIALOG_BH }) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
-        ImGui::PopStyleColor(3);
 
         ImGui::EndPopup();
     }
@@ -199,18 +188,15 @@ void draw_themes_panel(AppSettings& settings)
 
         ImGui::Spacing();
 
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("APPLY##map", { -1.0f, 0.0f })) {
+        if (ui_grid_button("APPLY##map", { -1.0f, 0.0f })) {
             settings.tile_url         = s_url_buf;
             settings.tile_attribution = s_attr_buf;
             map_view_set_tile_source(settings.tile_url, settings.tile_attribution);
             settings_save(settings);
         }
-        ImGui::PopStyleColor(3);
 
         ImGui::Spacing();
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("RESET TO DEFAULT##map", { -1.0f, 0.0f })) {
+        if (ui_grid_button("RESET TO DEFAULT##map", { -1.0f, 0.0f })) {
             strncpy(s_url_buf,  k_default_url,  sizeof(s_url_buf)  - 1);
             strncpy(s_attr_buf, k_default_attr, sizeof(s_attr_buf) - 1);
             settings.tile_url         = k_default_url;
@@ -218,7 +204,6 @@ void draw_themes_panel(AppSettings& settings)
             map_view_set_tile_source(settings.tile_url, settings.tile_attribution);
             settings_save(settings);
         }
-        ImGui::PopStyleColor(3);
         ImGui::Spacing();
     }
 
@@ -249,6 +234,7 @@ void draw_themes_panel(AppSettings& settings)
         c4("Log",           g_theme.col_log);
         c4("No Link",       g_theme.col_no_link);
         c4("Active Text",   g_theme.col_active_text);
+        c4("Text on Dark",    g_theme.col_text_on_dark);
     }
 
     if (ImGui::CollapsingHeader("BACKGROUNDS")) {

@@ -217,17 +217,12 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
 
             // Small red stop button — upper-left corner
             ImGui::SetCursorPos({ 8.0f, UI_HEADER_H + 8.0f });
-            ImGui::PushStyleColor(ImGuiCol_Button,        btn_stop_base());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_stop_hov());
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_stop_act());
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
-            if (ImGui::Button("##stop", { 20.0f, 20.0f })) {
+            if (ui_solid_button("##stop", { 20.0f, 20.0f },
+                                btn_stop_base(), btn_stop_hov())) {
                 gcs_log("video stream stopped");
                 video_player_stop(s_vp);
                 delete_texture();
             }
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(3);
 
         // ── Connecting ────────────────────────────────────────────────────────
         } else if (state == VideoState::Connecting) {
@@ -240,16 +235,11 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
 
             // Stop button while connecting
             ImGui::SetCursorPos({ 8.0f, UI_HEADER_H + 8.0f });
-            ImGui::PushStyleColor(ImGuiCol_Button,        btn_stop_base());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_stop_hov());
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_stop_act());
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
-            if (ImGui::Button("##stop", { 20.0f, 20.0f })) {
+            if (ui_solid_button("##stop", { 20.0f, 20.0f },
+                                btn_stop_base(), btn_stop_hov())) {
                 gcs_log("video connection cancelled");
                 video_player_stop(s_vp);
             }
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(3);
 
         // ── Idle / Error — configuration form ─────────────────────────────────
         } else {
@@ -303,15 +293,11 @@ void draw_center_view(const VehicleState& vs, MissionPickState* pick)
 
             // ── Connect button ────────────────────────────────────────────────
             ImGui::Spacing();
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
-            push_flash_colors(CmdFlashState::Normal);
-            if (ImGui::Button("CONNECT##video", { form_w, 26.0f })) {
+            if (ui_grid_button("CONNECT##video", { form_w, 26.0f })) {
                 std::strncpy(s_vp.url, s_url_buf, sizeof(s_vp.url) - 1);
                 video_player_start(s_vp);
                 gcs_log("video: connecting to %s", s_vp.url);
             }
-            ImGui::PopStyleColor(3);
-            ImGui::PopStyleVar();
 
             ImGui::EndGroup();
         }

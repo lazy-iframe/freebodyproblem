@@ -280,8 +280,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     const float btn_w = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
 
     ImGui::BeginDisabled(!connected);
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("FETCH", { btn_w, 24.0f }) && connected) {
+    if (ui_grid_button("FETCH", { btn_w, 24.0f }) && connected) {
         sender->request_mission_list(tsys, tcomp);
         s_has_edit          = false;
         s_fetch_gen         = 0;
@@ -291,16 +290,13 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         if (pick) { pick->active_index = -1; pick->pick_done = false; }
         gcs_log("requesting mission list");
     }
-    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
     ImGui::SameLine(0, 4);
 
     ImGui::BeginDisabled(!s_has_edit);
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.1f, 0.1f, 0.6f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-    if (ImGui::Button("CLEAR", { btn_w, 24.0f }) && s_has_edit) {
+    if (ui_solid_button("CLEAR", { btn_w, 24.0f },
+                        btn_disconnect_base(), btn_disconnect_hov()) && s_has_edit) {
         s_edit.clear();
         s_open.clear();
         s_has_edit    = false;
@@ -308,7 +304,6 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         s_upload_done = false;
         if (pick) { pick->active_index = -1; pick->pick_done = false; pick->edit_mission = nullptr; }
     }
-    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
     // ── Download progress ─────────────────────────────────────────────────────
@@ -349,13 +344,13 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             ImGui::PushID(i);
 
             // ── Collapse / expand arrow ───────────────────────────────────────
+            // Row icons are sized by hand rather than left to SmallButton: the
+            // right-aligned layout below is computed against fixed widths, and
+            // the shared chrome needs an explicit size.
+            const ImVec2 icon_sz = { 18.0f, ImGui::GetFontSize() + 2.0f };
             const char* arrow = s_open[i] ? "v" : ">";
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.08f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.14f));
-            if (ImGui::SmallButton(arrow))
+            if (ui_grid_button(arrow, icon_sz))
                 s_open[i] = !s_open[i];
-            ImGui::PopStyleColor(3);
             ImGui::SameLine(0, 4);
 
             // ── Row header (seq, cmd, alt) ────────────────────────────────────
@@ -385,32 +380,20 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             if (pick && has_latlon) {
                 const bool is_picking = (pick->active_index == i);
                 ImGui::SameLine(right_edge - del_w - pick_w - 2.0f);
-                if (is_picking) {
-                    // Highlighted while waiting for map click
-                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.9f, 0.8f, 0.1f, 0.9f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.9f, 0.2f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.0f, 1.0f, 0.3f, 1.0f));
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.2f, 0.4f, 0.8f, 0.4f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 1.0f, 0.7f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
-                }
-                if (ImGui::SmallButton(is_picking ? "*" : "+")) {
+                // "Waiting for a map click" is a persistent state, so it maps
+                // onto the same active plate a held tab or engaged mode uses.
+                if (ui_grid_button(is_picking ? "*" : "+", icon_sz, is_picking)) {
                     if (is_picking)
                         pick->active_index = -1;  // cancel
                     else
                         pick->active_index = i;   // start picking
                 }
-                ImGui::PopStyleColor(3);
             }
 
             ImGui::SameLine(right_edge - del_w);
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.6f,0.1f,0.1f,0.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f,0.2f,0.2f,0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.0f,0.3f,0.3f,1.0f));
-            if (ImGui::SmallButton("x"))
+            if (ui_solid_button("x", icon_sz,
+                                btn_disconnect_base(), btn_disconnect_hov()))
                 to_delete = i;
-            ImGui::PopStyleColor(3);
 
             // ── Expanded fields ───────────────────────────────────────────────
             if (s_open[i]) {
@@ -482,8 +465,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     // ── Upload ────────────────────────────────────────────────────────────────
     ImGui::Spacing();
     ImGui::BeginDisabled(!connected || s_edit.empty());
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("UPLOAD MISSION", { -1.0f, 26.0f }) && connected && !s_edit.empty()) {
+    if (ui_grid_button("UPLOAD MISSION", { -1.0f, 26.0f }) && connected && !s_edit.empty()) {
         // Renumber seqs, mark first item current
         for (int i = 0; i < (int)s_edit.size(); ++i) {
             s_edit[i].seq        = (uint16_t)i;
@@ -493,7 +475,6 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         s_upload_done = false;
         gcs_log("uploading %d waypoints", (int)s_edit.size());
     }
-    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
     // Upload status badge

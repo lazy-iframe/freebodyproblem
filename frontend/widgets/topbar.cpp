@@ -164,12 +164,8 @@ void draw_topbar(const VehicleState& vs,
         const float close_x = 8.0f;
         const float close_y = (TOPBAR_H - BTN_CLOSE) * 0.5f;
         ImGui::SetCursorPos({ close_x, close_y });
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button,        btn_stop_base());
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_stop_hov());
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_stop_act());
-        if (ImGui::Button("\xc3\x97##close", { BTN_CLOSE, BTN_CLOSE })) {
+        if (ui_solid_button("\xc3\x97##close", { BTN_CLOSE, BTN_CLOSE },
+                            btn_stop_base(), btn_stop_hov())) {
             const bool has_link = (link_status == LinkStatus::Connecting ||
                                    link_status == LinkStatus::Connected);
             if (has_link)
@@ -177,8 +173,6 @@ void draw_topbar(const VehicleState& vs,
             else
                 *close_requested = true;
         }
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(2);
 
         // Confirmation modal — centered on screen
         {

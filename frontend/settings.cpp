@@ -67,7 +67,7 @@ static json theme_to_json(const ThemeVars& t)
     TV_TO_J(col_warning);     TV_TO_J(col_error);        TV_TO_J(col_error_alt);
     TV_TO_J(col_log);         TV_TO_J(col_armed);        TV_TO_J(col_disarmed);
     TV_TO_J(col_no_link);     TV_TO_J(col_no_link_muted);TV_TO_J(col_reboot);
-    TV_TO_J(col_active_text);
+    TV_TO_J(col_active_text);   TV_TO_J(col_text_on_dark);
     // Backgrounds
     TV_TO_J(bg_panel);        TV_TO_J(bg_topbar);        TV_TO_J(bg_bottombar);
     TV_TO_J(bg_sidebar_left); TV_TO_J(bg_video);         TV_TO_J(bg_map);
@@ -113,7 +113,7 @@ static ThemeVars theme_from_json(const json& j)
     TV_FROM_J(col_warning);     TV_FROM_J(col_error);        TV_FROM_J(col_error_alt);
     TV_FROM_J(col_log);         TV_FROM_J(col_armed);        TV_FROM_J(col_disarmed);
     TV_FROM_J(col_no_link);     TV_FROM_J(col_no_link_muted);TV_FROM_J(col_reboot);
-    TV_FROM_J(col_active_text);
+    TV_FROM_J(col_active_text); TV_FROM_J(col_text_on_dark);
     // Backgrounds
     TV_FROM_J(bg_panel);        TV_FROM_J(bg_topbar);        TV_FROM_J(bg_bottombar);
     TV_FROM_J(bg_sidebar_left); TV_FROM_J(bg_video);         TV_FROM_J(bg_map);

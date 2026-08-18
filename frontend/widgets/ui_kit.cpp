@@ -252,19 +252,16 @@ UiConfirm ui_confirm_popup(const char* id, const char* title, const char* questi
         hov.x = std::min(1.0f, hov.x * 1.45f);
         hov.y = std::min(1.0f, hov.y * 1.45f);
         hov.z = std::min(1.0f, hov.z * 1.45f);
-        ImGui::PushStyleColor(ImGuiCol_Button,        confirm_col);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  confirm_col);
-        const bool hit_ok = ImGui::Button(confirm_label, { BW_OK, UI_DIALOG_BH });
-        ImGui::PopStyleColor(3);
+        // The confirm button keeps its caller-supplied colour: these dialogs
+        // guard irreversible actions and the colour is the warning.
+        const bool hit_ok = ui_solid_button(confirm_label, { BW_OK, UI_DIALOG_BH },
+                                            confirm_col, hov);
 
         ImGui::SameLine(0, GAP);
 
         char cancel_id[64];
         snprintf(cancel_id, sizeof(cancel_id), "CANCEL%s", id);
-        push_flash_colors(CmdFlashState::Normal);
-        const bool hit_no = ImGui::Button(cancel_id, { BW_NO, UI_DIALOG_BH });
-        ImGui::PopStyleColor(3);
+        const bool hit_no = ui_grid_button(cancel_id, { BW_NO, UI_DIALOG_BH });
 
         ui_dialog_text("[Y / ENTER] CONFIRM    [N / ESC] CANCEL", ui_col_label());
 
@@ -282,41 +279,128 @@ UiConfirm ui_confirm_popup(const char* id, const char* title, const char* questi
     return result;
 }
 
-bool ui_tab_button(const char* label, ImVec2 size, bool active)
+// Caption colour for a filled plate. Near-black reads well on the bright amber
+// active plate but vanishes on the dark reds and olives the semantic buttons
+// use (btn_disconnect_base sits at luminance 0.13, the near-black text at
+// 0.06), so the choice follows the fill rather than being fixed. Fills are
+// blended against the panel first because several carry alpha < 1.
+static ImU32 ui_plate_text_col(ImVec4 fill, float alpha)
 {
-    ImDrawList*  dl = ImGui::GetWindowDrawList();
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec4& bg = g_theme.bg_panel;
+    const float   w  = fill.w;
+    const float   r  = fill.x * w + bg.x * (1.0f - w);
+    const float   g  = fill.y * w + bg.y * (1.0f - w);
+    const float   b  = fill.z * w + bg.z * (1.0f - w);
 
-    ImGui::InvisibleButton(label, size);
-    const bool hovered = ImGui::IsItemHovered();
-    const bool clicked = ImGui::IsItemClicked();
+    const float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    return lum < 0.45f ? ui_col(g_theme.col_text_on_dark, alpha)
+                       : ui_col(g_theme.col_active_text,  alpha);
+}
 
-    const ImVec2 p1 = { p0.x + size.x, p0.y + size.y };
-
-    if (active) {
-        dl->AddRectFilled(p0, p1, ui_col(g_theme.btn_tab_active_base));
-        ui_frame(dl, p0, p1, ui_col_accent());
-    } else {
-        dl->AddRectFilled(p0, p1, hovered ? ui_col_strip() : ui_col_well());
-        ui_frame(dl, p0, p1, hovered ? ui_col(g_theme.accent, 0.7f) : ui_col_seam());
-    }
+// Core of the shared button chrome. `base`/`base_hov` are the idle fills; the
+// seam, caption, disabled fade and ACK flash are handled identically for every
+// caller, which is what makes these read as one control family.
+//
+//   pinned — persistent state (tab open, mode engaged): seam stays accent
+//   plated — the fill is opaque enough to carry the caption itself, so the
+//            caption colour is chosen for contrast against it
+static bool ui_plate_button(const char* label, ImVec2 size,
+                            ImVec4 base, ImVec4 base_hov,
+                            bool pinned, bool plated,
+                            CmdFlashState flash)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont*     fu = g_font_ui ? g_font_ui : ImGui::GetFont();
 
     // Caption — strip any "##id" suffix before measuring / drawing.
     char caption[64];
-    const char* hash = strstr(label, "##");
-    const size_t n   = hash ? (size_t)(hash - label) : strlen(label);
-    const size_t cn  = n < sizeof(caption) - 1 ? n : sizeof(caption) - 1;
+    const char*  hash = strstr(label, "##");
+    const size_t n    = hash ? (size_t)(hash - label) : strlen(label);
+    const size_t cn   = n < sizeof(caption) - 1 ? n : sizeof(caption) - 1;
     memcpy(caption, label, cn);
     caption[cn] = '\0';
 
-    ImFont*     fu  = g_font_ui ? g_font_ui : ImGui::GetFont();
-    const ImU32 col = active ? ui_col(g_theme.col_active_text)
-                             : (hovered ? ui_col_accent() : ui_col_text());
-    const float tw  = ui_tracked_width(fu, UI_SZ_BODY, caption, UI_TRACK * 0.6f);
+    const float track = UI_TRACK * 0.6f;
+    const float tw    = ui_tracked_width(fu, UI_SZ_BODY, caption, track);
+
+    // Reproduce ImGui::Button's sizing conventions, because callers were
+    // written against them: 0 means "fit the label" / one frame tall, and a
+    // negative value means "available space minus that much". InvisibleButton
+    // has neither — it takes an explicit size and asserts on a zero axis.
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImVec2 pad   = ImGui::GetStyle().FramePadding;
+    if (size.x == 0.0f)      size.x = tw + pad.x * 2.0f;
+    else if (size.x < 0.0f)  size.x = avail.x + size.x;
+    if (size.y == 0.0f)      size.y = ImGui::GetFrameHeight();
+    else if (size.y < 0.0f)  size.y = avail.y + size.y;
+    if (size.x < 1.0f) size.x = 1.0f;
+    if (size.y < 1.0f) size.y = 1.0f;
+
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    // InvisibleButton's own return value, not IsItemClicked(): the former fires
+    // on release like ImGui::Button (so you can drag off to cancel), the latter
+    // fires on press. Confirm dialogs depend on the release semantics.
+    const bool clicked = ImGui::InvisibleButton(label, size);
+    const bool hovered = ImGui::IsItemHovered();
+
+    const ImVec2 p1 = { p0.x + size.x, p0.y + size.y };
+
+    // Drawing straight to the draw list skips the fade ImGui applies to normal
+    // widgets inside BeginDisabled(), so fold the style alpha in by hand.
+    const float a = ImGui::GetStyle().Alpha;
+
+    ImVec4 fill    = hovered ? base_hov : base;
+    bool   on_plate = plated;
+
+    switch (flash) {
+    case CmdFlashState::Accepted:
+        fill = hovered ? g_theme.flash_accepted_hov : g_theme.flash_accepted_base;
+        on_plate = true;
+        break;
+    case CmdFlashState::Rejected:
+        fill = hovered ? g_theme.flash_rejected_hov : g_theme.flash_rejected_base;
+        on_plate = true;
+        break;
+    case CmdFlashState::Pending:
+        fill = hovered ? g_theme.flash_pending_hov : g_theme.flash_pending_base;
+        on_plate = true;
+        break;
+    default:
+        break;
+    }
+
+    dl->AddRectFilled(p0, p1, ui_col(fill, a));
+    ui_frame(dl, p0, p1, (hovered || pinned) ? ui_col(g_theme.accent, a)
+                                             : ui_col(g_theme.separator, 0.9f * a));
+
+    const ImU32 col = on_plate ? ui_plate_text_col(fill, a)
+                    : hovered  ? ui_col(g_theme.accent, a)
+                               : ui_col_text();
     ui_tracked_text(dl, fu, UI_SZ_BODY,
                     { p0.x + (size.x - tw) * 0.5f,
                       p0.y + (size.y - UI_SZ_BODY) * 0.5f - 1.0f },
-                    col, caption, UI_TRACK * 0.6f);
+                    col, caption, track);
 
     return clicked;
+}
+
+bool ui_grid_button(const char* label, ImVec2 size, bool active,
+                    CmdFlashState flash)
+{
+    if (active)
+        return ui_plate_button(label, size, g_theme.btn_tab_active_base,
+                               g_theme.btn_tab_active_hov, true, true, flash);
+    return ui_plate_button(label, size, g_theme.bg_child_darker,
+                           g_theme.bg_child_dark, false, false, flash);
+}
+
+bool ui_solid_button(const char* label, ImVec2 size, ImVec4 fill, ImVec4 fill_hov,
+                     CmdFlashState flash)
+{
+    return ui_plate_button(label, size, fill, fill_hov, false, true, flash);
+}
+
+bool ui_tab_button(const char* label, ImVec2 size, bool active)
+{
+    return ui_grid_button(label, size, active);
 }

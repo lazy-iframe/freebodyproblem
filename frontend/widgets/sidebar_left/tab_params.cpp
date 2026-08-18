@@ -46,12 +46,10 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     ImGui::Spacing();
 
     ImGui::BeginDisabled(!connected);
-    push_flash_colors(CmdFlashState::Normal);
-    if (ImGui::Button("FETCH ALL", { -1.0f, 26.0f }) && connected) {
+    if (ui_grid_button("FETCH ALL", { -1.0f, 26.0f }) && connected) {
         sender->request_param_list(tsys, tcomp);
         gcs_log("requesting parameter list");
     }
-    ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
     if (vs && vs->param_count > 0) {
@@ -183,7 +181,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 int32_t bitmask_val = (int32_t)edit_val;
                 char btn_lbl[24];
                 snprintf(btn_lbl, sizeof(btn_lbl), "0x%04X###bm", bitmask_val);
-                if (ImGui::Button(btn_lbl, { val_w, 0.0f }))
+                if (ui_grid_button(btn_lbl, { val_w, 0.0f }))
                     ImGui::OpenPopup("##bitmask_popup");
 
                 ui_push_dialog_style();
@@ -215,17 +213,16 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             const bool dirty = (edit_val != p.value);
             ImGui::BeginDisabled(!connected || !dirty);
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                dirty ? btn_write_base() : ImVec4{ 0.0f, 0.0f, 0.0f, 0.0f });
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                dirty ? btn_write_hov()  : ImVec4{ 1.0f, 1.0f, 1.0f, 0.07f });
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                dirty ? btn_write_base() : ImVec4{ 1.0f, 1.0f, 1.0f, 0.14f });
-            if (ImGui::Button("WRITE", { btn_w, 0.0f })) {
+            // Amber only once the field differs from the vehicle's value —
+            // an unedited row stays in the neutral well like every other button.
+            const bool wrote = dirty
+                ? ui_solid_button("WRITE", { btn_w, 0.0f },
+                                  btn_write_base(), btn_write_hov())
+                : ui_grid_button("WRITE", { btn_w, 0.0f });
+            if (wrote) {
                 sender->set_param(tsys, tcomp, p.param_id, edit_val, p.type);
                 gcs_log("writing %s = %.6g", p.param_id, (double)edit_val);
             }
-            ImGui::PopStyleColor(3);
             ImGui::EndDisabled();
 
             ImGui::PopID();

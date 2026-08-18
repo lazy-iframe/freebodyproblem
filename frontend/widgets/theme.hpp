@@ -55,6 +55,7 @@ struct ThemeVars {
     ImVec4 col_no_link_muted  = { 0.278f, 0.318f, 0.216f, 1.0f };
     ImVec4 col_reboot         = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange
     ImVec4 col_active_text    = { 0.055f, 0.067f, 0.043f, 1.0f }; // near-black — text on amber
+    ImVec4 col_text_on_dark   = { 0.902f, 0.918f, 0.878f, 1.0f }; // bone — text on dark plates (red/olive)
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
     ImVec4 bg_panel           = { 0.106f, 0.125f, 0.071f, 1.0f }; // #1B2012
@@ -175,6 +176,7 @@ inline ImVec4 col_data()          { return g_theme.col_data; }
 inline ImVec4 col_warning()       { return g_theme.col_warning; }
 inline ImVec4 col_reboot()        { return g_theme.col_reboot; }
 inline ImVec4 col_active_text()   { return g_theme.col_active_text; }
+inline ImVec4 col_text_on_dark()  { return g_theme.col_text_on_dark; }
 inline ImVec4 col_log()           { return g_theme.col_log; }
 
 // ── Section 3: Computed colors (derived from palette) ────────────────────────
@@ -290,7 +292,8 @@ inline ThemeVars retro_amber_theme_vars()
     t.col_no_link            = { 0.80f, 0.50f, 0.0f,  1.0f }; // dim amber
     t.col_no_link_muted      = { 0.42f, 0.26f, 0.0f,  1.0f };
     t.col_reboot             = { 1.0f,  0.60f, 0.0f,  1.0f }; // amber-orange
-    t.col_active_text        = { 0.06f, 0.03f, 0.00f, 1.0f }; // dark — text on bright bg
+    t.col_active_text        = { 0.06f, 0.03f, 0.00f, 1.0f };
+    t.col_text_on_dark       = { 1.00f, 0.87f, 0.65f, 1.0f }; // dark — text on bright bg
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
     t.bg_panel               = { 0.05f, 0.03f, 0.00f, 1.0f };
@@ -392,7 +395,8 @@ inline ThemeVars matrix_theme_vars()
     t.col_no_link       = { 0.000f, 0.533f, 0.133f, 1.0f }; // dim green      #008822
     t.col_no_link_muted = { 0.000f, 0.267f, 0.067f, 1.0f }; // very dim green
     t.col_reboot        = { 0.667f, 1.000f, 0.000f, 1.0f }; // yellow-green
-    t.col_active_text   = { 0.008f, 0.039f, 0.008f, 1.0f }; // near-black (text on bright bg)
+    t.col_active_text   = { 0.008f, 0.039f, 0.008f, 1.0f };
+    t.col_text_on_dark  = { 0.800f, 1.000f, 0.850f, 1.0f }; // near-black (text on bright bg)
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
     t.bg_panel          = { 0.012f, 0.047f, 0.012f, 1.0f }; // ~#030C03

@@ -1,5 +1,11 @@
 # Free Body Problem
 
+[![integration](https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/ci.yml?branch=main&style=flat-square&label=integration&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/actions/workflows/ci.yml)
+[![build](https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/cd.yml?style=flat-square&label=build&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/actions/workflows/cd.yml)
+[![release](https://img.shields.io/github/v/release/lazy-iframe/freebodyproblem?style=flat-square&label=release&labelColor=12160C&color=ECB94E)](https://github.com/lazy-iframe/freebodyproblem/releases/latest)
+[![changelog](https://img.shields.io/badge/changelog-release%20notes-6E7B55?style=flat-square&labelColor=12160C)](https://github.com/lazy-iframe/freebodyproblem/releases)
+[![docs](https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=12160C&color=97EA89)](https://github.com/lazy-iframe/freebodyproblem#readme)
+
 A modern, fast ground control station for ArduPilot and PX4 autopilots. Built for operators who know what they're doing. The development is in its early stages.
 
 ## Philosophy

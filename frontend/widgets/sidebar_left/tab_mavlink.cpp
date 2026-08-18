@@ -233,8 +233,7 @@ void draw_tab_mavlink(MavlinkSender* sender,
         ImGui::SameLine(0, 8);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, FRAME_ROUNDING_SM);
         if (!can_send) ImGui::BeginDisabled();
-        push_flash_colors(CmdFlashState::Normal);
-        if (ImGui::Button("SEND##mavreq", { -1.0f, 0.0f })) {
+        if (ui_grid_button("SEND##mavreq", { -1.0f, 0.0f })) {
             // Convert Hz to interval_us:
             //   hz > 0  → interval_us = 1 000 000 / hz
             //   hz == 0 → interval_us = 0  (autopilot default rate)
@@ -251,7 +250,6 @@ void draw_tab_mavlink(MavlinkSender* sender,
                 vs->sysid, vs->compid,
                 (uint32_t)s_req_msg_id, interval_us);
         }
-        ImGui::PopStyleColor(3);
         if (!can_send) ImGui::EndDisabled();
         ImGui::PopStyleVar(); // FrameRounding
 

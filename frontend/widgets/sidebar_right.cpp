@@ -502,11 +502,8 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
     if (!can_ok) ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                                       ImGui::GetStyle().Alpha * 0.4f);
 
-    ImGui::PushStyleColor(ImGuiCol_Button,        btn_write_base());
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_write_hov());
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_write_base());
-    const bool hit_assign = ImGui::Button("ASSIGN", { BW, UI_DIALOG_BH });
-    ImGui::PopStyleColor(3);
+    const bool hit_assign = ui_solid_button("ASSIGN", { BW, UI_DIALOG_BH },
+                                            btn_write_base(), btn_write_hov());
 
     if (hit_assign && can_ok) {
         GridCellConfig& cell = s_cells[s_picker_cell];
@@ -534,9 +531,7 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
     if (!can_ok) ImGui::PopStyleVar();
 
     ImGui::SameLine(0, BGAP);
-    push_flash_colors(CmdFlashState::Normal);
-    const bool hit_clear = ImGui::Button("CLEAR", { BW, UI_DIALOG_BH });
-    ImGui::PopStyleColor(3);
+    const bool hit_clear = ui_grid_button("CLEAR", { BW, UI_DIALOG_BH });
     if (hit_clear) {
         s_cells[s_picker_cell].msg_id         = UINT32_MAX;
         s_cells[s_picker_cell].field_name[0]  = '\0';
@@ -546,9 +541,7 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
     }
 
     ImGui::SameLine(0, BGAP);
-    push_flash_colors(CmdFlashState::Normal);
-    const bool hit_cancel = ImGui::Button("CANCEL", { BW, UI_DIALOG_BH });
-    ImGui::PopStyleColor(3);
+    const bool hit_cancel = ui_grid_button("CANCEL", { BW, UI_DIALOG_BH });
     if (hit_cancel || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
         ImGui::CloseCurrentPopup();
 

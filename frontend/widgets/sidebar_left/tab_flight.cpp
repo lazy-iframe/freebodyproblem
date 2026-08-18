@@ -105,13 +105,14 @@ namespace FlightMode {
     static constexpr uint32_t LAND      = 9;
 }
 
-// Vehicle-reported mode names run from "Acro" to "Loiter to QLand"; the mode
-// grid is two narrow columns. Uppercase to match the rest of the UI and clamp
-// to something that fits — the button's tooltip carries the full name.
-// Uppercased mode name, truncated to whatever actually fits the button.
+// Vehicle-reported mode names run from "Acro" to "Loiter to QLand"; the grid is
+// three narrow columns. Uppercase to match the rest of the UI, then clamp to
+// what actually fits — the button's tooltip carries the full name.
+//
 // The limit is pixels rather than a character count: at three columns a button
-// is a ninth of the window wide, so a fixed count both clips on small displays
-// and wastes room on large ones.
+// is roughly a ninth of the window wide, so a fixed count both clips on small
+// displays and wastes room on large ones. Measured with the same font and
+// tracking ui_grid_button draws with, or the fit would be off.
 static std::string mode_button_label(const std::string& name, float button_w)
 {
     std::string out;
@@ -124,7 +125,10 @@ static std::string mode_button_label(const std::string& name, float button_w)
 
     const float budget = button_w - ImGui::GetStyle().FramePadding.x * 2.0f;
     if (budget <= 0.0f) return out;
-    while (out.size() > 1 && ImGui::CalcTextSize(out.c_str()).x > budget)
+
+    ImFont* fu = g_font_ui ? g_font_ui : ImGui::GetFont();
+    while (out.size() > 1 &&
+           ui_tracked_width(fu, UI_SZ_BODY, out.c_str(), UI_TRACK * 0.6f) > budget)
         out.pop_back();
     return out;
 }
@@ -155,30 +159,19 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     ImGui::PushStyleColor(ImGuiCol_Border, col_border_tab());
     ImGui::BeginDisabled(!connected);
 
-    push_flash_colors(sender->query_flash(22));
-    if (ImGui::Button("TAKEOFF", { -1.0f, 28.0f })) {
+    if (ui_grid_button("TAKEOFF", { -1.0f, 28.0f }, false,
+                       sender->query_flash(22))) {
         sender->takeoff(tsys, tcomp, TAKEOFF_ALT_M);
         gcs_log("takeoff command sent (%.0f m)", (double)TAKEOFF_ALT_M);
     }
-    ImGui::PopStyleColor(3);
 
     {
         const bool rtl_active = connected && (vs->custom_mode == FlightMode::RTL);
-        const CmdFlashState rtl_fs = sender->query_flash(20);
-        if (rtl_fs != CmdFlashState::Normal) {
-            push_flash_colors(rtl_fs);
-        } else if (rtl_active) {
-            ImGui::PushStyleColor(ImGuiCol_Button,        btn_mode_active_base());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_mode_active_hov());
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_mode_active_base());
-        } else {
-            push_flash_colors(CmdFlashState::Normal);
-        }
-        if (ImGui::Button("RTL", { -1.0f, 28.0f })) {
+        if (ui_grid_button("RTL", { -1.0f, 28.0f }, rtl_active,
+                           sender->query_flash(20))) {
             sender->return_to_launch(tsys, tcomp);
             gcs_log("RTL command sent");
         }
-        ImGui::PopStyleColor(3);
     }
 
     ImGui::Spacing();
@@ -219,19 +212,10 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     for (size_t i = 0; i < modes.size(); ++i) {
         if (i % MODE_COLS != 0) ImGui::SameLine(0, MODE_GAP);
         const bool is_active_mode = connected && (vs->custom_mode == modes[i].mode);
-        if (mode_fs != CmdFlashState::Normal) {
-            push_flash_colors(mode_fs);
-        } else if (is_active_mode) {
-            ImGui::PushStyleColor(ImGuiCol_Button,        btn_mode_active_base());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_mode_active_hov());
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_mode_active_base());
-        } else {
-            push_flash_colors(CmdFlashState::Normal);
-        }
         // ##index keeps the ImGui ID unique when a vehicle reports two modes
         // whose names truncate to the same label.
         const std::string id = modes[i].label + "##mode" + std::to_string(i);
-        if (ImGui::Button(id.c_str(), { col_w, 26.0f })) {
+        if (ui_grid_button(id.c_str(), { col_w, 26.0f }, is_active_mode, mode_fs)) {
             sender->set_mode(tsys, tcomp, modes[i].mode);
             gcs_log("mode → %s (%u)", modes[i].label.c_str(),
                     (unsigned)modes[i].mode);
@@ -246,7 +230,6 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                 }
             }
         }
-        ImGui::PopStyleColor(3);
     }
 
     ImGui::EndDisabled();
@@ -317,16 +300,15 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                 s_srv_pwm[i] = std::max(0, std::min(2200, s_srv_pwm[i]));
                 ImGui::SameLine(0, 4);
 
-                ImGui::PushStyleColor(ImGuiCol_Button,        btn_write_base());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btn_write_hov());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btn_write_base());
-                if (ImGui::Button("SET", { btn_w, 0.0f })) {
+                // Solid amber: writing a servo output commits a change to the
+                // vehicle, same signal as WRITE in the params tab.
+                if (ui_solid_button("SET", { btn_w, 0.0f },
+                                    btn_write_base(), btn_write_hov())) {
                     sender->do_set_servo(tsys, tcomp,
                                          (uint8_t)(i + 1),
                                          (uint16_t)s_srv_pwm[i]);
                     gcs_log("servo %d → %d µs", i + 1, s_srv_pwm[i]);
                 }
-                ImGui::PopStyleColor(3);
                 ImGui::PopID();
             }
 
@@ -609,15 +591,13 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
                 for (int p = 0; p < 3; ++p) {
                     if (p > 0) ImGui::SameLine(0, 2);
-                    push_flash_colors(CmdFlashState::Normal);
                     char btn_id[16];
                     snprintf(btn_id, sizeof(btn_id), "%s##%d", pos_labels[p], i);
-                    if (ImGui::Button(btn_id, { btn3_w, 0.0f })) {
+                    if (ui_grid_button(btn_id, { btn3_w, 0.0f })) {
                         sender->do_aux_function(tsys, tcomp, fn.id, (uint8_t)p);
                         gcs_log("aux fn %u (%s) → %s",
                                 (unsigned)fn.id, fn.label, pos_labels[p]);
                     }
-                    ImGui::PopStyleColor(3);
                 }
                 ImGui::PopID();
             }
