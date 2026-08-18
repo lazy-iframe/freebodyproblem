@@ -305,6 +305,21 @@ static void link_thread_fn(LinkConfig cfg)
     MavlinkParser parser;
     uint8_t buf[2048];
     bool     rates_requested    = false;
+    // AVAILABLE_MODES enumeration. The spec's "request index 0 for all modes"
+    // form is not what ArduPilot implements — it replies with index 1 alone —
+    // so the list has to be walked one index at a time. The index-0 probe is
+    // still worth sending first because its number_modes field is how we learn
+    // how far to walk. Sweeps are repeated to refill gaps left by packet loss;
+    // when they run out the UI falls back to its built-in tables.
+    auto     modes_last_req   = Clock::now();
+    int      modes_cursor     = 0;      // highest index requested this sweep
+    int      modes_sweeps     = 0;
+    int      modes_probes     = 0;
+    bool     modes_logged     = false;  // one-shot completion log
+    constexpr int    MODES_MAX_SWEEPS = 3;
+    constexpr int    MODES_MAX_PROBES = 3;
+    constexpr double MODES_REQ_S      = 0.10;  // pacing between index requests
+    constexpr double MODES_PROBE_S    = 2.0;   // retry interval for the probe
     auto     link_start         = Clock::now();
     uint32_t last_params_gen    = 0;
     uint32_t link_known_params_gen = 0;   // link-thread-local; avoids shared reads outside mutex
@@ -355,6 +370,12 @@ static void link_thread_fn(LinkConfig cfg)
                 g_sender.request_message_interval(1, 1,  24, 500000); // GPS_RAW_INT        @  2 Hz
                 g_sender.request_message_interval(1, 1, 193, 200000); // EKF_STATUS_REPORT  @  5 Hz
                 g_sender.request_autopilot_capabilities(1, 1);
+                g_sender.request_available_modes(1, 1);
+                modes_last_req = Clock::now();
+                ++modes_probes;
+                // DEBUG
+                std::fprintf(stderr, "[modes] probe for number_modes (%d/%d)\n",
+                             modes_probes, MODES_MAX_PROBES);
                 gcs_log("telemetry rates configured");
             }
 
@@ -372,6 +393,20 @@ static void link_thread_fn(LinkConfig cfg)
                 case 218: cname = "aux function"; break;
                 default:  break;
                 }
+                // DEBUG: the vehicle's verdict on our AVAILABLE_MODES request.
+                // UNSUPPORTED (3) here means the firmware predates the
+                // standard modes protocol; ACCEPTED (0) with no AVAILABLE_MODES
+                // arriving means it accepted but did not stream them.
+                if (ack.command == 512)
+                    std::fprintf(stderr,
+                                 "[modes] rx COMMAND_ACK for REQUEST_MESSAGE(512) "
+                                 "result=%u (%s)\n", ack.result,
+                                 ack.result == 0 ? "ACCEPTED"
+                               : ack.result == 1 ? "TEMPORARILY_REJECTED"
+                               : ack.result == 2 ? "DENIED"
+                               : ack.result == 3 ? "UNSUPPORTED"
+                               : ack.result == 4 ? "FAILED"
+                                                 : "other");
                 if (cname) {
                     const char* result = (ack.result == 0) ? "accepted"
                                        : (ack.result == 1) ? "temp. rejected"
@@ -382,6 +417,74 @@ static void link_thread_fn(LinkConfig cfg)
                 }
             }
             parser.clear_acks();
+
+            // Walk the vehicle's mode list one index at a time, and restart
+            // the walk if AVAILABLE_MODES_MONITOR reports the list changed.
+            {
+                const auto&   ms    = parser.state();
+                const uint8_t tsys  = ms.sysid  ? ms.sysid  : 1;
+                const uint8_t tcomp = ms.compid ? ms.compid : 1;
+
+                if (ms.modes_dirty) {
+                    parser.clear_modes_dirty();
+                    modes_cursor = 0;
+                    modes_sweeps = 0;
+                    modes_probes = 0;
+                    modes_logged = false;
+                    gcs_log("vehicle mode list changed — re-requesting");
+                }
+
+                const double since = std::chrono::duration<double>(
+                                         Clock::now() - modes_last_req).count();
+
+                if (rates_requested && !ms.modes_complete &&
+                    modes_sweeps < MODES_MAX_SWEEPS)
+                {
+                    if (ms.modes_expected == 0) {
+                        // No number_modes yet: either the probe was lost or the
+                        // firmware does not implement the protocol at all.
+                        if (since >= MODES_PROBE_S && modes_probes < MODES_MAX_PROBES) {
+                            g_sender.request_available_modes(tsys, tcomp);
+                            modes_last_req = Clock::now();
+                            ++modes_probes;
+                            std::fprintf(stderr, "[modes] probe for number_modes (%d/%d)\n",
+                                         modes_probes, MODES_MAX_PROBES);
+                        }
+                    } else if (since >= MODES_REQ_S) {
+                        // Next index we have not received yet. Indices already
+                        // in hand are skipped, so a retry sweep only re-asks
+                        // for the genuine gaps.
+                        int next = 0;
+                        for (int i = modes_cursor + 1; i <= ms.modes_expected; ++i) {
+                            if (!ms.has_mode_index(static_cast<uint8_t>(i))) {
+                                next = i;
+                                break;
+                            }
+                        }
+                        if (next != 0) {
+                            g_sender.request_available_mode(tsys, tcomp,
+                                                            static_cast<uint8_t>(next));
+                            modes_cursor   = next;
+                            modes_last_req = Clock::now();
+                        } else {
+                            // Reached the end with gaps still open — sweep again.
+                            modes_cursor = 0;
+                            ++modes_sweeps;
+                            std::fprintf(stderr,
+                                         "[modes] sweep %d/%d ended with %zu of %u\n",
+                                         modes_sweeps, MODES_MAX_SWEEPS,
+                                         ms.available_modes.size(), ms.modes_expected);
+                        }
+                    }
+                }
+
+                if (ms.modes_complete && !modes_logged) {
+                    modes_logged = true;
+                    std::fprintf(stderr, "[modes] complete: %zu modes\n",
+                                 ms.available_modes.size());
+                    gcs_log("mode list: %zu modes", ms.available_modes.size());
+                }
+            }
 
             // Drain per-item mission requests generated by MISSION_COUNT /
             // MISSION_ITEM_INT handlers (one request triggers the next).

@@ -28,6 +28,22 @@
 
 #include <mavlink/ardupilotmega/mavlink.h>
 
+// One entry from AVAILABLE_MODES (#435). Flight stacks enumerate their own mode
+// list, which is the only portable way to know what a given vehicle supports —
+// custom_mode numbering differs between ArduCopter, ArduPlane, Rover and Sub.
+struct FlightModeInfo {
+    uint8_t     mode_index    = 0;   // 1-based; the vehicle's own ordering
+    uint32_t    custom_mode   = 0;
+    uint8_t     standard_mode = 0;   // MAV_STANDARD_MODE, 0 when custom-only
+    uint32_t    properties    = 0;   // MAV_MODE_PROPERTY bitmask
+    std::string name;                // mode_name, as reported by the vehicle
+
+    // MAV_MODE_PROPERTY_NOT_USER_SELECTABLE — must not be offered as a button.
+    bool user_selectable() const { return (properties & 2u) == 0u; }
+    // MAV_MODE_PROPERTY_ADVANCED
+    bool advanced() const { return (properties & 1u) != 0u; }
+};
+
 struct MissionItem {
     uint16_t seq;
     double   lat, lon;        // degrees
@@ -154,6 +170,28 @@ struct VehicleState {
     enum class UploadStatus { Idle, InProgress, Accepted, Failed };
     UploadStatus upload_status     = UploadStatus::Idle;
     uint8_t      upload_ack_result = 255; // MAV_MISSION_RESULT
+
+    // AVAILABLE_MODES (#435) — populated after the link requests the mode list.
+    // Sorted by the vehicle's mode_index. Empty when the flight stack does not
+    // implement the standard modes protocol, in which case the UI falls back to
+    // its built-in ArduPilot tables.
+    std::vector<FlightModeInfo> available_modes;
+    uint8_t  modes_expected  = 0;      // number_modes field; 0 until first reply
+    bool     modes_complete  = false;  // every mode_index seen
+
+    // True once mode_index has been received. ArduPilot answers a request for
+    // index 0 ("all modes" in the spec) with index 1 only, so the link thread
+    // has to walk 1..modes_expected itself and needs to know what is missing.
+    bool has_mode_index(uint8_t idx) const {
+        for (const auto& m : available_modes)
+            if (m.mode_index == idx) return true;
+        return false;
+    }
+    // AVAILABLE_MODES_MONITOR (#437). A change of seq means the mode list is
+    // stale and must be re-requested.
+    uint8_t  modes_seq       = 0;
+    bool     has_modes_seq   = false;
+    bool     modes_dirty     = false;  // set on seq change, cleared by the link thread
 };
 
 class MavlinkParser {
@@ -172,6 +210,9 @@ public:
     // ACK queue — drained each frame by main.cpp, forwarded to MavlinkSender
     const std::vector<CommandAck>& pending_acks() const { return ack_queue_; }
     void clear_acks() { ack_queue_.clear(); }
+
+    // Acknowledge a mode-list change after the link thread has re-requested it.
+    void clear_modes_dirty() { state_.modes_dirty = false; }
 
     // Mission download request queue — drained by link thread after each parse()
     struct MissionReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; };

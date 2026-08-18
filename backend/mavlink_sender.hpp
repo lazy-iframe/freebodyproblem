@@ -88,6 +88,18 @@ public:
     // Triggers a COMMAND_ACK then an AUTOPILOT_VERSION response.
     void request_autopilot_capabilities(uint8_t target_sysid, uint8_t target_compid);
 
+    // Ask for AVAILABLE_MODES (#435) at mode_index 0. The spec calls this the
+    // "all modes" form, but ArduPilot answers it with index 1 alone — its value
+    // is the number_modes field, which tells the caller how far to enumerate.
+    // Flight stacks predating the standard modes protocol do not answer at all,
+    // so callers must tolerate an empty mode list.
+    void request_available_modes(uint8_t target_sysid, uint8_t target_compid);
+
+    // Ask for one specific 1-based mode_index. This is the only form ArduPilot
+    // honours per-mode, so a full list means walking 1..number_modes.
+    void request_available_mode(uint8_t target_sysid, uint8_t target_compid,
+                                uint8_t mode_index);
+
     // Request all parameters (PARAM_REQUEST_LIST #21).
     // FC responds with a stream of PARAM_VALUE (#22) messages.
     void request_param_list(uint8_t target_sysid, uint8_t target_compid);

@@ -22,7 +22,9 @@
 #include "imgui.h"
 #include "../app_log.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <string>
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 
@@ -42,8 +44,11 @@ static bool s_interlock = false;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// ArduCopter custom_mode → short name (matches the FLIGHT tab's mode buttons).
-static const char* mode_short_name(uint32_t custom_mode)
+// ArduCopter custom_mode → short name. Only correct for Copter — mode
+// numbering is frame-specific, so this mislabels a Plane (Plane 3 is TRAINING,
+// Copter 3 is AUTO). Used only when the vehicle does not publish
+// AVAILABLE_MODES; see mode_display_name() below.
+static const char* mode_short_name_fallback(uint32_t custom_mode)
 {
     switch (custom_mode) {
     case 0:  return "STAB";
@@ -63,6 +68,21 @@ static const char* mode_short_name(uint32_t custom_mode)
     case 21: return "SMRTRTL";
     default: return "MODE ?";
     }
+}
+
+// Resolve the current custom_mode to a display name, preferring the vehicle's
+// own AVAILABLE_MODES list over the Copter-only table above.
+static std::string mode_display_name(const VehicleState& vs)
+{
+    for (const FlightModeInfo& m : vs.available_modes) {
+        if (m.custom_mode == vs.custom_mode) {
+            std::string out = m.name;
+            for (char& c : out)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            return out;
+        }
+    }
+    return mode_short_name_fallback(vs.custom_mode);
 }
 
 static const char* link_status_text(LinkStatus s)
@@ -310,7 +330,9 @@ void draw_topbar(const VehicleState& vs,
         }
 
         // MODE
-        cell("MODE", vs.has_heartbeat ? mode_short_name(vs.custom_mode) : "--",
+        const std::string mode_txt = vs.has_heartbeat ? mode_display_name(vs)
+                                                      : std::string("--");
+        cell("MODE", mode_txt.c_str(),
              C_LABEL, vs.has_heartbeat ? C_AMBER : C_DIM);
 
         // LINK DATA / parse errors

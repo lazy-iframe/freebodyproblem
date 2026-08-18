@@ -18,6 +18,7 @@
 
 #include "mavlink_parser.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -170,6 +171,90 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
         state_.ekf_airspeed_variance    = ekf.airspeed_variance;
         state_.ekf_flags                = ekf.flags;
         state_.has_ekf_status           = true;
+        break;
+    }
+
+    case MAVLINK_MSG_ID_AVAILABLE_MODES: {
+        mavlink_available_modes_t am;
+        mavlink_msg_available_modes_decode(&msg, &am);
+
+        // mode_index is 1-based and is the protocol's identity for a mode, so
+        // it is the dedup key: the link thread re-requests indices that went
+        // missing, and those replies must replace rather than duplicate.
+        state_.modes_expected = am.number_modes;
+
+        // mode_name is not guaranteed NUL-terminated when it fills the field.
+        char name[sizeof(am.mode_name) + 1] = {};
+        std::memcpy(name, am.mode_name, sizeof(am.mode_name));
+
+        FlightModeInfo info;
+        info.mode_index    = am.mode_index;
+        info.custom_mode   = am.custom_mode;
+        info.standard_mode = am.standard_mode;
+        info.properties    = am.properties;
+        info.name          = name;
+
+        auto it = std::find_if(state_.available_modes.begin(),
+                               state_.available_modes.end(),
+                               [&](const FlightModeInfo& m) {
+                                   return m.mode_index == info.mode_index;
+                               });
+        const bool replaced = (it != state_.available_modes.end());
+        if (replaced) {
+            *it = info;
+        } else {
+            // Kept in mode_index order: replies arrive in request order, which
+            // is not necessarily ascending after a retry sweep, and the UI
+            // renders the list as-is.
+            auto pos = std::lower_bound(state_.available_modes.begin(),
+                                        state_.available_modes.end(),
+                                        info.mode_index,
+                                        [](const FlightModeInfo& m, uint8_t idx) {
+                                            return m.mode_index < idx;
+                                        });
+            state_.available_modes.insert(pos, info);
+        }
+
+        state_.modes_complete =
+            (state_.modes_expected > 0) &&
+            (state_.available_modes.size() >= state_.modes_expected);
+
+        // DEBUG: dumps every field the vehicle reported. "replace" means this
+        // custom_mode was already in the list — a vehicle that sends distinct
+        // modes all carrying the same custom_mode would collapse to one entry.
+        std::fprintf(stderr,
+                     "[modes] rx AVAILABLE_MODES from %u/%u  idx=%u/%u  "
+                     "std=%u custom=%u props=0x%X  name=\"%s\"  (%s, have %zu)%s\n",
+                     msg.sysid, msg.compid,
+                     am.mode_index, am.number_modes,
+                     am.standard_mode, am.custom_mode, am.properties, name,
+                     replaced ? "replace" : "new",
+                     state_.available_modes.size(),
+                     state_.modes_complete ? "  COMPLETE" : "");
+        break;
+    }
+
+    case MAVLINK_MSG_ID_AVAILABLE_MODES_MONITOR: {
+        mavlink_available_modes_monitor_t mm;
+        mavlink_msg_available_modes_monitor_decode(&msg, &mm);
+
+        // First sighting only records the sequence; a later change means the
+        // vehicle's mode list has been rebuilt (frame change, reboot) and what
+        // we hold is stale.
+        const bool changed = state_.has_modes_seq && mm.seq != state_.modes_seq;
+        if (changed) {
+            state_.available_modes.clear();
+            state_.modes_expected = 0;
+            state_.modes_complete = false;
+            state_.modes_dirty    = true;
+        }
+        // DEBUG: only on change / first sighting — the vehicle streams this
+        // one periodically and printing every copy would drown the log.
+        if (changed || !state_.has_modes_seq)
+            std::fprintf(stderr, "[modes] rx AVAILABLE_MODES_MONITOR seq=%u%s\n",
+                         mm.seq, changed ? "  (CHANGED - list cleared)" : "  (first)");
+        state_.modes_seq     = mm.seq;
+        state_.has_modes_seq = true;
         break;
     }
 

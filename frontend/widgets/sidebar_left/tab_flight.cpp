@@ -24,6 +24,8 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 // ── EKF variance bars ─────────────────────────────────────────────────────────
 
@@ -103,6 +105,30 @@ namespace FlightMode {
     static constexpr uint32_t LAND      = 9;
 }
 
+// Vehicle-reported mode names run from "Acro" to "Loiter to QLand"; the mode
+// grid is two narrow columns. Uppercase to match the rest of the UI and clamp
+// to something that fits — the button's tooltip carries the full name.
+// Uppercased mode name, truncated to whatever actually fits the button.
+// The limit is pixels rather than a character count: at three columns a button
+// is a ninth of the window wide, so a fixed count both clips on small displays
+// and wastes room on large ones.
+static std::string mode_button_label(const std::string& name, float button_w)
+{
+    std::string out;
+    out.reserve(name.size());
+    for (char c : name) {
+        out.push_back(static_cast<char>(
+            std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (out.empty()) return "?";
+
+    const float budget = button_w - ImGui::GetStyle().FramePadding.x * 2.0f;
+    if (budget <= 0.0f) return out;
+    while (out.size() > 1 && ImGui::CalcTextSize(out.c_str()).x > budget)
+        out.pop_back();
+    return out;
+}
+
 static constexpr float TAKEOFF_ALT_M = 5.0f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,23 +183,41 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
     ImGui::Spacing();
 
-    struct ModeBtn { const char* label; uint32_t mode; };
-    static const ModeBtn modes[] = {
-        { "STAB", FlightMode::STABILIZE },
-        { "ACRO", FlightMode::ACRO      },
-        { "ALTH", FlightMode::ALT_HOLD  },
-        { "LOIT", FlightMode::LOITER    },
-        { "GUID", FlightMode::GUIDED    },
-        { "AUTO", FlightMode::AUTO      },
-        { "LAND", FlightMode::LAND      },
-    };
-    constexpr int MODE_COUNT = (int)(sizeof(modes) / sizeof(modes[0]));
+    // Mode buttons come from the vehicle's own AVAILABLE_MODES list when it
+    // publishes one — custom_mode numbering is per-frame (a Plane's mode 3 is
+    // not a Copter's mode 3), so a hardcoded table is only correct by accident.
+    // Older flight stacks never answer, and fall back to the Copter table.
+    struct ModeBtn { std::string label; uint32_t mode; };
+    std::vector<ModeBtn> modes;
 
-    const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+    // Three columns: a vehicle that publishes its full list reports ~25 modes,
+    // which at two columns runs past the bottom of the sidebar.
+    constexpr int   MODE_COLS = 3;
+    constexpr float MODE_GAP  = 4.0f;
+    const float col_w = (ImGui::GetContentRegionAvail().x
+                         - MODE_GAP * (MODE_COLS - 1)) / MODE_COLS;
+
+    if (connected && !vs->available_modes.empty()) {
+        for (const FlightModeInfo& m : vs->available_modes) {
+            if (!m.user_selectable()) continue;   // MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
+            modes.push_back({ mode_button_label(m.name, col_w), m.custom_mode });
+        }
+    } else {
+        modes = {
+            { "STAB", FlightMode::STABILIZE },
+            { "ACRO", FlightMode::ACRO      },
+            { "ALTH", FlightMode::ALT_HOLD  },
+            { "LOIT", FlightMode::LOITER    },
+            { "GUID", FlightMode::GUIDED    },
+            { "AUTO", FlightMode::AUTO      },
+            { "LAND", FlightMode::LAND      },
+        };
+    }
+
     const CmdFlashState mode_fs = sender->query_flash(176);
 
-    for (int i = 0; i < MODE_COUNT; ++i) {
-        if (i % 2 == 1) ImGui::SameLine(0, 4);
+    for (size_t i = 0; i < modes.size(); ++i) {
+        if (i % MODE_COLS != 0) ImGui::SameLine(0, MODE_GAP);
         const bool is_active_mode = connected && (vs->custom_mode == modes[i].mode);
         if (mode_fs != CmdFlashState::Normal) {
             push_flash_colors(mode_fs);
@@ -184,9 +228,23 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         } else {
             push_flash_colors(CmdFlashState::Normal);
         }
-        if (ImGui::Button(modes[i].label, { half, 26.0f })) {
+        // ##index keeps the ImGui ID unique when a vehicle reports two modes
+        // whose names truncate to the same label.
+        const std::string id = modes[i].label + "##mode" + std::to_string(i);
+        if (ImGui::Button(id.c_str(), { col_w, 26.0f })) {
             sender->set_mode(tsys, tcomp, modes[i].mode);
-            gcs_log("mode → %s", modes[i].label);
+            gcs_log("mode → %s (%u)", modes[i].label.c_str(),
+                    (unsigned)modes[i].mode);
+        }
+        if (ImGui::IsItemHovered() && !vs->available_modes.empty()) {
+            // Full name, since the button label is truncated to fit.
+            for (const FlightModeInfo& m : vs->available_modes) {
+                if (m.custom_mode == modes[i].mode) {
+                    ImGui::SetTooltip("%s%s", m.name.c_str(),
+                                      m.advanced() ? "  (advanced)" : "");
+                    break;
+                }
+            }
         }
         ImGui::PopStyleColor(3);
     }

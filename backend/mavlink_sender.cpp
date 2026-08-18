@@ -38,6 +38,7 @@ static inline int socket_write(int fd, const char* buf, int len)
 }
 
 #include <chrono>
+#include <cstdio>
 #include <mavlink/ardupilotmega/mavlink.h>
 
 using Clock = std::chrono::steady_clock;
@@ -101,6 +102,22 @@ void MavlinkSender::request_autopilot_capabilities(uint8_t tsys, uint8_t tcomp)
 {
     // MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES (520), param1=1 (request)
     enqueue_command_long(tsys, tcomp, 520, 1.f);
+}
+
+void MavlinkSender::request_available_modes(uint8_t tsys, uint8_t tcomp)
+{
+    request_available_mode(tsys, tcomp, 0);
+}
+
+void MavlinkSender::request_available_mode(uint8_t tsys, uint8_t tcomp,
+                                           uint8_t mode_index)
+{
+    // MAV_CMD_REQUEST_MESSAGE (512): param1 = message id, param2 = mode index.
+    // DEBUG: confirms the request was queued, and to whom.
+    std::fprintf(stderr, "[modes] tx REQUEST_MESSAGE(512) id=%d index=%u -> %u/%u\n",
+                 (int)MAVLINK_MSG_ID_AVAILABLE_MODES, mode_index, tsys, tcomp);
+    enqueue_command_long(tsys, tcomp, 512,
+                         (float)MAVLINK_MSG_ID_AVAILABLE_MODES, (float)mode_index);
 }
 
 
