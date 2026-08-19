@@ -18,20 +18,11 @@
 
 #pragma once
 #include "../../backend/mavlink_parser.hpp"
-#include "../../plugins/plugin_api.hpp"
-#include "../mission_pick.hpp"
 
 class MavlinkSender;
 
-// `sender` is handed to the plugin rail beside the video, which is where user
-// plugins reach the vehicle from.
-void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
-                      MissionPickState* pick = nullptr);
-void center_view_shutdown();   // stop video + delete GL texture — call before context destroy
-
-// The context handed to plugins — vehicle, link and live camera state. Built
-// here because this is where the camera state lives, and shared so the rail's
-// buttons and the feed's click handlers see exactly the same picture.
-// `slot` is left at -1; the rail sets it per button.
-PluginContext center_view_plugin_context(const VehicleState& vs,
-                                         MavlinkSender* sender);
+// The column of square user-function buttons beside the video feed. One button
+// per plugin registered in plugins/ ; pressing one runs that plugin on this
+// thread. Drawn by the centre view, which owns the rectangle beside the video.
+void draw_plugin_rail(const VehicleState& vs, MavlinkSender* sender,
+                      float x, float y, float w, float h);

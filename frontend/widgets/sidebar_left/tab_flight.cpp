@@ -133,7 +133,13 @@ static std::string mode_button_label(const std::string& name, float button_w)
     return out;
 }
 
-static constexpr float TAKEOFF_ALT_M = 5.0f;
+// Takeoff altitude, metres above home. Editable beside the button that uses it;
+// 5 m is a conservative first hop that clears most obstacles without committing
+// to a climb. Clamped to what MAV_CMD_NAV_TAKEOFF can sensibly ask for.
+static float s_takeoff_alt_m = 5.0f;
+
+static constexpr float TAKEOFF_ALT_MIN_M = 0.0f;
+static constexpr float TAKEOFF_ALT_MAX_M = 1000.0f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -159,10 +165,44 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     ImGui::PushStyleColor(ImGuiCol_Border, col_border_tab());
     ImGui::BeginDisabled(!connected);
 
-    if (ui_grid_button("TAKEOFF", { -1.0f, 28.0f }, false,
-                       sender->query_flash(22))) {
-        sender->takeoff(tsys, tcomp, TAKEOFF_ALT_M);
-        gcs_log("takeoff command sent (%.0f m)", (double)TAKEOFF_ALT_M);
+    // TAKEOFF | altitude | unit, on one row: the number is only ever read by the
+    // button next to it, so keeping them apart would just hide the argument.
+    {
+        constexpr float ROW_H   = 28.0f;
+        constexpr float ALT_W   = 56.0f;
+        constexpr float ROW_GAP = 4.0f;
+
+        const float unit_w = ImGui::CalcTextSize("M").x;
+        const float btn_w  = ImGui::GetContentRegionAvail().x
+                             - ALT_W - unit_w - ROW_GAP * 2.0f;
+
+        if (ui_grid_button("TAKEOFF", { btn_w, ROW_H }, false,
+                           sender->query_flash(22))) {
+            sender->takeoff(tsys, tcomp, s_takeoff_alt_m);
+            gcs_log("takeoff command sent (%.1f m)", (double)s_takeoff_alt_m);
+        }
+
+        // The input frame is padded up to the button's height — items on a
+        // SameLine row hang from the line top, so a default-height field would
+        // sit proud of the button beside it.
+        const float pad_y = std::max(0.0f,
+                                     (ROW_H - ImGui::GetFontSize()) * 0.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            { ImGui::GetStyle().FramePadding.x, pad_y });
+
+        ImGui::SameLine(0, ROW_GAP);
+        ImGui::SetNextItemWidth(ALT_W);
+        ImGui::InputFloat("##takeoff_alt", &s_takeoff_alt_m, 0.f, 0.f, "%.1f");
+        s_takeoff_alt_m = std::max(TAKEOFF_ALT_MIN_M,
+                                   std::min(TAKEOFF_ALT_MAX_M, s_takeoff_alt_m));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Takeoff altitude, metres above home");
+
+        ImGui::SameLine(0, ROW_GAP);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("M");
+
+        ImGui::PopStyleVar(); // FramePadding
     }
 
     {

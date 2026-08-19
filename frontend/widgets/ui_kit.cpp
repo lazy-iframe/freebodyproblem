@@ -304,13 +304,24 @@ static ImU32 ui_plate_text_col(ImVec4 fill, float alpha)
 //   pinned — persistent state (tab open, mode engaged): seam stays accent
 //   plated — the fill is opaque enough to carry the caption itself, so the
 //            caption colour is chosen for contrast against it
+//   tint   — optional replacement for the theme's amber accent on the seam and
+//            the caption. Only the plugin rail passes one: same dark well, same
+//            hover response, blue where the rest of the app goes amber.
+//   cap_sz — caption height. Anything above body size is drawn from the big
+//            readout atlas rather than scaling the 16 px one, the same trade
+//            ui_readout and ui_status_block make for their large text.
+struct PlateTint { ImVec4 seam_idle, seam_hot, text_idle, text_hot; };
+
 static bool ui_plate_button(const char* label, ImVec2 size,
                             ImVec4 base, ImVec4 base_hov,
                             bool pinned, bool plated,
-                            CmdFlashState flash)
+                            CmdFlashState flash,
+                            const PlateTint* tint = nullptr,
+                            float cap_sz = UI_SZ_BODY)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImFont*     fu = g_font_ui ? g_font_ui : ImGui::GetFont();
+    ImFont*     fu = (cap_sz > UI_SZ_BODY && g_font_value) ? g_font_value
+                   : g_font_ui ? g_font_ui : ImGui::GetFont();
 
     // Caption — strip any "##id" suffix before measuring / drawing.
     char caption[64];
@@ -321,7 +332,7 @@ static bool ui_plate_button(const char* label, ImVec2 size,
     caption[cn] = '\0';
 
     const float track = UI_TRACK * 0.6f;
-    const float tw    = ui_tracked_width(fu, UI_SZ_BODY, caption, track);
+    const float tw    = ui_tracked_width(fu, cap_sz, caption, track);
 
     // Reproduce ImGui::Button's sizing conventions, because callers were
     // written against them: 0 means "fit the label" / one frame tall, and a
@@ -369,16 +380,22 @@ static bool ui_plate_button(const char* label, ImVec2 size,
         break;
     }
 
-    dl->AddRectFilled(p0, p1, ui_col(fill, a));
-    ui_frame(dl, p0, p1, (hovered || pinned) ? ui_col(g_theme.accent, a)
-                                             : ui_col(g_theme.separator, 0.9f * a));
+    const ImVec4 seam_idle = tint ? tint->seam_idle : g_theme.separator;
+    const ImVec4 seam_hot  = tint ? tint->seam_hot  : g_theme.accent;
 
+    dl->AddRectFilled(p0, p1, ui_col(fill, a));
+    ui_frame(dl, p0, p1, (hovered || pinned) ? ui_col(seam_hot, a)
+                                             : ui_col(seam_idle, 0.9f * a));
+
+    // A plated fill carries the caption itself, so a tint would fight the
+    // contrast pick — the ACK flashes and the engaged red land here too.
     const ImU32 col = on_plate ? ui_plate_text_col(fill, a)
+                    : tint     ? ui_col(hovered ? tint->text_hot : tint->text_idle, a)
                     : hovered  ? ui_col(g_theme.accent, a)
                                : ui_col_text();
-    ui_tracked_text(dl, fu, UI_SZ_BODY,
+    ui_tracked_text(dl, fu, cap_sz,
                     { p0.x + (size.x - tw) * 0.5f,
-                      p0.y + (size.y - UI_SZ_BODY) * 0.5f - 1.0f },
+                      p0.y + (size.y - cap_sz) * 0.5f - 1.0f },
                     col, caption, track);
 
     return clicked;
@@ -395,9 +412,19 @@ bool ui_grid_button(const char* label, ImVec2 size, bool active,
 }
 
 bool ui_solid_button(const char* label, ImVec2 size, ImVec4 fill, ImVec4 fill_hov,
-                     CmdFlashState flash)
+                     CmdFlashState flash, float caption_size)
 {
-    return ui_plate_button(label, size, fill, fill_hov, false, true, flash);
+    return ui_plate_button(label, size, fill, fill_hov, false, true, flash,
+                           nullptr, caption_size);
+}
+
+bool ui_tinted_button(const char* label, ImVec2 size, ImVec4 tint, ImVec4 tint_dim,
+                      float caption_size)
+{
+    const PlateTint t{ tint_dim, tint, tint_dim, tint };
+    return ui_plate_button(label, size, g_theme.bg_child_darker,
+                           g_theme.bg_child_dark, false, false,
+                           CmdFlashState::Normal, &t, caption_size);
 }
 
 bool ui_tab_button(const char* label, ImVec2 size, bool active)

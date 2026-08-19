@@ -85,6 +85,8 @@ static json theme_to_json(const ThemeVars& t)
     TV_TO_J(btn_mode_active_base); TV_TO_J(btn_mode_active_hov);
     TV_TO_J(btn_write_base);       TV_TO_J(btn_write_hov);
     TV_TO_J(btn_tab_active_base);  TV_TO_J(btn_tab_active_hov);
+    // Plugin rail
+    TV_TO_J(plugin_accent);        TV_TO_J(plugin_accent_dim);
     // Flash
     TV_TO_J(flash_accepted_base);  TV_TO_J(flash_accepted_hov);
     TV_TO_J(flash_rejected_base);  TV_TO_J(flash_rejected_hov);
@@ -131,6 +133,9 @@ static ThemeVars theme_from_json(const json& j)
     TV_FROM_J(btn_mode_active_base); TV_FROM_J(btn_mode_active_hov);
     TV_FROM_J(btn_write_base);       TV_FROM_J(btn_write_hov);
     TV_FROM_J(btn_tab_active_base);  TV_FROM_J(btn_tab_active_hov);
+    // Plugin rail — absent from themes saved before the rail existed, which is
+    // why both fields fall back to the value they were constructed with.
+    TV_FROM_J(plugin_accent);        TV_FROM_J(plugin_accent_dim);
     // Flash
     TV_FROM_J(flash_accepted_base);  TV_FROM_J(flash_accepted_hov);
     TV_FROM_J(flash_rejected_base);  TV_FROM_J(flash_rejected_hov);

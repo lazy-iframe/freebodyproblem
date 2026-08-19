@@ -80,6 +80,16 @@ void MavlinkSender::return_to_launch(uint8_t tsys, uint8_t tcomp)
     enqueue_command_long(tsys, tcomp, 20);
 }
 
+void MavlinkSender::command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
+                                 float p1, float p2, float p3,
+                                 float p4, float p5, float p6, float p7)
+{
+    // Deliberately unvalidated: the caller names the MAV_CMD and owns what it
+    // means. Every command still lands in the same queue, so ACK feedback and
+    // flash state work for these exactly as for the named commands.
+    enqueue_command_long(tsys, tcomp, cmd, p1, p2, p3, p4, p5, p6, p7);
+}
+
 void MavlinkSender::do_aux_function(uint8_t tsys, uint8_t tcomp,
                                      uint16_t function, uint8_t switch_pos)
 {

@@ -100,6 +100,14 @@ public:
     void request_available_mode(uint8_t target_sysid, uint8_t target_compid,
                                 uint8_t mode_index);
 
+    // Send any MAV_CMD as a COMMAND_LONG. The named commands above cover what
+    // the GCS itself issues; this is the escape hatch plugins (plugins/) and
+    // payload-specific code use to reach commands the UI does not model.
+    void command_long(uint8_t target_sysid, uint8_t target_compid, uint16_t cmd,
+                      float p1 = 0.f, float p2 = 0.f, float p3 = 0.f,
+                      float p4 = 0.f, float p5 = 0.f, float p6 = 0.f,
+                      float p7 = 0.f);
+
     // Request all parameters (PARAM_REQUEST_LIST #21).
     // FC responds with a stream of PARAM_VALUE (#22) messages.
     void request_param_list(uint8_t target_sysid, uint8_t target_compid);

@@ -20,3 +20,8 @@
 // This file must be compiled exactly once in the project.
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+// PNG encoder — behind gcs_camera_snapshot() in center_view.cpp, which plugins
+// call to save the frame currently on the feed.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"

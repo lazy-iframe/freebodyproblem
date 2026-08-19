@@ -95,6 +95,20 @@ struct ThemeVars {
     ImVec4 btn_tab_active_base  = { 0.925f, 0.725f, 0.306f, 0.88f };
     ImVec4 btn_tab_active_hov   = { 0.980f, 0.780f, 0.360f, 0.95f };
 
+    // ── Plugin rail ───────────────────────────────────────────────────────────
+    //
+    // The rail wears the same dark olive panels and wells as everything else —
+    // only its accent differs. Blue is applied exactly where amber is applied
+    // elsewhere: seams, captions and the title strip, nothing more. That marks
+    // the column as user code without carving a light hole out of the display.
+    //
+    // Deliberately left out of the Amber and Matrix factories — both build on
+    // these defaults, so the accent stays blue whatever the rest of the UI
+    // wears. An engaged button is not themed here either: it borrows col_armed,
+    // the same red as the ARMED annunciator, so red means one thing throughout.
+    ImVec4 plugin_accent        = { 0.614f, 0.837f, 0.951f, 1.0f }; // #9DD5F3 light blue
+    ImVec4 plugin_accent_dim    = { 0.402f, 0.582f, 0.683f, 1.0f }; // #6694AE idle seams/captions
+
     // ── Command flash ─────────────────────────────────────────────────────────
     ImVec4 flash_accepted_base  = { 0.204f, 0.412f, 0.153f, 0.80f };
     ImVec4 flash_accepted_hov   = { 0.278f, 0.541f, 0.204f, 0.88f };
@@ -218,6 +232,28 @@ inline ImVec4 btn_write_base()         { return g_theme.btn_write_base; }
 inline ImVec4 btn_write_hov()          { return g_theme.btn_write_hov; }
 inline ImVec4 btn_tab_active_base()    { return g_theme.btn_tab_active_base; }
 inline ImVec4 btn_tab_active_hov()     { return g_theme.btn_tab_active_hov; }
+
+// ── Plugin rail ──────────────────────────────────────────────────────────────
+
+inline ImVec4 plugin_accent()       { return g_theme.plugin_accent; }
+inline ImVec4 plugin_accent_dim()   { return g_theme.plugin_accent_dim; }
+
+// An engaged plugin button wears the ARMED red, but washed back over the panel
+// rather than laid on solid: the annunciator is the one that has to win the
+// room when the vehicle is armed, and a rail of full-strength plates would
+// argue with it. Hover firms the plate up without ever reaching the slab.
+inline ImVec4 btn_plugin_engaged_base()
+{
+    ImVec4 red = g_theme.col_armed;
+    red.w *= 0.52f;
+    return red;
+}
+inline ImVec4 btn_plugin_engaged_hov()
+{
+    ImVec4 red = g_theme.col_armed;
+    red.w *= 0.66f;
+    return red;
+}
 
 // ── Section 5: Command flash push helpers ────────────────────────────────────
 

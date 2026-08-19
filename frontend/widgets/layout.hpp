@@ -22,11 +22,11 @@
 // ── GCS screen layout ─────────────────────────────────────────────────────────
 //
 //  ┌──────────────────────── TOPBAR (60px) ───────────────────────────────────┐
-//  ├──────────────────────┬──────────────────────┬────────────────────────────┤
-//  │ LEFT SIDEBAR         │  VIDEO 16:9 (top 50%)│ RIGHT SIDEBAR              │
-//  │ (computed for 16:9)  ├──────────────────────┤  HUD / Sys msgs / MAVLink  │
-//  │                      │  MAP   (bot 50%)     │                            │
-//  └──────────────────────┴──────────────────────┴────────────────────────────┘
+//  ├────────────────────┬────────────────────┬────┬───────────────────────────┤
+//  │ LEFT SIDEBAR       │ VIDEO 16:9 (top)   │ PL │ RIGHT SIDEBAR             │
+//  │ (computed for 16:9)├────────────────────┤ UG │  HUD / Sys msgs / MAVLink │
+//  │                    │ MAP   (bot)        │ IN │                           │
+//  └────────────────────┴────────────────────┴────┴───────────────────────────┘
 //
 // LEFT_FRAC is fixed; center_w = remainder; video_h is derived for 16:9.
 // Adjust LEFT_FRAC / RIGHT_FRAC to reflow all panels simultaneously.
@@ -35,19 +35,31 @@ static constexpr float TOPBAR_H    = 60.0f;
 
 // The centre column is sized so its 16:9 video box leaves roughly half the
 // column height for the map — widening the sidebars is what buys map height.
-static constexpr float LEFT_FRAC  = 0.26f;
-static constexpr float RIGHT_FRAC = 0.27f;
+//
+// Both fractions were trimmed by 2 points when the plugin rail moved in beside
+// the centre column: the rail is a fixed pixel width, so paying for it out of
+// the sidebars keeps the video roughly the size it was.
+static constexpr float LEFT_FRAC  = 0.24f;
+static constexpr float RIGHT_FRAC = 0.25f;
+
+// Plugin rail — the column of square user-function buttons down the right edge
+// of the centre band, beside the video and the map both. Fixed pixels, not a
+// fraction: the buttons are square and a fixed size, so a proportional rail
+// would only pad the margins.
+static constexpr float PLUGIN_RAIL_W = 92.0f;
 
 struct GcsLayout {
     float top;       // y where panels start (= TOPBAR_H)
     float total_h;   // usable panel height
 
     float left_x,   left_w;
-    float center_x, center_w;
+    float center_x, center_w;   // centre column: video over map
+    float plugin_x, plugin_w;   // rail, full height of the centre band
     float right_x,  right_w;
 
     float video_h;   // top half of center
     float map_h;     // bottom half of center
+    float band_w;    // = center_w + plugin_w: the whole centre band
 
     static GcsLayout compute()
     {
@@ -63,8 +75,14 @@ struct GcsLayout {
         l.left_x   = 0.0f;
         l.right_w  = sw * RIGHT_FRAC;
         l.right_x  = sw - l.right_w;
-        l.center_w = sw - l.left_w - l.right_w;
+
+        // The rail is carved out of the middle band and runs its full height,
+        // so video and map are both that much narrower than the band.
+        l.band_w   = sw - l.left_w - l.right_w;
+        l.plugin_w = PLUGIN_RAIL_W;
+        l.center_w = l.band_w - l.plugin_w;
         l.center_x = l.left_w;
+        l.plugin_x = l.center_x + l.center_w;
 
         // Derive video_h for the 16:9 aspect ratio; map gets the height left over.
         l.video_h = l.center_w * (9.0f / 16.0f);

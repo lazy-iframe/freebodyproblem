@@ -89,6 +89,7 @@ static inline void cleanup_sockets() {}
 #include "widgets/video_player.hpp"
 #include "widgets/splash_screen.hpp"
 #include "mission_pick.hpp"
+#include "../plugins/plugin_api.hpp"
 
 using Clock = std::chrono::steady_clock;
 
@@ -715,7 +716,7 @@ static void render_ui()
     draw_sidebar_left(&g_sender, &vs, &g_conn_req, g_link_status.load(), &params, &g_settings,
                       &stats, total_msg, total_bytes, errors,
                       &g_mission_pick);
-    draw_center_view(vs, &g_mission_pick);
+    draw_center_view(vs, &g_sender, &g_mission_pick);
     draw_sidebar_right(vs, status_texts, &g_sender, &g_settings);
 }
 
@@ -802,6 +803,11 @@ int main()
 #endif
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
+
+    // User plugins get their startup pass here: last thing before the first
+    // frame, so a hook may rename its button, open a device or start a worker
+    // with the video and settings stack already up behind it.
+    gcs_plugins_init();
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();

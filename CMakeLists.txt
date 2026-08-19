@@ -254,7 +254,18 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
+# User plugins — every .cpp in plugins/ is a set of buttons on the rail beside
+# the video. Globbed on purpose: a user adding a plugin should not have to edit
+# this file. CONFIGURE_DEPENDS makes the build re-glob when the folder changes,
+# so a new file is picked up by `cmake --build` without a manual re-configure.
+file(GLOB GCS_PLUGIN_SOURCES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*.cpp")
+list(LENGTH GCS_PLUGIN_SOURCES GCS_PLUGIN_COUNT)
+message(STATUS "Plugins: ${GCS_PLUGIN_COUNT} source file(s) in plugins/")
+
 add_executable(freebodyproblem
+    ${GCS_PLUGIN_SOURCES}
+    frontend/widgets/plugin_rail.cpp
     backend/mavlink_sender.cpp
     backend/connection.cpp
     frontend/main.cpp

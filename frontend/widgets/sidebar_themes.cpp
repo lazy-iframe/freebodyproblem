@@ -277,6 +277,12 @@ void draw_themes_panel(AppSettings& settings)
         c4("Tab Act. Hover",   g_theme.btn_tab_active_hov);
     }
 
+    if (ImGui::CollapsingHeader("PLUGIN RAIL")) {
+        c4("Plugin Accent",    g_theme.plugin_accent);
+        c4("Plugin Accent Dim",g_theme.plugin_accent_dim);
+        // Engaged has no row of its own: it follows Armed, above.
+    }
+
     if (ImGui::CollapsingHeader("FLASH STATES")) {
         c4("Accepted",         g_theme.flash_accepted_base);
         c4("Accepted Hover",   g_theme.flash_accepted_hov);

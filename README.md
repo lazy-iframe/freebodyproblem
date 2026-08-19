@@ -53,6 +53,14 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Arming/disarming**: direct vehicle control with command ACK feedback
 - **Motor interlock**: safety interlock control for helicopters
 
+### Plugins
+- **User C++ functions on the rail**: a column of square buttons down the right of the centre view, each one a function you write in [`plugins/`](plugins/README.md)
+- **Full vehicle access**: telemetry snapshot, the MAVLink sender, and any `MAV_CMD` via `command_long`
+- **Camera surface**: start/stop the feed and save the current frame to PNG, for payload workflows the UI does not model
+- **Clickable video**: click a point or drag a box on the feed to run your own handler, with coordinates in frame space — wired to payload track-point/track-rectangle out of the box
+- **No build wiring**: new `.cpp` files in `plugins/` are globbed by CMake; buttons can rename themselves at runtime
+- **Blue-accented rail**: the app's olive panels with blue on the seams, captions and title where the rest of the UI goes amber, so user code is never mistaken for vehicle chrome; an engaged plugin holds the same red as the ARMED annunciator
+
 ### UI/UX
 - **Dear ImGui interface**: immediate-mode GUI with low latency
 - **Theme support**: Tactical (default), Retro Amber and Matrix built-ins, plus customizable color schemes
@@ -371,6 +379,7 @@ freebodyproblem/
 ├── frontend/             # ImGui UI, widgets, rendering
 │   └── widgets/          # Reusable UI components
 │       └── sidebar_left/ # Per-tab left sidebar modules
+├── plugins/              # User C++ functions bound to the button rail
 ├── scripts/              # Python code generators
 ├── third_party/          # Git submodules (imgui, mavlink)
 └── CMakeLists.txt        # Build configuration

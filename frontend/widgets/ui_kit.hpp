@@ -131,7 +131,17 @@ bool ui_grid_button(const char* label, ImVec2 size, bool active = false,
 // of the neutral well — for buttons whose colour carries meaning on its own
 // (arm/disarm, disconnect, stop, destructive actions).
 bool ui_solid_button(const char* label, ImVec2 size, ImVec4 fill, ImVec4 fill_hov,
-                     CmdFlashState flash = CmdFlashState::Normal);
+                     CmdFlashState flash = CmdFlashState::Normal,
+                     float caption_size = UI_SZ_BODY);
+
+// ui_grid_button's chrome — same dark well, same hover lift — with the theme's
+// amber swapped for another accent on the seam and the caption. `tint` is the
+// lit colour (hover), `tint_dim` the resting one. The plugin rail uses it to
+// read as blue without owning a single background of its own.
+// `caption_size` above body size switches to the big readout font, for plates
+// large enough to carry it — the rail's squares do.
+bool ui_tinted_button(const char* label, ImVec2 size, ImVec4 tint, ImVec4 tint_dim,
+                      float caption_size = UI_SZ_BODY);
 
 bool ui_tab_button(const char* label, ImVec2 size, bool active);
 
