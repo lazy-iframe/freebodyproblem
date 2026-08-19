@@ -45,7 +45,7 @@ static constexpr uint16_t CMD_CAMERA_STOP_TRACKING = 2010;
 
 // ── FUNCTION 1 — save the frame on screen ────────────────────────────────────
 
-GCS_PLUGIN(function1, "F1", "FUNCTION 1", "Save the current video frame as a PNG")
+GCS_PLUGIN(function1, "F1", "SNAPSHOT", "Save the current video frame as a PNG")
 {
     if (!ctx.camera.streaming) {
         gcs_log("snapshot: no video");

@@ -26,6 +26,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
 - **Parameter management**: fetch, search, edit, and write parameters with metadata tooltips
+- **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
 - **Flight modes**: quick mode switching with visual feedback (ArduCopter/Plane/Rover/Sub)
 - **EKF status**: variance bars for velocity, horizontal/vertical position, compass, terrain, and airspeed
 - **Status text log**: vehicle-generated messages with severity color-coding
@@ -59,7 +60,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Camera surface**: start/stop the feed and save the current frame to PNG, for payload workflows the UI does not model
 - **Clickable video**: click a point or drag a box on the feed to run your own handler, with coordinates in frame space — wired to payload track-point/track-rectangle out of the box
 - **No build wiring**: new `.cpp` files in `plugins/` are globbed by CMake; buttons can rename themselves at runtime
-- **Blue-accented rail**: the app's olive panels with blue on the seams, captions and title where the rest of the UI goes amber, so user code is never mistaken for vehicle chrome; an engaged plugin holds the same red as the ARMED annunciator
+- **Blue-accented rail**: the app's olive panels with blue on the seams, captions and title where the rest of the UI goes amber, so user code is never mistaken for vehicle chrome
 
 ### UI/UX
 - **Dear ImGui interface**: immediate-mode GUI with low latency
@@ -311,7 +312,50 @@ publishing a headline version.
 2. Click **FETCH ALL** to download full parameter set
 3. Use search box to filter (e.g., `WPNAV`, `EK2_`)
 4. Edit values in-place with spinners
-5. Click **WRITE** to commit changes to vehicle
+5. Click **WRITE** to commit one change, or **WRITE ALL** to send every edited
+   parameter at once (asks for confirmation, and shows the count on the button)
+
+Edits are staged until written: a row whose value differs from the vehicle's
+shows an amber **WRITE**, and clears once the vehicle echoes the new value back.
+Anything the vehicle misses stays visibly dirty — press again.
+
+#### Parameter files
+
+**SAVE** and **LOAD** under the fetch buttons read and write the `.params`
+format Mission Planner and QGroundControl use, so files move between all three:
+
+```
+# Onboard parameters for Vehicle 1
+#
+# Stack: ArduPilot
+# Vehicle: Quadrotor
+# Version: 4.8.0 dev
+# Git Revision: 1ea89b0b
+#
+# Vehicle-Id Component-Id Name Value Type
+1	1	ACRO_BAL_PITCH	1.000000000000000000	9
+1	1	ACRO_OPTIONS	0	2
+```
+
+The last column is `MAV_PARAM_TYPE`; floating types are written at full
+precision so a saved value reloads as the same float rather than as an edit.
+
+- **LOAD asks before it stages anything.** It opens a picker listing every
+  parameter the file would change — name, the vehicle's value, and the file's —
+  each with a checkbox, all ticked to start, plus **SELECT ALL** /
+  **DESELECT ALL**. A config file from another airframe carries plenty that
+  should not follow it over, so untick what you did not come for and **STAGE**
+  the rest.
+- **Only differences are offered.** Parameters the file sets to the value the
+  vehicle already holds are not changes to review; they are counted in the
+  picker's summary line along with parameters the vehicle does not have and
+  malformed lines. If nothing differs, the picker does not open at all.
+- **Staging is still not writing.** Accepted rows join the same pending edits a
+  hand edit makes, so the list shows exactly what changed and **WRITE ALL**
+  remains a deliberate second act.
+- **SAVE writes what the list shows**, pending edits included — the file is the
+  configuration in front of you, not a snapshot of the vehicle. The log says so
+  whenever the two differ.
 
 ### Mission Planning
 1. Navigate to **MISSION** tab in left sidebar
@@ -356,11 +400,18 @@ publishing a headline version.
 ### Frontend (`frontend/`)
 - **main.cpp**: GLFW/OpenGL event loop, link thread management, MAVLink I/O
 - **settings.cpp**: JSON-based persistent configuration (tile server, themes, window state)
+- **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
+  - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
   - **mavlink_display_generated.cpp**: Auto-generated message field decoders (from MAVLink XML)
+
+### Plugins (`plugins/`)
+- **plugin_api.hpp**: What a plugin sees and how it registers — buttons, startup hooks, video-gesture handlers
+- **plugin_registry.cpp**: Registration lists, startup pass, and dispatch
+- **user_plugins.cpp**: Example slots, yours to edit — see [plugins/README.md](plugins/README.md)
 
 ### Code Generation
 - **scripts/gen_mavlink_display.py**: Parses MAVLink XML definitions to generate C++ field decoders for all message types
@@ -368,7 +419,7 @@ publishing a headline version.
 ### Libraries
 - **Dear ImGui** (third_party/imgui): Immediate-mode GUI
 - **MAVLink** (third_party/mavlink): Auto-generated C headers (ardupilotmega dialect)
-- **stb_image** (FetchContent): PNG/JPG decoding for map tiles
+- **stb_image / stb_image_write** (FetchContent): PNG/JPG decoding for map tiles, PNG encoding for video snapshots
 - **cpp-httplib** (FetchContent): HTTPS client for tile server requests
 - **nlohmann/json** (FetchContent): JSON parsing for settings and firmware manifests
 
