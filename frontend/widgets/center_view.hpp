@@ -29,6 +29,10 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                       MissionPickState* pick = nullptr);
 void center_view_shutdown();   // stop video + delete GL texture — call before context destroy
 
+// True while the feed is fullscreen — the second press of the VIDEO mode
+// button. The panels it displaces (both sidebars) skip drawing themselves.
+bool center_view_video_fullscreen();
+
 // The context handed to plugins — vehicle, link and live camera state. Built
 // here because this is where the camera state lives, and shared so the rail's
 // buttons and the feed's click handlers see exactly the same picture.

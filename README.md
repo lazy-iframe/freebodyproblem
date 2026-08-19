@@ -1,13 +1,14 @@
 <p align="center">
-  <img src="screens/splash.svg" alt="Free Body Problem — ground control station" width="520">
+  <img src="screens/splash.svg" alt="Free Body Problem — ground control station" width="520"><br><br><br>
 </p>
+
 
 <p align="center">
   <a href="https://github.com/lazy-iframe/freebodyproblem/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/ci.yml?branch=main&style=flat-square&label=integration&labelColor=36441E" alt="integration"></a>
   <a href="https://github.com/lazy-iframe/freebodyproblem/actions/workflows/cd.yml"><img src="https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/cd.yml?style=flat-square&label=build&labelColor=36441E" alt="build"></a>
   <a href="https://github.com/lazy-iframe/freebodyproblem/releases/latest"><img src="https://img.shields.io/github/v/release/lazy-iframe/freebodyproblem?style=flat-square&label=release&labelColor=36441E&color=ECB94E" alt="release"></a>
   <a href="https://github.com/lazy-iframe/freebodyproblem/releases"><img src="https://img.shields.io/badge/changelog-release%20notes-6E7B55?style=flat-square&labelColor=36441E" alt="changelog"></a>
-  <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a>
+  <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a><br><br><br>
 </p>
 
 A modern, fast ground control station for ArduPilot and PX4 autopilots. Built for operators who know what they're doing. The development is in its early stages.
@@ -48,6 +49,9 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **GStreamer integration**: RTSP and UDP video streams
 - **Zero-copy frame pipeline**: efficient RGB decoding for real-time display
 - **Configurable stream URLs**: support for standard video sources
+- **Fullscreen feed**: a second press of the video mode button (relabelled **VIDEO FULL**) hands the whole window below the topbar to the picture; ESC restores
+
+![Video Full](screens/cap1.png)
 
 ### Auxiliary Functions
 - **Servo/Aux control**: configure and trigger auxiliary functions
@@ -383,6 +387,13 @@ precision so a saved value reloads as the same float rather than as an edit.
    - UDP: `udp://0.0.0.0:5600`
 3. Click **START STREAM**
 4. Video will render in center view
+5. With the feed alone in the centre view the button relabels itself
+   **VIDEO FULL** — press it and the feed goes fullscreen: both sidebars give
+   way and the picture takes the whole window below the topbar, so link state,
+   arming and the annunciators are never hidden. The plugin rail stays,
+   floating over the feed's right edge, since there are no sidebars left to
+   take its width from. The button then reads **EXIT FULL**; that, **ESC**, or
+   either other mode button brings the panels back.
 
 ### Themes
 1. Navigate to **SETTINGS** tab

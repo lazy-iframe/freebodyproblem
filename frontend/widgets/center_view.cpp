@@ -53,6 +53,12 @@ static int  s_proto_sel    = 0;   // 0 = RTSP, 1 = UDP
 enum class CenterMode { MapAndVideo, VideoOnly, MapOnly };
 static CenterMode s_mode = CenterMode::MapAndVideo;
 
+// Fullscreen feed: the second press of VIDEO, when VIDEO is already the mode.
+// Only the topbar and this view's own header survive it — the sidebars are the
+// operator's own choice to hide, so nothing about the vehicle is being kept
+// from them that they did not just ask to hide.
+static bool s_video_full = false;
+
 static constexpr float HEADER_H = 30.0f;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -211,6 +217,25 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
 {
     const GcsLayout l = GcsLayout::compute();
 
+    // Escape is the way out that does not require finding the button again.
+    // Skipped while a popup owns the key, or it would close both at once.
+    if (s_video_full &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
+                                     ImGuiPopupFlags_AnyPopupLevel) &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        s_video_full = false;
+
+    // Windowed, the rail has a column of its own and the picture ends where
+    // that column starts. Fullscreen, the band is the whole window below the
+    // topbar and the rail floats over the picture's right edge — there are no
+    // sidebars left to take the width from, and covering a strip of feed beats
+    // shrinking all of it.
+    const bool  full   = center_view_video_fullscreen();
+    const float band_x = full ? 0.0f : l.center_x;
+    const float band_w = full ? ImGui::GetIO().DisplaySize.x : l.band_w;
+    const float vid_w  = full ? band_w : l.center_w;
+    const float rail_x = full ? band_x + band_w - l.plugin_w : l.plugin_x;
+
     // ── Poll GStreamer bus for errors / EOS ───────────────────────────────────
     {
         VideoState prev = s_vp.state.load(std::memory_order_acquire);
@@ -225,8 +250,8 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     // ── Header bar — title + mode toggle buttons ──────────────────────────────
     // Spans the whole middle band (video + plugin rail), not just the video, so
     // the mode buttons stay pinned to the right edge whichever mode is showing.
-    ImGui::SetNextWindowPos ({l.center_x, l.top}, ImGuiCond_Always);
-    ImGui::SetNextWindowSize({l.band_w, HEADER_H}, ImGuiCond_Always);
+    ImGui::SetNextWindowPos ({band_x, l.top}, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({band_w, HEADER_H}, ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, g_theme.bg_topbar);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8.f, 0.f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
@@ -240,27 +265,48 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             ImDrawList*  dl = ImGui::GetWindowDrawList();
             const ImVec2 wp = ImGui::GetWindowPos();
             const char*  title =
-                (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED"
+                full                              ? "SENSOR FEED \xe2\x80\x94 FULLSCREEN  [ESC]"
+              : (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED"
               : (s_mode == CenterMode::MapOnly)   ? "CARTOGRAPH \xe2\x80\x94 2D / NORTH-UP"
                                                   : "SENSOR FEED / CARTOGRAPH";
-            ui_panel_header_at(dl, { wp.x, wp.y }, l.band_w, title, nullptr,
+            ui_panel_header_at(dl, { wp.x, wp.y }, band_w, title, nullptr,
                                1.0f, HEADER_H);
         }
 
-        // Mode buttons — right-aligned segmented control
-        const char*  btn_labels[] = { "VIDEO##m0", "MAP##m1", "MAP + VIDEO##m2" };
+        // Mode buttons — right-aligned segmented control. The feed's caption
+        // names what the next press does rather than what is on screen: with
+        // the feed already alone in the centre view, that press is the
+        // fullscreen toggle, and a button that still read VIDEO would give no
+        // hint that a second press does anything at all.
+        //
+        // "###" so the ImGui id comes from the suffix alone — a caption that
+        // changes under the cursor must not change the item's identity, or the
+        // press in progress is lost.
+        const char* video_label =
+            full                              ? "EXIT FULL###m0"
+          : (s_mode == CenterMode::VideoOnly) ? "VIDEO FULL###m0"
+                                              : "VIDEO###m0";
+        const char*  btn_labels[] = { video_label, "MAP###m1", "MAP + VIDEO###m2" };
         const CenterMode btn_modes[] = {
             CenterMode::VideoOnly, CenterMode::MapOnly, CenterMode::MapAndVideo };
         constexpr float BTN_W = 108.f, BTN_H = 22.f, BTN_GAP = 3.f;
         constexpr int   N = 3;
         const float     btns_total = BTN_W * N + BTN_GAP * (N - 1);
-        const float     btns_x     = l.band_w - btns_total - 8.f;
+        const float     btns_x     = band_w - btns_total - 8.f;
 
         for (int i = 0; i < N; ++i) {
             ImGui::SetCursorPos({ btns_x + i * (BTN_W + BTN_GAP),
                                   (HEADER_H - BTN_H) * 0.5f });
-            if (ui_tab_button(btn_labels[i], { BTN_W, BTN_H }, s_mode == btn_modes[i]))
+            if (ui_tab_button(btn_labels[i], { BTN_W, BTN_H }, s_mode == btn_modes[i])) {
+                // Pressing VIDEO while VIDEO is already the mode is the
+                // fullscreen toggle; any other mode button drops out of it.
+                if (btn_modes[i] == CenterMode::VideoOnly &&
+                    s_mode == CenterMode::VideoOnly)
+                    s_video_full = !s_video_full;
+                else
+                    s_video_full = false;
                 s_mode = btn_modes[i];
+            }
         }
     }
     ImGui::End();
@@ -273,7 +319,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
 
     // Video pane is a true 16:9 box across the centre column; the map takes
     // whatever height is left below it.
-    float vid_h = l.center_w * (9.f / 16.f);
+    float vid_h = vid_w * (9.f / 16.f);
     float map_h = content_h - vid_h;
     if (map_h < 80.f) { map_h = 80.f; vid_h = content_h - map_h; }
 
@@ -282,8 +328,8 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
 
     // ── Video window ──────────────────────────────────────────────────────────
     if (s_mode != CenterMode::MapOnly) {
-    ImGui::SetNextWindowPos ({ l.center_x, content_top }, ImGuiCond_Always);
-    ImGui::SetNextWindowSize({ l.center_w, vid_h       }, ImGuiCond_Always);
+    ImGui::SetNextWindowPos ({ band_x, content_top }, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({ vid_w,  vid_h       }, ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_video());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  { 0.0f, 0.0f });
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -293,7 +339,11 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
         ImGuiWindowFlags_NoResize            |
         ImGuiWindowFlags_NoMove              |
         ImGuiWindowFlags_NoScrollbar         |
-        ImGuiWindowFlags_NoScrollWithMouse;
+        ImGuiWindowFlags_NoScrollWithMouse   |
+        // Clicking the picture must not raise it above the plugin rail floating
+        // on top of it — submission order is what stacks these, and focus would
+        // otherwise override it for every frame after the first click.
+        ImGuiWindowFlags_NoBringToFrontOnFocus;
 
     if (ImGui::Begin("##video", nullptr, win_flags)) {
         const VideoState state = s_vp.state.load(std::memory_order_acquire);
@@ -309,19 +359,19 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                 // Fit the frame inside the window while preserving aspect ratio
                 // (letterbox / pillarbox — never stretch).
                 const float src_aspect = (float)s_tex_w / (float)s_tex_h;
-                const float win_aspect = l.center_w / vid_h;
+                const float win_aspect = vid_w / vid_h;
 
                 float draw_w, draw_h;
                 if (src_aspect >= win_aspect) {
-                    draw_w = l.center_w;
-                    draw_h = l.center_w / src_aspect;
+                    draw_w = vid_w;
+                    draw_h = vid_w / src_aspect;
                 } else {
                     draw_h = vid_h;
                     draw_w = vid_h * src_aspect;
                 }
 
                 const ImVec2 wp = ImGui::GetWindowPos();
-                const float  ox = (l.center_w - draw_w) * 0.5f;
+                const float  ox = (vid_w - draw_w) * 0.5f;
                 const float  oy = (vid_h - draw_h) * 0.5f;
                 const ImVec2 p0 = { wp.x + ox,          wp.y + oy          };
                 const ImVec2 p1 = { wp.x + ox + draw_w, wp.y + oy + draw_h };
@@ -433,14 +483,28 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             char meta[128];
             snprintf(meta, sizeof(meta), "%s \xc2\xb7 %s",
                      s_vp.url[0] ? s_vp.url : "NO SOURCE", state_s);
-            ui_panel_header_at(dl, vwp, l.center_w, "EO / IR FEED \xe2\x80\x94 FWD",
-                               meta, 0.82f);
+            // Fullscreen, the rail sits over the right end of the banner, so
+            // the meta is measured against the width it leaves free — the state
+            // word is the part worth reading, and behind the rail it would not
+            // be read at all. Windowed, the rail is beside the picture and the
+            // banner has its whole width.
+            const float banner_w = full ? vid_w - l.plugin_w : vid_w;
+            ui_panel_header_at(dl, vwp, vid_w, "EO / IR FEED \xe2\x80\x94 FWD",
+                               nullptr, 0.82f);
+            {
+                ImFont*     fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+                const float mw = ui_tracked_width(fm, UI_SZ_MICRO, meta);
+                ui_tracked_text(dl, fm, UI_SZ_MICRO,
+                                { vwp.x + banner_w - mw - 8.0f,
+                                  vwp.y + (UI_HEADER_H - UI_SZ_MICRO) * 0.5f - 1.0f },
+                                ui_col_label(), meta);
+            }
 
             // Blinking REC pip while the pipeline is running.
             if (state == VideoState::Playing && fmodf((float)ImGui::GetTime(), 1.4f) < 0.9f) {
                 ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
                 const float mw  = ui_tracked_width(fm, UI_SZ_MICRO, meta);
-                const ImVec2 c  = { vwp.x + l.center_w - mw - 20.0f,
+                const ImVec2 c  = { vwp.x + banner_w - mw - 20.0f,
                                     vwp.y + UI_HEADER_H * 0.5f };
                 dl->AddCircleFilled(c, 3.0f, ui_col(g_theme.col_error));
             }
@@ -451,11 +515,6 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     ImGui::PopStyleColor();
     } // end if (s_mode != MapOnly)
 
-    // ── Plugin rail ───────────────────────────────────────────────────────────
-    // Full height of the centre band, outside the mode switch: the buttons are
-    // vehicle and payload controls, and stay reachable in every centre mode.
-    draw_plugin_rail(vs, sender, l.plugin_x, content_top, l.plugin_w, content_h);
-
     // ── Map ───────────────────────────────────────────────────────────────────
     if (s_mode != CenterMode::VideoOnly) {
         const std::vector<MissionItem>* map_mission =
@@ -464,11 +523,19 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
 
         draw_map_view(vs.lat, vs.lon, vs.has_global_pos,
                       (float)vs.heading, vs.has_vfr,
-                      l.center_x, content_top + vid_h,
-                      l.center_w, map_h,
+                      band_x, content_top + vid_h,
+                      vid_w, map_h,
                       map_mission, pick,
                       vs.alt_rel, vs.groundspeed);
     }
+
+    // ── Plugin rail ───────────────────────────────────────────────────────────
+    // Drawn last either way: in its own column that costs nothing to overlap,
+    // and fullscreen as an overlay over the feed — where being last is what
+    // puts it on top, and what keeps the buttons reachable without dropping out
+    // of fullscreen first.
+    draw_plugin_rail(vs, sender, rail_x, content_top, l.plugin_w, content_h,
+                     full);
 }
 
 // ── center_view_shutdown ──────────────────────────────────────────────────────
@@ -478,6 +545,11 @@ void center_view_shutdown()
 {
     video_player_stop(s_vp);
     delete_texture();
+}
+
+bool center_view_video_fullscreen()
+{
+    return s_video_full && s_mode == CenterMode::VideoOnly;
 }
 
 // ── Plugin context ────────────────────────────────────────────────────────────

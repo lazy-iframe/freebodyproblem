@@ -24,5 +24,9 @@ class MavlinkSender;
 // The column of square user-function buttons beside the video feed. One button
 // per plugin registered in plugins/ ; pressing one runs that plugin on this
 // thread. Drawn by the centre view, which owns the rectangle beside the video.
+//
+// `floating` says the rail is over the picture rather than beside it — the
+// fullscreen case — and softens the panel so the feed still reads underneath.
 void draw_plugin_rail(const VehicleState& vs, MavlinkSender* sender,
-                      float x, float y, float w, float h);
+                      float x, float y, float w, float h,
+                      bool floating = false);

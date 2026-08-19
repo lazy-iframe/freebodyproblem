@@ -490,7 +490,10 @@ void draw_map_view(double lat, double lon, bool has_pos,
     constexpr ImGuiWindowFlags FLAGS =
         ImGuiWindowFlags_NoTitleBar       | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove           | ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoScrollWithMouse;
+        ImGuiWindowFlags_NoScrollWithMouse |
+        // Panning the map must not raise it above the plugin rail floating over
+        // its right edge — see the same flag on the video window.
+        ImGuiWindowFlags_NoBringToFrontOnFocus;
 
     if (!ImGui::Begin("##map", nullptr, FLAGS)) {
         ImGui::End();

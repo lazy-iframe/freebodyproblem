@@ -711,13 +711,21 @@ static void render_ui()
         errors       = g_parse_errors;
     }
 
+    // Fullscreen feed hides both sidebars; the topbar stays, so link state,
+    // arming and the annunciators never go away. Read before the centre view
+    // draws, so a toggle takes effect on the next frame — the video window is
+    // submitted after the sidebars and simply covers them in the meantime.
+    const bool video_full = center_view_video_fullscreen();
+
     draw_topbar(vs, stats, total_msg, total_bytes, errors, &g_sender,
                 g_link_status.load(), &g_close_req);
-    draw_sidebar_left(&g_sender, &vs, &g_conn_req, g_link_status.load(), &params, &g_settings,
-                      &stats, total_msg, total_bytes, errors,
-                      &g_mission_pick);
+    if (!video_full)
+        draw_sidebar_left(&g_sender, &vs, &g_conn_req, g_link_status.load(), &params, &g_settings,
+                          &stats, total_msg, total_bytes, errors,
+                          &g_mission_pick);
     draw_center_view(vs, &g_sender, &g_mission_pick);
-    draw_sidebar_right(vs, status_texts, &g_sender, &g_settings);
+    if (!video_full)
+        draw_sidebar_right(vs, status_texts, &g_sender, &g_settings);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────

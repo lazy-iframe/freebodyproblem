@@ -28,6 +28,11 @@
 //  │                    │ MAP   (bot)        │ IN │                           │
 //  └────────────────────┴────────────────────┴────┴───────────────────────────┘
 //
+// The rail is a column of its own here, paid for out of the sidebars, so it
+// never covers the picture. Fullscreen is the exception: with the sidebars gone
+// there is nothing left to take the width from, so there the rail floats over
+// the feed's right edge instead.
+//
 // LEFT_FRAC is fixed; center_w = remainder; video_h is derived for 16:9.
 // Adjust LEFT_FRAC / RIGHT_FRAC to reflow all panels simultaneously.
 
@@ -36,16 +41,15 @@ static constexpr float TOPBAR_H    = 60.0f;
 // The centre column is sized so its 16:9 video box leaves roughly half the
 // column height for the map — widening the sidebars is what buys map height.
 //
-// Both fractions were trimmed by 2 points when the plugin rail moved in beside
-// the centre column: the rail is a fixed pixel width, so paying for it out of
-// the sidebars keeps the video roughly the size it was.
+// Both fractions are trimmed by 2 points to pay for the plugin rail. The
+// sidebars are the right place to take it from: they are wide, and the video is
+// the one panel where covered pixels are information lost.
 static constexpr float LEFT_FRAC  = 0.24f;
 static constexpr float RIGHT_FRAC = 0.25f;
 
 // Plugin rail — the column of square user-function buttons down the right edge
-// of the centre band, beside the video and the map both. Fixed pixels, not a
-// fraction: the buttons are square and a fixed size, so a proportional rail
-// would only pad the margins.
+// of the centre band. Fixed pixels, not a fraction: the buttons are square and
+// a fixed size, so a proportional rail would only pad the margins.
 static constexpr float PLUGIN_RAIL_W = 92.0f;
 
 struct GcsLayout {
@@ -54,7 +58,7 @@ struct GcsLayout {
 
     float left_x,   left_w;
     float center_x, center_w;   // centre column: video over map
-    float plugin_x, plugin_w;   // rail, full height of the centre band
+    float plugin_x, plugin_w;   // rail column, right of the centre column
     float right_x,  right_w;
 
     float video_h;   // top half of center

@@ -88,15 +88,22 @@ static void run_plugin(const PluginSlot& slot, const PluginContext& ctx)
 }
 
 void draw_plugin_rail(const VehicleState& vs, MavlinkSender* sender,
-                      float x, float y, float w, float h)
+                      float x, float y, float w, float h, bool floating)
 {
     const std::vector<PluginSlot>& slots = gcs_plugins();
 
     s_last_press.resize(slots.size(), 0.0);
 
+    // Over the feed the panel is translucent, so the picture keeps running
+    // underneath and the rail reads as chrome rather than as a hole punched in
+    // the video — opaque enough that a bright frame cannot wash out the
+    // captions. In its own column there is nothing behind it to show through.
+    ImVec4 bg = panel_bg();
+    if (floating) bg.w = 0.86f;
+
     ImGui::SetNextWindowPos ({ x, y }, ImGuiCond_Always);
     ImGui::SetNextWindowSize({ w, h }, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, panel_bg());
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,     { 0.0f, 0.0f });
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,    0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,  0.0f);
@@ -107,6 +114,16 @@ void draw_plugin_rail(const VehicleState& vs, MavlinkSender* sender,
         ImGuiWindowFlags_NoScrollWithMouse;
 
     if (ImGui::Begin("##plugin_rail", nullptr, flags)) {
+        // Left edge, drawn as a seam so the rail has a visible boundary against
+        // whatever is beside or behind it. A panel with no edge reads as part
+        // of the picture.
+        {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            ImGui::GetWindowDrawList()->AddLine(
+                { wp.x + 0.5f, wp.y }, { wp.x + 0.5f, wp.y + h },
+                ui_col(plugin_accent_dim(), 0.65f), 1.0f);
+        }
+
         // Title strip, lined up with the feed banner over the video beside it.
         // The same strip the rest of the app draws — dark well, hairline under
         // it, tracked micro title — with the head tick and the title in blue
