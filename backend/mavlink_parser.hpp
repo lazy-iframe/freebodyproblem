@@ -104,6 +104,10 @@ struct VehicleState {
     uint32_t      custom_mode   = 0;
     bool          armed         = false;
     bool          has_heartbeat = false;
+    // Ticks once per HEARTBEAT from the locked autopilot. The UI beeps on the
+    // change rather than on a clock, so the cue is the vehicle's pulse and not
+    // the ground station's: heartbeats stop, beeping stops.
+    uint32_t      heartbeat_count = 0;
 
     // ATTITUDE (#30) – radians converted to degrees
     float roll = 0, pitch = 0, yaw = 0;

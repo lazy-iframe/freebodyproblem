@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.2.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -124,6 +124,23 @@ FetchContent_Declare(json
     GIT_TAG        v3.11.3
 )
 FetchContent_MakeAvailable(json)
+
+# ── Third-party: miniaudio (header-only audio playback) ───────────────────────
+#
+# Header-only, and it dlopens its backends (ALSA / PulseAudio / JACK on Linux,
+# WASAPI on Windows) at runtime — so it adds no link-time dependency and nothing
+# to the package's Depends. A machine with no sound server simply fails to open
+# a device, which frontend/audio.cpp treats as "no tones" rather than an error.
+
+FetchContent_Declare(miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.21
+)
+FetchContent_GetProperties(miniaudio)
+if(NOT miniaudio_POPULATED)
+    FetchContent_Populate(miniaudio)
+endif()
+# miniaudio_SOURCE_DIR is now set; consumers add it to their include paths below.
 
 # ── Frontend (Dear ImGui + GLFW + OpenGL) ─────────────────────────────────────
 
@@ -271,6 +288,7 @@ add_executable(freebodyproblem
     frontend/main.cpp
     frontend/settings.cpp
     frontend/param_file.cpp
+    frontend/audio.cpp
     frontend/widgets/topbar.cpp
     frontend/widgets/sidebar_left.cpp
     frontend/widgets/sidebar_left/tab_connection.cpp
@@ -293,8 +311,13 @@ add_executable(freebodyproblem
 )
 target_include_directories(freebodyproblem PRIVATE
     ${stb_SOURCE_DIR}
+    ${miniaudio_SOURCE_DIR}
     ${GST_INCLUDE_DIRS}
 )
+# miniaudio dlopens its backend and uses threads, so it needs dl and pthread
+# explicitly rather than by luck of what another dependency happened to pull in.
+find_package(Threads REQUIRED)
+
 target_link_libraries(freebodyproblem PRIVATE
     mavlink_headers
     imgui
@@ -302,6 +325,8 @@ target_link_libraries(freebodyproblem PRIVATE
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
     ${GST_LIBRARIES}
 )
 target_compile_definitions(freebodyproblem PRIVATE
@@ -419,9 +444,16 @@ elseif(UNIX)
     # Derive Depends from the actual ELF linkage rather than a hand-kept list,
     # which silently rots as dependencies change. Needs dpkg-dev at package time.
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS  ON)
-    # GStreamer loads these at runtime via dlopen, so shlibdeps cannot see them.
+    # GStreamer plugins and the audio backends are dlopen'd at runtime, so
+    # shlibdeps cannot see them: the binary has no NEEDED entry for any of them.
+    # Recommends rather than Depends because the application degrades rather
+    # than fails without them — no plugins means no video, no sound library
+    # means no cue tones, and neither stops a flight.
+    #
+    # libasound2 was renamed libasound2t64 by Ubuntu's 64-bit time_t
+    # transition; the alternation covers both sides of it.
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
-        "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav")
+        "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, libasound2t64 | libasound2, libpulse0")
 endif()
 
 include(CPack)

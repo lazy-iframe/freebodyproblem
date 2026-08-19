@@ -66,6 +66,12 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **No build wiring**: new `.cpp` files in `plugins/` are globbed by CMake; buttons can rename themselves at runtime
 - **Blue-accented rail**: the app's olive panels with blue on the seams, captions and title where the rest of the UI goes amber, so user code is never mistaken for vehicle chrome
 
+### Audio
+- **Synthesised cue tones**: PC-speaker square waves in the GRUB `GRUB_INIT_TUNE` idiom — rising on success, falling on failure, for command ACKs, mission upload and link up/down
+- **Armed heartbeat**: a 440 Hz note every fifth HEARTBEAT while armed, mixed well below the alert tones — the vehicle's pulse, so silence means the link dropped
+- **No assets, no dependency**: tones are generated at runtime via [miniaudio](https://github.com/mackron/miniaudio) (header-only, backends loaded at runtime); a machine with no sound device logs one line and runs silent
+- **Mute and volume** in the settings tab, persisted to `settings.json`
+
 ### UI/UX
 - **Dear ImGui interface**: immediate-mode GUI with low latency
 - **Theme support**: Tactical (default), Retro Amber and Matrix built-ins, plus customizable color schemes
@@ -395,6 +401,32 @@ precision so a saved value reloads as the same float rather than as an edit.
    take its width from. The button then reads **EXIT FULL**; that, **ESC**, or
    either other mode button brings the panels back.
 
+### Audio Cues
+1. Navigate to **SETTINGS** tab, **AUDIO** section
+2. **Tones** mutes everything; the volume slider is linear, and **TEST** plays
+   the success tone
+3. Both settings save immediately and survive a restart
+
+What plays, and when:
+
+Square waves at 125 ms a note, written in the idiom of GRUB's `GRUB_INIT_TUNE`
+(tempo 480, so one beat is 125 ms):
+
+| Cue | Sound | As a GRUB tune | Fires on |
+|---|---|---|---|
+| Success | rising fifth | `480 440 1 660 1` | a hand-issued command the vehicle accepted (arm/disarm, takeoff, RTL, mode change, aux function), mission upload accepted, link established |
+| Failure | three notes falling | `480 660 1 440 1 330 1` | the same commands rejected, mission upload failed, link error or timeout |
+| Armed | one note, every 5th HEARTBEAT | `480 440 1` | the whole time the vehicle is armed — starting on the arming heartbeat itself |
+
+Telemetry-rate and capability requests are ACKed too, but deliberately make no
+sound: a burst of beeps at every connect trains you to ignore the cue.
+
+The armed beep counts HEARTBEATs rather than seconds — every fifth one, so
+about every five seconds at the 1 Hz ArduPilot sends them. Counting the
+vehicle's pulse rather than a clock carries what a clock cannot: **beeping that
+stops while the aircraft is still armed means the link went, not that the
+vehicle disarmed.**
+
 ### Themes
 1. Navigate to **SETTINGS** tab
 2. Select **Tactical** (default), **Retro Amber** or **Matrix**
@@ -412,6 +444,7 @@ precision so a saved value reloads as the same float rather than as an edit.
 - **main.cpp**: GLFW/OpenGL event loop, link thread management, MAVLink I/O
 - **settings.cpp**: JSON-based persistent configuration (tile server, themes, window state)
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
+- **audio.cpp**: synthesised cue tones — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload
@@ -431,6 +464,7 @@ precision so a saved value reloads as the same float rather than as an edit.
 - **Dear ImGui** (third_party/imgui): Immediate-mode GUI
 - **MAVLink** (third_party/mavlink): Auto-generated C headers (ardupilotmega dialect)
 - **stb_image / stb_image_write** (FetchContent): PNG/JPG decoding for map tiles, PNG encoding for video snapshots
+- **miniaudio** (FetchContent): header-only audio playback for the cue tones
 - **cpp-httplib** (FetchContent): HTTPS client for tile server requests
 - **nlohmann/json** (FetchContent): JSON parsing for settings and firmware manifests
 

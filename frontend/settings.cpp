@@ -191,6 +191,11 @@ void settings_load(AppSettings& out)
         }
     }
 
+    if (root.contains("audio_enabled") && root["audio_enabled"].is_boolean())
+        out.audio_enabled = root["audio_enabled"].get<bool>();
+    if (root.contains("audio_volume") && root["audio_volume"].is_number())
+        out.audio_volume = root["audio_volume"].get<float>();
+
     if (root.contains("tile_url") && root["tile_url"].is_string())
         out.tile_url = root["tile_url"].get<std::string>();
     if (root.contains("tile_attribution") && root["tile_attribution"].is_string())
@@ -238,6 +243,8 @@ void settings_save(const AppSettings& s)
 
     root["tile_url"]         = s.tile_url;
     root["tile_attribution"] = s.tile_attribution;
+    root["audio_enabled"]    = s.audio_enabled;
+    root["audio_volume"]     = s.audio_volume;
 
     json jprofiles = json::array();
     for (const auto& p : s.connection_profiles) {

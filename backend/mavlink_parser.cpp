@@ -101,6 +101,7 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
         state_.custom_mode   = hb.custom_mode;
         state_.armed         = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
         state_.has_heartbeat = true;
+        ++state_.heartbeat_count;
         break;
     }
 

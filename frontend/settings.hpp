@@ -65,6 +65,10 @@ struct AppSettings {
     // ── Connection profiles ───────────────────────────────────────────────────
     std::vector<ConnectionProfile> connection_profiles;
 
+    // ── Audio ─────────────────────────────────────────────────────────────────
+    bool  audio_enabled = true;
+    float audio_volume  = 0.7f;   // linear 0..1
+
     // ── Map tile source ───────────────────────────────────────────────────────
     std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     std::string tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";

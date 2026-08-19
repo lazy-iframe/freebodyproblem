@@ -20,6 +20,7 @@
 #include "theme.hpp"
 #include "ui_kit.hpp"
 #include "../settings.hpp"
+#include "../audio.hpp"
 #include "map_view.hpp"
 #include "imgui.h"
 #include <cstring>
@@ -155,6 +156,45 @@ void draw_themes_panel(AppSettings& settings)
         ImGui::EndPopup();
     }
     ui_pop_dialog_style();
+
+    themed_sep();
+    ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "AUDIO");
+    themed_sep();
+    ImGui::Spacing();
+
+    // ── Tones ─────────────────────────────────────────────────────────────────
+    //
+    // Written through to disk on change rather than on some later APPLY: an
+    // operator reaching for the mute wants it now and is not going to hunt for
+    // a second button, and a mute that did not survive a restart is a mute that
+    // will be reached for again.
+    {
+        bool enabled = settings.audio_enabled;
+        if (ImGui::Checkbox("Tones", &enabled)) {
+            settings.audio_enabled = enabled;
+            audio_set_enabled(enabled);
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 8);
+        ImGui::TextDisabled("success / failure / armed");
+
+        float vol = settings.audio_volume;
+        ImGui::BeginDisabled(!enabled);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::SliderFloat("##audio_vol", &vol, 0.0f, 1.0f, "VOLUME  %.2f")) {
+            settings.audio_volume = vol;
+            audio_set_volume(vol);
+        }
+        // Saved on release, not on every pixel the slider moves.
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            settings_save(settings);
+
+        ImGui::Spacing();
+        if (ui_grid_button("TEST##audio", { -1.0f, 0.0f }))
+            gcs_tone(GcsTone::Success);
+        ImGui::EndDisabled();
+    }
 
     themed_sep();
     ImGui::Spacing();

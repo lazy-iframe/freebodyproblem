@@ -89,6 +89,7 @@ static inline void cleanup_sockets() {}
 #include "widgets/video_player.hpp"
 #include "widgets/splash_screen.hpp"
 #include "mission_pick.hpp"
+#include "audio.hpp"
 #include "../plugins/plugin_api.hpp"
 
 using Clock = std::chrono::steady_clock;
@@ -394,6 +395,14 @@ static void link_thread_fn(LinkConfig cfg)
                 case 218: cname = "aux function"; break;
                 default:  break;
                 }
+                // Tone only for commands with a name above, i.e. the ones a
+                // person pressed a button for. The rate and capability requests
+                // this GCS fires on connect ACK too, and a burst of beeps at
+                // every connect teaches the operator to ignore the sound.
+                if (cname)
+                    gcs_tone(ack.result == 0 ? GcsTone::Success
+                                             : GcsTone::Failure);
+
                 // DEBUG: the vehicle's verdict on our AVAILABLE_MODES request.
                 // UNSUPPORTED (3) here means the firmware predates the
                 // standard modes protocol; ACCEPTED (0) with no AVAILABLE_MODES
@@ -550,9 +559,11 @@ static void link_thread_fn(LinkConfig cfg)
                 last_upload_status = ps.upload_status;
                 if (ps.upload_status == VehicleState::UploadStatus::Accepted) {
                     gcs_log("mission upload accepted");
+                    gcs_tone(GcsTone::Success);
                     g_sender.clear_upload();
                 } else if (ps.upload_status == VehicleState::UploadStatus::Failed) {
                     gcs_log("mission upload failed (result=%u)", (unsigned)ps.upload_ack_result);
+                    gcs_tone(GcsTone::Failure);
                     g_sender.clear_upload();
                 }
             }
@@ -711,6 +722,47 @@ static void render_ui()
         errors       = g_parse_errors;
     }
 
+    // Armed cue, counted in HEARTBEATs rather than seconds of wall clock. At
+    // the 1 Hz ArduPilot sends them, every fifth beat is a beep about every
+    // five seconds — but it is the vehicle's pulse being counted, so it carries
+    // what a clock cannot: beeping that stops while the aircraft is still armed
+    // means the link went, not that the vehicle disarmed.
+    //
+    // The count resets while disarmed, so arming beeps on its own heartbeat
+    // instead of up to five beats later.
+    {
+        constexpr uint32_t ARMED_BEEP_EVERY = 5;   // heartbeats
+
+        static uint32_t prev_beat   = 0;
+        static uint32_t armed_beats = 0;
+
+        if (vs.heartbeat_count != prev_beat) {
+            prev_beat = vs.heartbeat_count;
+            if (!vs.armed) {
+                armed_beats = 0;
+            } else {
+                if (armed_beats % ARMED_BEEP_EVERY == 0)
+                    gcs_tone(GcsTone::Armed);
+                ++armed_beats;
+            }
+        }
+    }
+
+    // Link transitions are watched here rather than at the six places the link
+    // thread sets a status: one edge, one tone, whatever the cause.
+    {
+        static LinkStatus prev_link = LinkStatus::Idle;
+        const LinkStatus  now_link  = g_link_status.load();
+        if (now_link != prev_link) {
+            if (now_link == LinkStatus::Connected)
+                gcs_tone(GcsTone::Success);
+            else if (now_link == LinkStatus::Error ||
+                     now_link == LinkStatus::Timeout)
+                gcs_tone(GcsTone::Failure);
+            prev_link = now_link;
+        }
+    }
+
     // Fullscreen feed hides both sidebars; the topbar stays, so link state,
     // arming and the annunciators never go away. Read before the centre view
     // draws, so a toggle takes effect on the next frame — the video window is
@@ -812,6 +864,13 @@ int main()
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // Audio comes up after settings, so a saved mute is in force before the
+    // first tone can play. No device is not a failure — audio_init() says so
+    // once in the log and every later call is a no-op.
+    audio_set_enabled(g_settings.audio_enabled);
+    audio_set_volume (g_settings.audio_volume);
+    audio_init();
+
     // User plugins get their startup pass here: last thing before the first
     // frame, so a hook may rename its button, open a device or start a worker
     // with the video and settings stack already up behind it.
@@ -897,6 +956,7 @@ int main()
 
     settings_save(g_settings);
 
+    audio_shutdown();
     center_view_shutdown();   // stop video pipeline + delete GL texture
     map_view_shutdown();
     ImGui_ImplOpenGL3_Shutdown();
