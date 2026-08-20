@@ -31,7 +31,11 @@
 #include "miniaudio.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
 
 namespace {
 
@@ -94,6 +98,20 @@ const ToneDef TONE_FAILURE {
 // end of a flight.
 const ToneDef TONE_ARMED {
     { { 440.0f, BEAT_S } }, 1, 0.09f, Wave::Square };
+
+// The progress tick: "480 880 0.25" — one sixteenth, 31 ms, an octave above the
+// armed note. Short because it has to stay a tick and not a tone at the tempo
+// it ends at: the last blips are 80 ms apart, and a note anywhere near that
+// long would run into the next one and smear the rattle it is meant to become.
+// An octave up because it has to stay separable from the armed beep that is
+// very likely sounding underneath it — same note, different octave, so they
+// read as two voices rather than one confused one.
+//
+// Quieter still than armed. It repeats hundreds of times across a full
+// parameter fetch, and the tempo is doing the work; loudness would only make
+// the last few seconds unbearable.
+const ToneDef TONE_PROGRESS {
+    { { 880.0f, BEAT_S * 0.25f } }, 1, 0.07f, Wave::Square };
 
 const ToneDef& tone_def(GcsTone t)
 {
@@ -198,6 +216,82 @@ void data_callback(ma_device* dev, void* out, const void* in, ma_uint32 frames)
     }
 }
 
+// Claim a voice and start `def` on it. Every producer path goes through here,
+// so the master switches are checked in exactly one place.
+void play(const ToneDef& def)
+{
+    if (!g_running.load(std::memory_order_acquire)) return;
+    if (!g_enabled.load(std::memory_order_relaxed)) return;
+
+    for (Voice& v : g_voices) {
+        int expected = VOICE_FREE;
+        if (!v.state.compare_exchange_strong(expected, VOICE_FILLING,
+                                             std::memory_order_acq_rel))
+            continue;
+
+        v.def    = def;
+        v.seg    = 0;
+        v.phase  = 0.0f;
+        v.t_seg  = 0.0f;
+        v.t_tone = 0.0f;
+        v.total  = 0.0f;
+        for (int i = 0; i < v.def.count; ++i) v.total += v.def.seg[i].secs;
+
+        v.state.store(VOICE_ACTIVE, std::memory_order_release);
+        return;
+    }
+    // Every voice busy: drop it. A cue queued behind three others would play
+    // against whatever the operator is doing by then.
+}
+
+// ── Progress channels ─────────────────────────────────────────────────────────
+//
+// The gap between ticks at 0% and at 100%. Roughly a factor of nine between the
+// ends, which is what makes the acceleration audible over a fetch that also
+// takes half a minute — a narrower spread is there in the numbers and not in
+// the ear.
+constexpr double PROGRESS_GAP_START = 0.70;   // seconds
+constexpr double PROGRESS_GAP_END   = 0.08;
+
+// A channel is retired this long after its last update. Comfortably longer than
+// a frame even on a machine dropping them, and short enough that the ticking
+// stops with the bar rather than after it.
+constexpr double PROGRESS_STALE_S = 0.35;
+
+constexpr int MAX_PROGRESS_CHANS = 4;
+
+struct ProgressChan {
+    bool   active = false;
+    char   name[16] {};
+    double last_beep = 0.0;
+    double last_seen = 0.0;
+};
+
+ProgressChan g_prog[MAX_PROGRESS_CHANS];
+std::mutex   g_prog_mu;   // producer side only; the device callback never
+                          // touches any of this, so it cannot be blocked by it.
+
+double now_s()
+{
+    using namespace std::chrono;
+    static const steady_clock::time_point t0 = steady_clock::now();
+    return duration<double>(steady_clock::now() - t0).count();
+}
+
+// Geometric, not linear, interpolation between the two gaps. Tempo is heard
+// as a ratio — 700 ms to 600 ms is barely a change while 180 ms to 80 ms is
+// dramatic — so a straight line in seconds sounds like nothing happens for the
+// first half and then everything happens at the end. Interpolating the
+// logarithm makes each 10% of the bar speed the ticking up by the same
+// proportion, which is the steady acceleration the eye sees in the bar.
+double progress_gap(float frac)
+{
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    return PROGRESS_GAP_START *
+           std::pow(PROGRESS_GAP_END / PROGRESS_GAP_START, (double)frac);
+}
+
 } // namespace
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -234,28 +328,55 @@ void audio_shutdown()
 
 void gcs_tone(GcsTone tone)
 {
+    play(tone_def(tone));
+}
+
+void gcs_progress(const char* channel, float fraction)
+{
+    // Checked before the bookkeeping as well as inside play(): this runs every
+    // frame a bar is up, and a muted ground station should not be taking a lock
+    // sixty times a second to decide not to make a sound.
+    if (!channel) return;
     if (!g_running.load(std::memory_order_acquire)) return;
     if (!g_enabled.load(std::memory_order_relaxed)) return;
 
-    for (Voice& v : g_voices) {
-        int expected = VOICE_FREE;
-        if (!v.state.compare_exchange_strong(expected, VOICE_FILLING,
-                                             std::memory_order_acq_rel))
-            continue;
+    const double now  = now_s();
+    bool         tick = false;
+    {
+        std::lock_guard<std::mutex> lk(g_prog_mu);
 
-        v.def    = tone_def(tone);
-        v.seg    = 0;
-        v.phase  = 0.0f;
-        v.t_seg  = 0.0f;
-        v.t_tone = 0.0f;
-        v.total  = 0.0f;
-        for (int i = 0; i < v.def.count; ++i) v.total += v.def.seg[i].secs;
+        // Retire whatever stopped drawing. Done here rather than on a timer
+        // because this is the only moment anything is known to have changed.
+        for (ProgressChan& c : g_prog)
+            if (c.active && now - c.last_seen > PROGRESS_STALE_S)
+                c.active = false;
 
-        v.state.store(VOICE_ACTIVE, std::memory_order_release);
-        return;
+        ProgressChan* ch = nullptr;
+        for (ProgressChan& c : g_prog)
+            if (c.active && std::strcmp(c.name, channel) == 0) { ch = &c; break; }
+
+        if (!ch) {
+            for (ProgressChan& c : g_prog)
+                if (!c.active) { ch = &c; break; }
+            if (!ch) return;   // four transfers already ticking: this one is silent
+
+            ch->active = true;
+            std::snprintf(ch->name, sizeof ch->name, "%s", channel);
+            ch->last_beep = now;
+            tick = true;       // first tick on the frame the bar appears, so the
+                               // start of a transfer is heard and not just its
+                               // middle
+        } else if (now - ch->last_beep >= progress_gap(fraction)) {
+            // Advanced to `now`, not by one gap: after a stall — a long map
+            // tile fetch, a window drag, a dialog — catching up would fire the
+            // missed ticks back to back as a burst that means nothing.
+            ch->last_beep = now;
+            tick = true;
+        }
+        ch->last_seen = now;
     }
-    // Every voice busy: drop it. A cue queued behind three others would play
-    // against whatever the operator is doing by then.
+
+    if (tick) play(TONE_PROGRESS);
 }
 
 void audio_set_enabled(bool on) { g_enabled.store(on); }

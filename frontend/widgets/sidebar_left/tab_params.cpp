@@ -20,6 +20,7 @@
 #include "../sidebar_themes.hpp"
 #include "../param_meta.hpp"
 #include "../../app_log.hpp"
+#include "../../audio.hpp"
 #include "../../param_file.hpp"
 #include "imgui.h"
 #include <algorithm>
@@ -109,12 +110,25 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         ImGui::Spacing();
         const uint16_t received = vs->params_received;
         const uint16_t total    = vs->param_count;
-        if (received < total) {
-            char prog_lbl[32];
-            snprintf(prog_lbl, sizeof(prog_lbl), "%u / %u", received, total);
-            ImGui::ProgressBar((float)received / total, { -1.0f, 12.0f }, prog_lbl);
-        } else {
+        char prog_lbl[32];
+        snprintf(prog_lbl, sizeof(prog_lbl), "%u / %u", received, total);
+
+        if (vs->param_fetch_active && received < total) {
+            const float frac = (float)received / total;
+            ui_progress_bar(prog_lbl, frac, 12.0f);
+            // Ticks alongside the bar, speeding up as it fills. A full fetch is
+            // a thousand-odd parameters and the better part of a minute, most
+            // of it spent looking somewhere other than this panel.
+            gcs_progress("params", frac);
+        } else if (received >= total) {
             ImGui::TextDisabled("%u params loaded", total);
+        } else {
+            // Parameters we hold without having asked for them: a vehicle sends
+            // a PARAM_VALUE whenever one of its parameters changes, and the
+            // stream rates this GCS sets on connect are parameters. That is a
+            // count of what we happen to know, not a fetch in progress, so it
+            // gets a number and no bar.
+            ImGui::TextDisabled("%u of %u known", received, total);
         }
     }
 
@@ -137,7 +151,20 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         last_param_count = params->size();
     }
 
-    // Pending edits — initialised to current FC value on first appearance
+    // Values the operator has staged: typed into a row, picked from an enum or
+    // bitmask, or loaded from a parameter file. A row appears here only once it
+    // has actually been moved, and leaves again as soon as the vehicle's value
+    // agrees with it — which is what an accepted write looks like.
+    //
+    // Not every row seeded with the vehicle's value on sight, which is what
+    // this used to do. A seeded row is indistinguishable from an edited one, so
+    // any parameter the *vehicle* changed on its own afterwards became a
+    // pending edit that nobody made: the seed stayed at the old value while the
+    // live one moved. Vehicles do this routinely — ArduPilot saves its
+    // STAT_RUNTIME / STAT_FLTTIME counters as it goes, and every save is
+    // broadcast as a PARAM_VALUE — so a fetch and no typing at all could leave
+    // WRITE ALL offering to write one parameter back. Offering, worse, to write
+    // the *stale* value over the vehicle's newer one.
     static std::unordered_map<std::string, float> edited_vals;
 
     // Rows the operator has moved away from the vehicle's value, in name order
@@ -155,22 +182,58 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     }
     const int dirty_n = (int)dirty.size();
 
-    // ── Write all ─────────────────────────────────────────────────────────────
+    // ── Write all / discard all ───────────────────────────────────────────────
     //
-    // Confirmed rather than immediate: a single WRITE is one considered change,
-    // where this one sends everything staged — including a whole file loaded a
-    // moment ago, which the operator may not have read line by line.
+    // Both confirmed rather than immediate: a single WRITE is one considered
+    // change, where these two act on everything staged — including a whole file
+    // loaded a moment ago, which the operator may not have read line by line.
+    // Discarding is local and touches no vehicle, but there is no undo behind
+    // it and a staged file can be hundreds of rows, so it asks too. The per-row
+    // cross is the unconfirmed way out, because it can only lose one value.
+    const float half_w = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+
     ImGui::BeginDisabled(!connected || dirty_n == 0);
     {
         char lbl[48];
         snprintf(lbl, sizeof(lbl), "WRITE ALL (%d)###write_all", dirty_n);
         const bool hit = dirty_n > 0
-            ? ui_solid_button(lbl, { -1.0f, 26.0f },
+            ? ui_solid_button(lbl, { half_w, 26.0f },
                               btn_write_base(), btn_write_hov())
-            : ui_grid_button(lbl, { -1.0f, 26.0f });
+            : ui_grid_button(lbl, { half_w, 26.0f });
         if (hit) ImGui::OpenPopup("##confirm_write_all");
     }
     ImGui::EndDisabled();
+
+    ImGui::SameLine(0, 4);
+
+    // Not gated on `connected`, unlike WRITE ALL: throwing away your own edits
+    // is something you can always do, and being unable to clear them because
+    // the link happened to drop would be its own annoyance.
+    ImGui::BeginDisabled(dirty_n == 0);
+    {
+        char lbl[48];
+        snprintf(lbl, sizeof(lbl), "DISCARD (%d)###discard_all", dirty_n);
+        const bool hit = dirty_n > 0
+            ? ui_solid_button(lbl, { half_w, 26.0f },
+                              btn_disconnect_base(), btn_disconnect_hov())
+            : ui_grid_button(lbl, { half_w, 26.0f });
+        if (hit) ImGui::OpenPopup("##confirm_discard_all");
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && dirty_n > 0)
+        ImGui::SetTooltip("Discard all staged changes — the vehicle is not touched");
+
+    {
+        char q[96];
+        snprintf(q, sizeof(q), "DISCARD %d STAGED CHANGE%s?",
+                 dirty_n, dirty_n == 1 ? "" : "S");
+        if (ui_confirm_popup("##confirm_discard_all", "DISCARD CHANGES", q,
+                             "DISCARD", btn_disconnect_base()) == UiConfirm::Confirmed) {
+            const int n = (int)edited_vals.size();
+            edited_vals.clear();
+            gcs_log("discarded %d staged param change%s", n, n == 1 ? "" : "s");
+        }
+    }
 
     {
         char q[96];
@@ -403,6 +466,15 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     const float avail_h = ImGui::GetContentRegionAvail().y;
     const float val_w   = 150.0f;
     const float btn_w   = 86.0f;
+    // Discard-one cross, and the input width left once it is taken out. The
+    // cross comes out of the value column rather than being added to the row:
+    // the name column is already the one under pressure — left_w is 24% of the
+    // window, so on a small display it has barely room for a 16-character
+    // parameter ID — and widening the row would come out of exactly that.
+    // Reserved on every row, drawn or not, so the WRITE column does not jump
+    // sideways as rows are edited and cleared.
+    const float x_w     = 22.0f;
+    const float in_w    = val_w - x_w - 4.0f;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_param_list());
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
@@ -455,8 +527,14 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             ImGui::SameLine(name_w);
 
-            auto [ev_it, inserted] = edited_vals.emplace(id, p.value);
-            float& edit_val = ev_it->second;
+            // What the row shows: the staged value if there is one, otherwise
+            // the vehicle's. A plain local, not a reference into the map —
+            // nothing is inserted until an edit below actually happens. ImGui
+            // keeps its own buffer while a field is being typed into, so the
+            // backing float only has to survive the frame.
+            auto  ev       = edited_vals.find(id);
+            float edit_val = (ev != edited_vals.end()) ? ev->second : p.value;
+            bool  edited   = false;
 
             if (meta && meta->widget == ParamWidgetType::Enum) {
                 const char* preview = "Unknown";
@@ -467,12 +545,14 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                         break;
                     }
                 }
-                ImGui::SetNextItemWidth(val_w);
+                ImGui::SetNextItemWidth(in_w);
                 if (ImGui::BeginCombo("##v", preview, ImGuiComboFlags_HeightLargest)) {
                     for (int e = 0; e < meta->enum_count; ++e) {
                         bool sel = (meta->enum_entries[e].value == cur_int);
-                        if (ImGui::Selectable(meta->enum_entries[e].label, sel))
+                        if (ImGui::Selectable(meta->enum_entries[e].label, sel)) {
                             edit_val = (float)meta->enum_entries[e].value;
+                            edited   = true;
+                        }
                         if (sel) ImGui::SetItemDefaultFocus();
                     }
                     ImGui::EndCombo();
@@ -482,7 +562,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 int32_t bitmask_val = (int32_t)edit_val;
                 char btn_lbl[24];
                 snprintf(btn_lbl, sizeof(btn_lbl), "0x%04X###bm", bitmask_val);
-                if (ui_grid_button(btn_lbl, { val_w, 0.0f }))
+                if (ui_grid_button(btn_lbl, { in_w, 0.0f }))
                     ImGui::OpenPopup("##bitmask_popup");
 
                 ui_push_dialog_style();
@@ -494,6 +574,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                             if (set) bitmask_val |=  (1 << meta->bitmask_bits[b].bit);
                             else     bitmask_val &= ~(1 << meta->bitmask_bits[b].bit);
                             edit_val = (float)bitmask_val;
+                            edited   = true;
                         }
                     }
                     ImGui::Spacing();
@@ -506,13 +587,42 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 ui_pop_dialog_style();
 
             } else {
-                ImGui::SetNextItemWidth(val_w);
-                ImGui::InputFloat("##v", &edit_val, 0.0f, 0.0f, "%.4g");
+                ImGui::SetNextItemWidth(in_w);
+                if (ImGui::InputFloat("##v", &edit_val, 0.0f, 0.0f, "%.4g"))
+                    edited = true;
+            }
+
+            // Stage on edit; unstage once the vehicle agrees again, which is
+            // both how an accepted write clears a row and how typing a value
+            // back to what it was clears it.
+            if (edited) {
+                edited_vals[id] = edit_val;
+            } else if (ev != edited_vals.end() && ev->second == p.value) {
+                edited_vals.erase(ev);
+            }
+
+            bool dirty = (edit_val != p.value);
+
+            // Discard this one row. Unconfirmed — it can lose exactly one value,
+            // and the value it restores is sitting right there on the vehicle.
+            ImGui::SameLine(0, 4);
+            if (dirty) {
+                if (ui_grid_button("\xc3\x97" "###discard_one", { x_w, 0.0f })) {
+                    edited_vals.erase(id);
+                    // Restore the row in this same frame, so the WRITE button
+                    // beside it does not stay lit until the next one.
+                    edit_val = p.value;
+                    dirty    = false;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Discard this change (back to %.4g)",
+                                      (double)p.value);
+            } else {
+                ImGui::Dummy({ x_w, ImGui::GetFrameHeight() });
             }
 
             ImGui::SameLine(0, 4);
 
-            const bool dirty = (edit_val != p.value);
             ImGui::BeginDisabled(!connected || !dirty);
             // Amber only once the field differs from the vehicle's value —
             // an unedited row stays in the neutral well like every other button.

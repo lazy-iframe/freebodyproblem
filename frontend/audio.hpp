@@ -54,6 +54,28 @@ void gcs_tone(GcsTone tone);
 // pulse rather than the ground station's clock. A link that dies mid-flight
 // goes quiet, which is the more useful thing to hear.
 
+// ── Progress ticks ────────────────────────────────────────────────────────────
+//
+// A short blip repeated under a progress bar, the gap between blips shrinking
+// as the bar fills — the parking-sensor idiom, and for the same reason: it puts
+// "how far along" and "still moving" into the ear, so a parameter fetch or a
+// mission download can be started and then watched out of the window instead of
+// on the screen.
+//
+// Call this once per frame for as long as the bar is drawn, with the same
+// fraction the bar was given. `channel` names the transfer ("params",
+// "mission"); channels are independent, so two transfers keep their own tempo
+// rather than fighting over one. It is the *calling* that keeps a channel open:
+// stop calling — because the transfer finished, failed, or the panel was
+// closed — and the channel retires itself a fraction of a second later. There
+// is nothing to remember to close.
+//
+// The tempo follows the fraction, not the rate of change, so a transfer that
+// stalls at 60% keeps ticking at its 60% tempo. That steadiness is the point:
+// an unchanging tempo is audibly a stall, where silence would be
+// indistinguishable from a transfer that quietly completed.
+void gcs_progress(const char* channel, float fraction);
+
 // Master switches, persisted in settings.json. Volume is linear 0..1.
 void  audio_set_enabled(bool on);
 bool  audio_enabled();

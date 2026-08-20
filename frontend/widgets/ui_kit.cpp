@@ -431,3 +431,39 @@ bool ui_tab_button(const char* label, ImVec2 size, bool active)
 {
     return ui_grid_button(label, size, active);
 }
+
+// ── Progress ─────────────────────────────────────────────────────────────────
+
+void ui_progress_bar(const char* text, float frac, float height)
+{
+    if (!(frac >= 0.0f)) frac = 0.0f;   // also catches NaN from a 0 denominator
+    if (frac > 1.0f)     frac = 1.0f;
+
+    const float  avail = ImGui::GetContentRegionAvail().x;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+
+    // Micro font for the caption, as everywhere else a number annotates a
+    // control. g_font_micro is null when neither font file was found and ImGui
+    // is on its built-in font; null is its documented "keep the current font",
+    // and the size still applies, so that case needs no branch here.
+    ImGui::PushFont(g_font_micro, UI_SZ_MICRO);
+
+    char pct[8];
+    snprintf(pct, sizeof(pct), "%d%%", (int)(frac * 100.0f + 0.5f));
+    ImGui::TextDisabled("%s", pct);
+
+    // Right-aligned on the same line. Placed by cursor rather than by an
+    // ImGui::SameLine offset so it stays pinned to the panel edge at any
+    // sidebar width.
+    if (text && *text) {
+        const float tw = ImGui::CalcTextSize(text).x;
+        ImGui::SameLine(0, 0);
+        ImGui::SetCursorScreenPos({ start.x + avail - tw, start.y });
+        ImGui::TextDisabled("%s", text);
+    }
+    ImGui::PopFont();
+
+    // Empty overlay, not nullptr: nullptr makes ImGui draw its own "%.0f%%"
+    // inside the bar, which is the clipped text this widget exists to avoid.
+    ImGui::ProgressBar(frac, { -1.0f, height }, "");
+}

@@ -145,6 +145,22 @@ bool ui_tinted_button(const char* label, ImVec2 size, ImVec4 tint, ImVec4 tint_d
 
 bool ui_tab_button(const char* label, ImVec2 size, bool active);
 
+// ── Progress ─────────────────────────────────────────────────────────────────
+//
+// A slim transfer bar with its count on its own line above it, percentage left
+// and `text` right, both across the full panel width.
+//
+// ImGui::ProgressBar's own overlay cannot be used for this. It draws the string
+// *inside* the bar's rectangle and clips it to that rectangle, so a 16 px body
+// font in the 10-12 px bar this UI wants loses the top and bottom of every
+// digit — and horizontally the string is pushed along ahead of the fill and
+// clamped against the right edge, so it has least room exactly when the numbers
+// are longest. Splitting the label out gives it the whole width and lets the
+// bar stay as slim as the rest of the chrome.
+//
+// `height` is the bar alone; the caption line is added above it.
+void ui_progress_bar(const char* text, float frac, float height);
+
 // ── Dialogs ──────────────────────────────────────────────────────────────────
 //
 // Every popup shares one shape: generous padding, an amber tracked title over a

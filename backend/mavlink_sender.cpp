@@ -140,8 +140,15 @@ void MavlinkSender::request_param_list(uint8_t tsys, uint8_t tcomp)
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
 
+    param_list_seq_.fetch_add(1, std::memory_order_release);
+
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
+}
+
+uint32_t MavlinkSender::param_list_seq() const
+{
+    return param_list_seq_.load(std::memory_order_acquire);
 }
 
 void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,

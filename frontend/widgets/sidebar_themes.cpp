@@ -177,7 +177,7 @@ void draw_themes_panel(AppSettings& settings)
             settings_save(settings);
         }
         ImGui::SameLine(0, 8);
-        ImGui::TextDisabled("success / failure / armed");
+        ImGui::TextDisabled("success / failure / armed / progress");
 
         float vol = settings.audio_volume;
         ImGui::BeginDisabled(!enabled);

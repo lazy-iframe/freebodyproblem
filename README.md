@@ -69,6 +69,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 ### Audio
 - **Synthesised cue tones**: PC-speaker square waves in the GRUB `GRUB_INIT_TUNE` idiom — rising on success, falling on failure, for command ACKs, mission upload and link up/down
 - **Armed heartbeat**: a 440 Hz note every fifth HEARTBEAT while armed, mixed well below the alert tones — the vehicle's pulse, so silence means the link dropped
+- **Progress ticks**: a blip under every progress bar, accelerating from 700 ms apart to 80 ms as the bar fills — the parking-sensor idiom, so a parameter fetch can be listened to instead of watched
 - **No assets, no dependency**: tones are generated at runtime via [miniaudio](https://github.com/mackron/miniaudio) (header-only, backends loaded at runtime); a machine with no sound device logs one line and runs silent
 - **Mute and volume** in the settings tab, persisted to `settings.json`
 
@@ -324,10 +325,21 @@ publishing a headline version.
 4. Edit values in-place with spinners
 5. Click **WRITE** to commit one change, or **WRITE ALL** to send every edited
    parameter at once (asks for confirmation, and shows the count on the button)
+6. Click the **×** beside a changed value to drop that one edit, or **DISCARD**
+   next to WRITE ALL to drop every staged change at once
 
 Edits are staged until written: a row whose value differs from the vehicle's
 shows an amber **WRITE**, and clears once the vehicle echoes the new value back.
 Anything the vehicle misses stays visibly dirty — press again.
+
+Only values *you* moved count as staged. A parameter the vehicle changes on its
+own — ArduPilot saves its `STAT_*` counters as it runs, and broadcasts each save
+— updates the row in place without ever becoming a pending edit, so WRITE ALL
+can never offer to write a stale value back over a newer one.
+
+**DISCARD** asks for confirmation because a loaded parameter file can put
+hundreds of edits behind it and there is no undo. The per-row **×** does not:
+it can only lose one value, and the value it restores is on the vehicle.
 
 #### Parameter files
 
@@ -417,9 +429,23 @@ Square waves at 125 ms a note, written in the idiom of GRUB's `GRUB_INIT_TUNE`
 | Success | rising fifth | `480 440 1 660 1` | a hand-issued command the vehicle accepted (arm/disarm, takeoff, RTL, mode change, aux function), mission upload accepted, link established |
 | Failure | three notes falling | `480 660 1 440 1 330 1` | the same commands rejected, mission upload failed, link error or timeout |
 | Armed | one note, every 5th HEARTBEAT | `480 440 1` | the whole time the vehicle is armed — starting on the arming heartbeat itself |
+| Progress | short blip, accelerating | `480 880 0.25` | under a progress bar — parameter fetch, mission download |
 
 Telemetry-rate and capability requests are ACKed too, but deliberately make no
 sound: a burst of beeps at every connect trains you to ignore the cue.
+
+The progress tick is the parking-sensor idiom: the gap between blips shrinks
+from 700 ms at 0% to 80 ms at 100%, so **how far along** and **still moving**
+are both in the ear and a long parameter fetch can be started and then watched
+out of the window. The gap shrinks geometrically rather than linearly — each
+10% of the bar speeds the ticking up by the same proportion, because tempo is
+heard as a ratio, and a straight line in milliseconds sounds like nothing
+happens until the very end. The tempo follows the fraction and not its rate of
+change, so a transfer that stalls at 60% keeps ticking steadily at its 60%
+tempo: an unchanging tempo is audibly a stall, where silence would be
+indistinguishable from a transfer that quietly finished. Transfers tick on
+independent channels, so a mission download during a parameter fetch keeps its
+own tempo instead of the two beating against each other.
 
 The armed beep counts HEARTBEATs rather than seconds — every fifth one, so
 about every five seconds at the 1 Hz ArduPilot sends them. Counting the
@@ -444,7 +470,7 @@ vehicle disarmed.**
 - **main.cpp**: GLFW/OpenGL event loop, link thread management, MAVLink I/O
 - **settings.cpp**: JSON-based persistent configuration (tile server, themes, window state)
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
-- **audio.cpp**: synthesised cue tones — lock-free voice pool mixed on the miniaudio callback
+- **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload

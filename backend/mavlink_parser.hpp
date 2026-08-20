@@ -158,6 +158,14 @@ struct VehicleState {
     uint16_t params_received  = 0;  // number of PARAM_VALUE messages received so far
     uint32_t params_generation = 0; // incremented on every PARAM_VALUE (incl. write echoes)
 
+    // True only while a PARAM_REQUEST_LIST this GCS sent is still being
+    // answered. Stamped by the link thread, not by the parser: the parser sees
+    // PARAM_VALUEs and cannot tell a bulk fetch from the single unsolicited one
+    // a vehicle sends whenever a parameter changes — including the stream-rate
+    // parameters our own SET_MESSAGE_INTERVALs write on connect. Without this,
+    // "1 of 1387 received" reads as a stalled fetch that nobody ever started.
+    bool     param_fetch_active = false;
+
     // Mission download (MISSION_COUNT / MISSION_ITEM_INT)
     std::vector<MissionItem> mission;
     uint16_t mission_count    = 0;
@@ -217,6 +225,18 @@ public:
 
     // Acknowledge a mode-list change after the link thread has re-requested it.
     void clear_modes_dirty() { state_.modes_dirty = false; }
+
+    // Drop what we hold, so a new PARAM_REQUEST_LIST is counted from zero.
+    // Without it the second fetch of a session starts at params_received ==
+    // param_count and so is already "finished": no progress, and no gap-filling
+    // if it stalls. The published copy in main.cpp is left alone and only
+    // replaced when the fetch completes, so the table keeps showing the old
+    // values while the new ones come in rather than blanking.
+    void clear_params()
+    {
+        params_.clear();
+        state_.params_received = 0;
+    }
 
     // Mission download request queue — drained by link thread after each parse()
     struct MissionReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; };

@@ -325,7 +325,16 @@ static void link_thread_fn(LinkConfig cfg)
     auto     link_start         = Clock::now();
     uint32_t last_params_gen    = 0;
     uint32_t link_known_params_gen = 0;   // link-thread-local; avoids shared reads outside mutex
+    bool     link_params_complete  = false; // latched, so completion logs once per fetch
     auto     last_param_time    = Clock::now();
+    // Bulk parameter fetch. `param_fetch_active` follows the PARAM_REQUEST_LIST
+    // this GCS sent, never the PARAM_VALUEs coming back — see the note on
+    // MavlinkSender::param_list_seq(). Everything below only runs inside a fetch
+    // somebody actually asked for.
+    uint32_t seen_param_list_seq = 0;
+    bool     param_fetch_active  = false;
+    int      param_stall_rounds  = 0;     // consecutive stall rounds with no new params
+    uint16_t param_stall_mark    = 0;     // params_received at the last stall round
     size_t   last_status_count  = 0;      // track new STATUSTEXT arrivals for logging
     bool     logged_heartbeat   = false;
     bool     logged_fw_info     = false;
@@ -574,17 +583,25 @@ static void link_thread_fn(LinkConfig cfg)
                 last_param_time = Clock::now();
             }
 
-            // Detect param fetch completion (link-thread-local comparison avoids shared reads)
-            const bool params_just_completed =
-                ps.param_count > 0 &&
-                ps.params_received == ps.param_count &&
-                ps.params_generation != link_known_params_gen;
-            if (params_just_completed)
-                link_known_params_gen = ps.params_generation;
+            // Completion is an edge; republishing the table is not. Both used to
+            // hang off the same test, which was wrong once a fetch had finished:
+            // params_generation ticks on every PARAM_VALUE, and after completion
+            // the ones that keep arriving — the echo of a write, or the counters
+            // a vehicle saves as it runs — all arrive with params_received still
+            // equal to param_count. Every one of them therefore read as a fresh
+            // completion and logged "parameters loaded" again.
+            // (link-thread-local comparisons avoid shared reads)
+            const bool params_complete = ps.param_count > 0 &&
+                                         ps.params_received >= ps.param_count;
+            const bool params_changed  = ps.params_generation != link_known_params_gen;
+            const bool params_just_completed = params_complete && !link_params_complete;
+            link_params_complete = params_complete;
 
             {
                 std::lock_guard<std::mutex> lk(g_mtx);
                 g_state          = ps;   // cheap: VehicleState is now all scalars
+                // Owned by this thread, not the parser — see the field's note.
+                g_state.param_fetch_active = param_fetch_active;
                 g_msg_stats      = parser.msg_stats();
                 g_total_messages = parser.total_messages();
                 g_total_bytes    = parser.total_bytes();
@@ -592,9 +609,12 @@ static void link_thread_fn(LinkConfig cfg)
                 g_status_texts.assign(parser.status_texts().begin(),
                                       parser.status_texts().end());
 
-                if (params_just_completed) {
-                    g_params            = parser.params();
-                    g_params_generation = ps.params_generation;
+                // Republished on any change once the set is complete, so a value
+                // the vehicle alters on its own still reaches the table.
+                if (params_complete && params_changed) {
+                    g_params              = parser.params();
+                    g_params_generation   = ps.params_generation;
+                    link_known_params_gen = ps.params_generation;
                 }
             }
 
@@ -620,32 +640,90 @@ static void link_thread_fn(LinkConfig cfg)
                 g_sender.flush_stream(fd);
         }
 
-        // Retransmit dropped PARAM_VALUE packets after a 2 s stall mid-fetch
+        // ── Bulk parameter fetch: arm, retransmit, give up ────────────────────
         {
             const auto& ps = parser.state();
-            if (vehicle_addr_set &&
+
+            // A PARAM_REQUEST_LIST went out — from the PARAMS tab, a plugin, or
+            // our own retry below. That, and only that, opens a fetch.
+            const uint32_t list_seq = g_sender.param_list_seq();
+            if (list_seq != seen_param_list_seq) {
+                seen_param_list_seq = list_seq;
+                parser.clear_params();   // count this fetch from zero
+                param_fetch_active  = true;
+                param_stall_rounds  = 0;
+                param_stall_mark    = 0;
+                last_param_time     = Clock::now();
+            }
+
+            if (param_fetch_active && ps.param_count > 0 &&
+                ps.params_received >= ps.param_count)
+                param_fetch_active = false;   // complete
+
+            // Retransmit after a stall. Individual PARAM_REQUEST_READs are for
+            // filling the handful of gaps packet loss leaves at the end of a
+            // fetch, and are the wrong tool for a fetch that never got going:
+            // a vehicle queues them in a small fixed-depth buffer — ArduPilot's
+            // is 20 — and silently drops the rest, so asking for a thousand
+            // missing indices at once gets about twenty answered and a thousand
+            // discarded, every round, forever. PARAM_REQUEST_LIST goes down the
+            // vehicle's separate streaming path instead, which is paced against
+            // its own link budget and drops nothing; it is why pressing FETCH
+            // ALL completes a fetch that the gap-filling never could.
+            constexpr double PARAM_STALL_S       = 2.0;
+            constexpr int    PARAM_READ_BURST    = 16;  // <= a vehicle's request queue depth
+            constexpr int    PARAM_GIVEUP_ROUNDS = 5;   // ~10 s with nothing arriving
+
+            if (vehicle_addr_set && param_fetch_active &&
                 ps.param_count > 0 &&
-                ps.params_received > 0 &&
                 ps.params_received < ps.param_count)
             {
                 double stall = std::chrono::duration<double>(
                                    Clock::now() - last_param_time).count();
-                if (stall >= 2.0) {
-                    std::unordered_set<uint16_t> have;
-                    have.reserve(parser.params().size());
-                    for (const auto& [key, e] : parser.params())
-                        have.insert(e.index);
+                if (stall >= PARAM_STALL_S) {
+                    // Rounds are only counted as lost when nothing at all
+                    // arrived, so a slow link retries as long as it is moving.
+                    if (ps.params_received == param_stall_mark) ++param_stall_rounds;
+                    else                                        param_stall_rounds = 0;
+                    param_stall_mark = ps.params_received;
 
-                    int missing = 0;
-                    for (uint16_t idx = 0; idx < ps.param_count; ++idx) {
-                        if (have.find(idx) == have.end()) {
-                            g_sender.request_param_read(ps.sysid, ps.compid,
-                                                        (int16_t)idx);
-                            ++missing;
+                    if (param_stall_rounds >= PARAM_GIVEUP_ROUNDS) {
+                        gcs_log("param fetch abandoned at %u/%u — no reply in %.0f s; "
+                                "press FETCH ALL to retry",
+                                (unsigned)ps.params_received, (unsigned)ps.param_count,
+                                PARAM_STALL_S * PARAM_GIVEUP_ROUNDS);
+                        param_fetch_active = false;
+                    } else {
+                        std::unordered_set<uint16_t> have;
+                        have.reserve(parser.params().size());
+                        for (const auto& [key, e] : parser.params())
+                            have.insert(e.index);
+
+                        std::vector<uint16_t> missing;
+                        for (uint16_t idx = 0; idx < ps.param_count; ++idx)
+                            if (have.find(idx) == have.end())
+                                missing.push_back(idx);
+
+                        if ((int)missing.size() > PARAM_READ_BURST) {
+                            g_sender.request_param_list(ps.sysid, ps.compid);
+                            // Our own retry is the same fetch continuing, not a
+                            // new one: adopt the sequence number so the arming
+                            // branch above does not reset the give-up counter
+                            // and leave this looping until the link drops.
+                            seen_param_list_seq = g_sender.param_list_seq();
+                            gcs_log("param fetch stalled at %u/%u — re-requesting full list "
+                                    "(%d missing)",
+                                    (unsigned)ps.params_received, (unsigned)ps.param_count,
+                                    (int)missing.size());
+                        } else {
+                            for (uint16_t idx : missing)
+                                g_sender.request_param_read(ps.sysid, ps.compid,
+                                                            (int16_t)idx);
+                            gcs_log("param fetch stalled at %u/%u — re-requesting %d missing",
+                                    (unsigned)ps.params_received, (unsigned)ps.param_count,
+                                    (int)missing.size());
                         }
                     }
-                    gcs_log("param fetch stalled at %u/%u — re-requesting %d missing",
-                            (unsigned)ps.params_received, (unsigned)ps.param_count, missing);
                     last_param_time = Clock::now(); // rate-limit re-requests to once per 2 s
                 }
             }

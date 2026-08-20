@@ -19,6 +19,7 @@
 #include "sidebar_internal.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
+#include "../../audio.hpp"
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
@@ -311,8 +312,11 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         ImGui::Spacing();
         char prog_lbl[32];
         snprintf(prog_lbl, sizeof(prog_lbl), "%u / %u", vs->mission_received, vs->mission_count);
-        ImGui::ProgressBar((float)vs->mission_received / vs->mission_count,
-                           { -1.0f, 10.0f }, prog_lbl);
+        const float frac = (float)vs->mission_received / vs->mission_count;
+        ui_progress_bar(prog_lbl, frac, 10.0f);
+        // Its own channel, so a mission download during a parameter fetch keeps
+        // its own tempo instead of the two of them beating against each other.
+        gcs_progress("mission", frac);
     }
 
     ImGui::Spacing();

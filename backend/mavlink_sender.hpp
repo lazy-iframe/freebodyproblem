@@ -27,6 +27,7 @@
 #  include <netinet/in.h>
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <mutex>
@@ -112,6 +113,19 @@ public:
     // FC responds with a stream of PARAM_VALUE (#22) messages.
     void request_param_list(uint8_t target_sysid, uint8_t target_compid);
 
+    // Counter bumped every time a PARAM_REQUEST_LIST is queued, by whoever
+    // queues it — the PARAMS tab, a plugin, or the link thread's own retry.
+    //
+    // The link thread watches it to know a bulk fetch is genuinely in flight,
+    // which cannot be inferred from the PARAM_VALUEs arriving. A vehicle
+    // volunteers a PARAM_VALUE for every parameter it changes, and this GCS
+    // causes such a change itself: SET_MESSAGE_INTERVAL writes the vehicle's
+    // stream-rate parameters, so configuring telemetry rates on connect draws
+    // back an unsolicited PARAM_VALUE whose param_count field is the vehicle's
+    // whole parameter total. Counting arrivals alone, that is indistinguishable
+    // from a fetch that stalled one message in.
+    uint32_t param_list_seq() const;
+
     // Re-request a single parameter by index (PARAM_REQUEST_READ #20).
     // Used to fill gaps caused by UDP packet loss during a bulk fetch.
     void request_param_read(uint8_t target_sysid, uint8_t target_compid,
@@ -188,6 +202,7 @@ private:
 
     mutable std::mutex                      mtx_;
     std::queue<std::vector<uint8_t>>        queue_;
+    std::atomic<uint32_t>                   param_list_seq_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;
 
     std::vector<MissionItem>                upload_items_;
