@@ -136,6 +136,22 @@ public:
     void set_param(uint8_t target_sysid, uint8_t target_compid,
                    const char* param_id, float value, uint8_t param_type);
 
+    // Write a single parameter through the extended protocol (PARAM_EXT_SET
+    // #323). Same shape as set_param() deliberately — a caller swaps one for
+    // the other and changes nothing else — but `param_type` is a
+    // MAV_PARAM_EXT_TYPE rather than a MAV_PARAM_TYPE, and the reply is a
+    // PARAM_EXT_ACK (#324) naming the parameter and its verdict rather than a
+    // bare PARAM_VALUE echo.
+    //
+    // The value is carried in the message's 128-byte payload in the type's own
+    // byte representation, which is what makes this protocol able to write
+    // integers a float cannot hold exactly. This signature still takes a float,
+    // for symmetry with set_param() and because everything the GCS writes
+    // through it is well inside float's exact-integer range; a caller needing
+    // the full width of an INT64 parameter wants a different entry point.
+    void set_param_ext(uint8_t target_sysid, uint8_t target_compid,
+                       const char* param_id, float value, uint8_t param_type);
+
     // ── Mission protocol ─────────────────────────────────────────────────────
 
     // Send MISSION_REQUEST_LIST (#43) — FC responds with MISSION_COUNT (#44).

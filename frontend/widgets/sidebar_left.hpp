@@ -36,6 +36,14 @@ struct ConnectionRequest {
     bool     disconnect  = false;     // true for one frame when Disconnect is pressed
 };
 
+// Feed the RC panel's calibration the live receiver stream.
+//
+// Called once per frame from the render loop rather than from the RC tab's own
+// draw, because a calibration sweep has to keep recording while the operator is
+// looking at something else — switching to PARAMS mid-sweep must not silently
+// stop measuring, and in fullscreen video the sidebar is not drawn at all.
+void rc_tab_pump(const VehicleState* vs);
+
 void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        ConnectionRequest* conn_out, LinkStatus link_status,
                        const std::unordered_map<std::string, ParamEntry>* params,

@@ -175,6 +175,95 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
         break;
     }
 
+    case MAVLINK_MSG_ID_RC_CHANNELS: {
+        // Ignore anything that is not the autopilot we locked onto at the first
+        // heartbeat. Nothing else in this parser filters by sysid, but RC is the
+        // one stream a second node on a shared bus plausibly also publishes —
+        // a companion computer forwarding its own receiver, a second autopilot
+        // on a serial splitter — and a calibration sweep that quietly mixed two
+        // receivers together would write the union of both as one channel's
+        // range.
+        if (locked_sysid_ != 0 &&
+            (msg.sysid != locked_sysid_ || msg.compid != locked_compid_))
+            break;
+
+        mavlink_rc_channels_t rc;
+        mavlink_msg_rc_channels_decode(&msg, &rc);
+
+        const uint16_t src[RcChannels::MAX_CHANNELS] = {
+            rc.chan1_raw,  rc.chan2_raw,  rc.chan3_raw,  rc.chan4_raw,
+            rc.chan5_raw,  rc.chan6_raw,  rc.chan7_raw,  rc.chan8_raw,
+            rc.chan9_raw,  rc.chan10_raw, rc.chan11_raw, rc.chan12_raw,
+            rc.chan13_raw, rc.chan14_raw, rc.chan15_raw, rc.chan16_raw,
+            rc.chan17_raw, rc.chan18_raw,
+        };
+        std::memcpy(state_.rc.chan, src, sizeof(src));
+
+        state_.rc.count    = rc.chancount;
+        state_.rc.rssi     = rc.rssi;
+        state_.rc.from_raw = false;
+        state_.rc.valid    = true;
+        ++state_.rc.generation;
+        break;
+    }
+
+    case MAVLINK_MSG_ID_RC_CHANNELS_RAW: {
+        if (locked_sysid_ != 0 &&
+            (msg.sysid != locked_sysid_ || msg.compid != locked_compid_))
+            break;
+
+        // Strictly the fallback. A vehicle sending both would otherwise have its
+        // 18-channel picture overwritten eight channels at a time, and the
+        // upper channels — where every aux switch lives — would flicker between
+        // their real value and zero at whatever rate the two streams interleave.
+        if (state_.rc.valid && !state_.rc.from_raw) break;
+
+        mavlink_rc_channels_raw_t rc;
+        mavlink_msg_rc_channels_raw_decode(&msg, &rc);
+
+        // RC_CHANNELS_RAW is per-port: port 0 is channels 1-8, port 1 is 9-16.
+        // Most receivers only ever fill port 0, but honouring the field costs
+        // nothing and is what makes the second bank land in the right slots.
+        const int base = (int)rc.port * 8;
+        if (base < 0 || base >= RcChannels::MAX_CHANNELS) break;
+
+        const uint16_t src[8] = {
+            rc.chan1_raw, rc.chan2_raw, rc.chan3_raw, rc.chan4_raw,
+            rc.chan5_raw, rc.chan6_raw, rc.chan7_raw, rc.chan8_raw,
+        };
+        const int n = std::min(8, RcChannels::MAX_CHANNELS - base);
+        for (int i = 0; i < n; ++i)
+            state_.rc.chan[base + i] = src[i];
+
+        // No chancount in this message. The highest port seen carrying a live
+        // pulse is the best available stand-in, and never shrinks within a link
+        // — a channel that goes to zero is a lost channel, not a smaller radio.
+        const uint8_t reach = static_cast<uint8_t>(base + n);
+        if (reach > state_.rc.count) state_.rc.count = reach;
+
+        state_.rc.rssi     = rc.rssi;
+        state_.rc.from_raw = true;
+        state_.rc.valid    = true;
+        ++state_.rc.generation;
+        break;
+    }
+
+    case MAVLINK_MSG_ID_PARAM_EXT_ACK: {
+        mavlink_param_ext_ack_t pa;
+        mavlink_msg_param_ext_ack_decode(&msg, &pa);
+
+        ParamExtAck entry{};
+        // Neither field is guaranteed NUL-terminated when it fills its array.
+        std::memcpy(entry.param_id, pa.param_id, 16);
+        entry.param_id[16] = '\0';
+        std::memcpy(entry.value, pa.param_value, 128);
+        entry.value[128] = '\0';
+        entry.param_type = pa.param_type;
+        entry.result     = pa.param_result;
+        param_ext_acks_.push_back(entry);
+        break;
+    }
+
     case MAVLINK_MSG_ID_AVAILABLE_MODES: {
         mavlink_available_modes_t am;
         mavlink_msg_available_modes_decode(&msg, &am);

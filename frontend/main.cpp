@@ -380,6 +380,11 @@ static void link_thread_fn(LinkConfig cfg)
                 g_sender.request_message_interval(1, 1,   1, 500000); // SYS_STATUS         @  2 Hz
                 g_sender.request_message_interval(1, 1,  24, 500000); // GPS_RAW_INT        @  2 Hz
                 g_sender.request_message_interval(1, 1, 193, 200000); // EKF_STATUS_REPORT  @  5 Hz
+                // RC_CHANNELS at 10 Hz. Fast enough that a calibration sweep
+                // catches a stick's true stop rather than wherever it happened
+                // to be sampled, and that the RC panel's bars track the sticks
+                // instead of stepping after them.
+                g_sender.request_message_interval(1, 1,  65, 100000); // RC_CHANNELS        @ 10 Hz
                 g_sender.request_autopilot_capabilities(1, 1);
                 g_sender.request_available_modes(1, 1);
                 modes_last_req = Clock::now();
@@ -436,6 +441,23 @@ static void link_thread_fn(LinkConfig cfg)
                 }
             }
             parser.clear_acks();
+
+            // PARAM_EXT_ACK — the extended parameter protocol's reply. Unlike a
+            // PARAM_SET, which is answered with a PARAM_VALUE echo the table
+            // picks up on its own, this one goes nowhere unless it is logged:
+            // it names the parameter and says outright whether the write took.
+            for (const auto& pa : parser.pending_param_ext_acks()) {
+                const char* verdict = (pa.result == PARAM_ACK_ACCEPTED)          ? "accepted"
+                                    : (pa.result == PARAM_ACK_VALUE_UNSUPPORTED) ? "value unsupported"
+                                    : (pa.result == PARAM_ACK_FAILED)            ? "failed"
+                                    : (pa.result == PARAM_ACK_IN_PROGRESS)       ? "in progress"
+                                                                                 : "rejected";
+                gcs_log("param_ext: %s \xe2\x86\x92 %s", pa.param_id, verdict);
+                if (pa.result != PARAM_ACK_IN_PROGRESS)
+                    gcs_tone(pa.result == PARAM_ACK_ACCEPTED ? GcsTone::Success
+                                                             : GcsTone::Failure);
+            }
+            parser.clear_param_ext_acks();
 
             // Walk the vehicle's mode list one index at a time, and restart
             // the walk if AVAILABLE_MODES_MONITOR reports the list changed.
@@ -846,6 +868,10 @@ static void render_ui()
     // draws, so a toggle takes effect on the next frame — the video window is
     // submitted after the sidebars and simply covers them in the meantime.
     const bool video_full = center_view_video_fullscreen();
+
+    // Before any panel draws: a calibration sweep records from the live stream,
+    // not from whether its tab happens to be visible.
+    rc_tab_pump(&vs);
 
     draw_topbar(vs, stats, total_msg, total_bytes, errors, &g_sender,
                 g_link_status.load(), &g_close_req);

@@ -70,6 +70,55 @@ struct StatusText {
     char    text[51];    // null-terminated, max 50 chars
 };
 
+// Raw receiver pulse widths, from RC_CHANNELS (#65) or RC_CHANNELS_RAW (#35).
+//
+// Both carry the same thing — what the receiver handed the autopilot, before
+// trim, reversal or deadzone — and differ only in reach: #65 carries 18
+// channels plus the receiver's own channel count, #35 carries 8 and a port
+// number. #65 is preferred wherever a vehicle sends it; #35 is the fallback for
+// stacks that predate it.
+//
+// A calibration has to read these and not RC_CHANNELS_SCALED, which has already
+// had the very trim and reversal we are trying to measure applied to it.
+struct RcChannels {
+    static constexpr int MAX_CHANNELS = 18;
+
+    uint16_t chan[MAX_CHANNELS] = {};
+    uint8_t  count      = 0;          // channels the receiver reports; may exceed MAX_CHANNELS
+    uint8_t  rssi       = UINT8_MAX;  // 0-254, UINT8_MAX = unknown
+    bool     from_raw   = false;      // true while only RC_CHANNELS_RAW has been seen
+    bool     valid      = false;      // at least one message decoded
+    uint32_t generation = 0;          // ticks on every update; a sweep watches this
+
+    // Channels this vehicle actually carries, clamped to what the struct holds.
+    // chancount is documented as 0 when no RC is being received, so a zero there
+    // is not "no channels in the message" — it is no receiver.
+    int usable_count() const {
+        if (count == 0) return 0;
+        const int n = (int)count;
+        return n < MAX_CHANNELS ? n : MAX_CHANNELS;
+    }
+
+    // 1-based, matching the RCn_* parameter names and every RC UI in the field.
+    uint16_t at(int channel_1based) const {
+        if (channel_1based < 1 || channel_1based > MAX_CHANNELS) return 0;
+        return chan[channel_1based - 1];
+    }
+
+    bool has_rssi() const { return rssi != UINT8_MAX; }
+};
+
+// PARAM_EXT_ACK (#324) — the extended parameter protocol's reply to a
+// PARAM_EXT_SET. Unlike PARAM_SET, which is answered with a plain PARAM_VALUE
+// echo that is indistinguishable from any other, this one names the parameter
+// and says outright whether the write took.
+struct ParamExtAck {
+    char    param_id[17];  // null-terminated
+    char    value[129];    // the payload as received, null-terminated for display
+    uint8_t param_type;    // MAV_PARAM_EXT_TYPE
+    uint8_t result;        // PARAM_ACK: 0=ACCEPTED, 3=IN_PROGRESS, else failure
+};
+
 struct CommandAck {
     uint16_t command;
     uint8_t  result;   // MAV_RESULT: 0=ACCEPTED, else failure
@@ -148,6 +197,9 @@ struct VehicleState {
     uint16_t ekf_flags                = 0;
     bool     has_ekf_status           = false;
 
+    // RC_CHANNELS (#65) / RC_CHANNELS_RAW (#35)
+    RcChannels rc;
+
     // AUTOPILOT_VERSION (#148)
     char     fw_version[32] = {};   // e.g. "4.3.7"
     char     fw_hash[17]    = {};   // first 8 bytes of flight_custom_version as hex
@@ -223,6 +275,13 @@ public:
     const std::vector<CommandAck>& pending_acks() const { return ack_queue_; }
     void clear_acks() { ack_queue_.clear(); }
 
+    // PARAM_EXT_ACK queue — drained by the link thread, same shape as the
+    // command ACKs above. Only ever non-empty when something has actually sent
+    // a PARAM_EXT_SET; autopilots that only speak the classic parameter
+    // protocol never put anything here.
+    const std::vector<ParamExtAck>& pending_param_ext_acks() const { return param_ext_acks_; }
+    void clear_param_ext_acks() { param_ext_acks_.clear(); }
+
     // Acknowledge a mode-list change after the link thread has re-requested it.
     void clear_modes_dirty() { state_.modes_dirty = false; }
 
@@ -269,6 +328,7 @@ private:
     uint8_t locked_sysid_  = 0;
     uint8_t locked_compid_ = 0;
     std::vector<CommandAck>                    ack_queue_;
+    std::vector<ParamExtAck>                   param_ext_acks_;
     std::vector<MissionReq>                    mission_reqs_;
     std::vector<ItemReq>                       item_reqs_;
     std::deque<StatusText>                     status_texts_;

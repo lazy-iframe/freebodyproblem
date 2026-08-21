@@ -39,6 +39,7 @@ static inline int socket_write(int fd, const char* buf, int len)
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <mavlink/ardupilotmega/mavlink.h>
 
 using Clock = std::chrono::steady_clock;
@@ -171,6 +172,54 @@ void MavlinkSender::set_param(uint8_t tsys, uint8_t tcomp,
     mavlink_message_t msg;
     mavlink_msg_param_set_pack(GCS_SYSID, GCS_COMPID, &msg,
                                tsys, tcomp, param_id, value, param_type);
+
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
+}
+
+// PARAM_EXT_SET carries its value as raw bytes rather than a float, so the
+// caller's number has to be narrowed to the parameter's declared type first and
+// then copied out little-endian — MAVLink is little-endian on the wire, and the
+// payload is opaque bytes that no field-level byte swap will touch.
+static void encode_param_ext_value(char out[128], float value, uint8_t ext_type)
+{
+    std::memset(out, 0, 128);
+
+    auto put = [&](const void* src, size_t n) { std::memcpy(out, src, n); };
+
+    switch (ext_type) {
+    case MAV_PARAM_EXT_TYPE_UINT8:  { uint8_t  v = (uint8_t) value; put(&v, 1); break; }
+    case MAV_PARAM_EXT_TYPE_INT8:   { int8_t   v = (int8_t)  value; put(&v, 1); break; }
+    case MAV_PARAM_EXT_TYPE_UINT16: { uint16_t v = (uint16_t)value; put(&v, 2); break; }
+    case MAV_PARAM_EXT_TYPE_INT16:  { int16_t  v = (int16_t) value; put(&v, 2); break; }
+    case MAV_PARAM_EXT_TYPE_UINT32: { uint32_t v = (uint32_t)value; put(&v, 4); break; }
+    case MAV_PARAM_EXT_TYPE_INT32:  { int32_t  v = (int32_t) value; put(&v, 4); break; }
+    case MAV_PARAM_EXT_TYPE_UINT64: { uint64_t v = (uint64_t)value; put(&v, 8); break; }
+    case MAV_PARAM_EXT_TYPE_INT64:  { int64_t  v = (int64_t) value; put(&v, 8); break; }
+    case MAV_PARAM_EXT_TYPE_REAL64: { double   v = (double)  value; put(&v, 8); break; }
+    case MAV_PARAM_EXT_TYPE_CUSTOM:
+        // CUSTOM is an opaque string the component defines for itself. There is
+        // no meaning to give a float here, so the payload stays zeroed rather
+        // than inventing a text encoding the receiver never agreed to.
+        break;
+    case MAV_PARAM_EXT_TYPE_REAL32:
+    default:                        { float    v =           value; put(&v, 4); break; }
+    }
+}
+
+void MavlinkSender::set_param_ext(uint8_t tsys, uint8_t tcomp,
+                                   const char* param_id, float value,
+                                   uint8_t param_type)
+{
+    char payload[128];
+    encode_param_ext_value(payload, value, param_type);
+
+    mavlink_message_t msg;
+    mavlink_msg_param_ext_set_pack(GCS_SYSID, GCS_COMPID, &msg,
+                                   tsys, tcomp, param_id, payload, param_type);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);

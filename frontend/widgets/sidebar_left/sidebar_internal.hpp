@@ -35,6 +35,9 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs);
 void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                      const std::unordered_map<std::string, ParamEntry>* params);
 
+void draw_tab_rc(MavlinkSender* sender, const VehicleState* vs,
+                 const std::unordered_map<std::string, ParamEntry>* params);
+
 void draw_tab_themes(AppSettings* settings);
 
 void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,

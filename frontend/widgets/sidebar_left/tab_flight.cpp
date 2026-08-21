@@ -19,6 +19,7 @@
 #include "sidebar_internal.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
+#include "../../../backend/rc_binding.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -363,206 +364,15 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
     // ── AUX panel ─────────────────────────────────────────────────────────────
     if (s_flight_subtab == 1) {
-        // Detect active firmware from vehicle type
-        enum class FwType { Copter, Plane, Rover, Sub };
-        FwType fw = FwType::Copter;
-        if (vs && vs->has_heartbeat) {
-            switch (vs->type) {
-            case MAV_TYPE_FIXED_WING:   fw = FwType::Plane; break;
-            case MAV_TYPE_GROUND_ROVER: fw = FwType::Rover; break;
-            case MAV_TYPE_SUBMARINE:    fw = FwType::Sub;   break;
-            default:                    fw = FwType::Copter; break;
-            }
-        }
-
-        // Full ArduPilot auxiliary functions table (id, name, Copter, Plane, Rover, Sub)
-        struct AuxFn { uint16_t id; const char* label; bool c, p, r, s; };
-        static constexpr AuxFn ALL_AUX[] = {
-            {  0, "Do Nothing",                true,  true,  true,  true  },
-            {  2, "FLIP",                      true,  false, false, false },
-            {  3, "SIMPLE mode (Copter)",      true,  false, false, false },
-            {  4, "RTL mode",                  true,  true,  true,  false },
-            {  5, "Save Trim",                 true,  true,  false, false },
-            {  7, "Save Waypoint",             true,  true,  false, false },
-            {  9, "Camera Trigger",            true,  true,  true,  true  },
-            { 10, "Rangefinder",               true,  false, false, false },
-            { 11, "Fence",                     true,  true,  true,  true  },
-            { 12, "ResetToArmedYaw",           true,  false, false, false },
-            { 13, "SUPERSIMPLE mode",          true,  false, false, false },
-            { 14, "Acro Trainer",              true,  false, false, false },
-            { 15, "Sprayer",                   true,  false, false, false },
-            { 16, "AUTO mode",                 true,  true,  true,  false },
-            { 17, "AUTOTUNE mode",             true,  false, false, false },
-            { 18, "LAND mode",                 true,  false, false, false },
-            { 19, "Gripper",                   true,  true,  true,  true  },
-            { 21, "Parachute Enable",          true,  false, false, false },
-            { 22, "Parachute Release",         true,  true,  false, false },
-            { 23, "Parachute 3-Pos Switch",    true,  false, false, false },
-            { 24, "Reset Auto Mission",        true,  true,  true,  true  },
-            { 25, "Attitude FF",               true,  false, false, false },
-            { 26, "Attitude AccLim",           true,  false, false, false },
-            { 27, "Retract Mount1",            true,  true,  true,  true  },
-            { 28, "Relay 1 On/Off",            true,  true,  true,  true  },
-            { 29, "Landing Gear",              true,  true,  false, false },
-            { 30, "Lost Vehicle Sound",        true,  true,  true,  false },
-            { 31, "Motor Emergency Stop",      true,  true,  true,  true  },
-            { 32, "Motor Interlock",           true,  false, false, false },
-            { 33, "BRAKE mode",                true,  false, false, false },
-            { 34, "Relay 2 On/Off",            true,  true,  true,  true  },
-            { 35, "Relay 3 On/Off",            true,  true,  true,  true  },
-            { 36, "Relay 4 On/Off",            true,  true,  true,  true  },
-            { 37, "THROW mode",                true,  false, false, false },
-            { 38, "ADSB Avoidance Enable",     true,  false, false, false },
-            { 39, "Precision Loiter",          true,  false, false, false },
-            { 40, "Object Avoidance",          true,  true,  false, false },
-            { 41, "Arm/Disarm (4.1-)",         true,  true,  true,  false },
-            { 42, "SMARTRTL mode",             true,  true,  false, false },
-            { 43, "Inverted Flight",           true,  true,  false, false },
-            { 44, "Winch Enable",              true,  false, false, false },
-            { 45, "Winch Control",             true,  false, false, false },
-            { 46, "RC Override Enable",        true,  true,  true,  true  },
-            { 47, "Custom Function 1",         true,  false, false, false },
-            { 48, "Custom Function 2",         true,  false, false, false },
-            { 49, "Custom Function 3",         true,  false, false, false },
-            { 50, "Learn Cruise",              false, false, true,  false },
-            { 51, "MANUAL mode",               false, true,  true,  false },
-            { 52, "ACRO mode",                 false, true,  true,  false },
-            { 53, "STEERING mode",             false, false, true,  false },
-            { 54, "HOLD mode",                 false, false, true,  false },
-            { 55, "GUIDED mode",               true,  true,  true,  false },
-            { 56, "LOITER mode",               true,  true,  false, false },
-            { 57, "FOLLOW mode",               true,  true,  false, false },
-            { 58, "Clear Waypoints",           true,  true,  true,  true  },
-            { 59, "SIMPLE mode (Rover)",       false, false, true,  false },
-            { 60, "ZIGZAG mode",               true,  false, false, false },
-            { 61, "ZIGZAG Save Waypoints",     true,  false, false, false },
-            { 62, "Compass Learn",             true,  true,  true,  true  },
-            { 63, "Sailboat Tack",             false, false, true,  false },
-            { 64, "Reverse Throttle",          false, true,  false, false },
-            { 65, "GPS Disable",               true,  true,  true,  true  },
-            { 66, "Relay 5 On/Off",            true,  true,  true,  true  },
-            { 67, "Relay 6 On/Off",            true,  true,  true,  true  },
-            { 68, "STABILIZE mode",            true,  false, false, false },
-            { 69, "POSHOLD mode",              true,  false, false, false },
-            { 70, "ALTHOLD mode",              true,  true,  false, false },
-            { 71, "FLOWHOLD mode",             true,  false, false, false },
-            { 72, "CIRCLE mode",               true,  true,  true,  false },
-            { 73, "DRIFT mode",                true,  false, false, false },
-            { 74, "Sailboat Motor 3-Pos",      false, false, true,  false },
-            { 75, "Surface Tracking",          true,  false, false, false },
-            { 76, "STANDBY mode",              true,  false, false, false },
-            { 77, "TAKEOFF mode",              true,  false, false, false },
-            { 78, "RunCam Control",            true,  true,  true,  true  },
-            { 79, "RunCam OSD Control",        true,  true,  true,  true  },
-            { 80, "Viso Align",                true,  false, false, false },
-            { 81, "Disarm",                    true,  true,  true,  true  },
-            { 82, "Q_Assist 3-Pos Sw",         false, true,  false, false },
-            { 83, "ZIGZAG Auto",               true,  false, false, false },
-            { 84, "AIRMODE",                   true,  true,  false, false },
-            { 85, "Generator",                 true,  true,  true,  false },
-            { 86, "Non-Auto Terrain Follow",   false, true,  false, false },
-            { 87, "CROW Mode Switch",          false, true,  false, false },
-            { 88, "Soaring Enable",            false, true,  false, false },
-            { 89, "Force Flare",               false, true,  false, false },
-            { 90, "EKF Source Set",            true,  true,  true,  false },
-            { 91, "Airspeed Ratio Cal",        false, true,  false, false },
-            { 92, "FBWA Mode",                 false, true,  false, false },
-            { 94, "VTX Power",                 true,  true,  true,  true  },
-            { 95, "FBWA Taildragger",          false, true,  false, false },
-            { 96, "Mode Switch Reset",         false, true,  false, false },
-            { 97, "WindVane Home Dir",         false, false, true,  false },
-            {102, "Camera Mode Toggle",        true,  true,  true,  true  },
-            {103, "EKF Lane Switch",           true,  true,  true,  true  },
-            {104, "EKF Yaw Reset",             true,  true,  true,  true  },
-            {105, "GPS Disable Yaw",           true,  true,  true,  true  },
-            {106, "Disable Airspeed Use",      true,  true,  false, false },
-            {107, "Enable Autotuning",         true,  false, false, false },
-            {108, "QRTL Mode",                 false, true,  false, false },
-            {111, "Loweheiser Starter",        true,  true,  true,  true  },
-            {112, "Switch External AHRS",      true,  true,  true,  true  },
-            {113, "Retract Mount2",            true,  false, false, false },
-            {150, "CRUISE Mode",               false, true,  false, false },
-            {151, "TURTLE Mode",               true,  false, false, false },
-            {152, "SIMPLE Heading Reset",      true,  false, false, false },
-            {153, "ARM/DISARM (4.2+)",         true,  true,  true,  true  },
-            {154, "ARM/DISARM + AIRMODE",      true,  true,  false, false },
-            {155, "TRIM RC/SERVO Save",        false, true,  true,  false },
-            {156, "Torqeedo Error Clear",      false, false, true,  false },
-            {157, "Force FBWA Long FS",        false, true,  false, false },
-            {158, "Optflow Calibration",       true,  true,  false, false },
-            {159, "Force Flying State",        true,  false, false, false },
-            {160, "WeatherVane Enable",        false, true,  false, false },
-            {161, "Turbine Start (Heli)",      false, true,  false, false },
-            {162, "Auto Throttle Notch",       true,  true,  false, false },
-            {163, "Mount Yaw Lock",            true,  true,  true,  true  },
-            {164, "Pause Stream Logging",      true,  true,  true,  true  },
-            {165, "ARM / Motor E-Stop",        true,  true,  true,  true  },
-            {166, "Camera Record Video",       true,  true,  true,  true  },
-            {167, "Camera Zoom",               true,  true,  true,  true  },
-            {168, "Camera Manual Focus",       true,  true,  true,  true  },
-            {169, "Camera Auto Focus",         true,  true,  true,  true  },
-            {170, "QSTABILIZE mode",           false, true,  false, false },
-            {171, "Compass Calibration",       true,  true,  true,  false },
-            {172, "Battery MPPT Enable",       true,  true,  true,  false },
-            {173, "Plane AUTO Landing Abort",  false, true,  false, false },
-            {174, "Camera Image Tracking",     true,  true,  true,  true  },
-            {175, "Camera Lens",               true,  true,  true,  true  },
-            {176, "VTOL Fwd Throttle Disable", false, true,  false, false },
-            {177, "Mount LRF Enable",          true,  true,  true,  true  },
-            {178, "FlightMode Pause/Resume",   true,  false, false, false },
-            {179, "ICEngine Start/Stop",       false, true,  false, false },
-            {180, "Autotune Test Gains",       true,  true,  false, false },
-            {181, "VTOL QuickTune",            false, true,  false, false },
-            {182, "AHRS AutoTrim",             true,  false, false, false },
-            {183, "AUTOLAND mode",             false, true,  false, false },
-            {184, "System ID",                 true,  true,  false, false },
-            {185, "Mount RP Lock",             true,  true,  true,  true  },
-            {186, "Mount POI Lock",            true,  true,  true,  true  },
-            {201, "ROLL Input",                true,  false, false, false },
-            {202, "PITCH Input",               true,  false, false, false },
-            {203, "THROTTLE Input",            false, false, false, false },
-            {204, "YAW Input",                 false, false, false, false },
-            {207, "Mainsail",                  false, false, true,  false },
-            {208, "Flap Control",              false, true,  false, false },
-            {209, "Forward Throttle",          false, true,  false, false },
-            {210, "Airbrakes",                 false, true,  false, false },
-            {211, "Walking Robot Height",      false, false, true,  false },
-            {212, "Mount1 Roll",               true,  true,  true,  true  },
-            {213, "Mount1 Pitch",              true,  true,  true,  true  },
-            {214, "Mount1 Yaw",                true,  true,  true,  true  },
-            {215, "Mount2 Roll",               true,  true,  true,  true  },
-            {216, "Mount2 Pitch",              true,  true,  true,  true  },
-            {217, "Mount2 Yaw",                true,  true,  true,  true  },
-            {218, "Loweheiser Throttle",       true,  true,  true,  true  },
-            {219, "TX Tuning Channel",         true,  false, false, false },
-            {300, "Scripting RC 1",            true,  true,  true,  true  },
-            {301, "Scripting RC 2",            true,  true,  true,  true  },
-            {302, "Scripting RC 3",            true,  true,  true,  true  },
-            {303, "Scripting RC 4",            true,  true,  true,  true  },
-            {304, "Scripting RC 5",            true,  true,  true,  true  },
-            {305, "Scripting RC 6",            true,  true,  true,  true  },
-            {306, "Scripting RC 7",            true,  true,  true,  true  },
-            {307, "Scripting RC 8",            true,  true,  true,  true  },
-            {308, "Scripting RC 9",            true,  true,  true,  true  },
-            {309, "Scripting RC 10",           true,  true,  true,  true  },
-            {310, "Scripting RC 11",           true,  true,  true,  true  },
-            {311, "Scripting RC 12",           true,  true,  true,  true  },
-            {312, "Scripting RC 13",           true,  true,  true,  true  },
-            {313, "Scripting RC 14",           true,  true,  true,  true  },
-            {314, "Scripting RC 15",           true,  true,  true,  true  },
-            {315, "Scripting RC 16",           true,  true,  true,  true  },
-            {316, "Scripting Stop/Restart",    true,  true,  true,  true  },
-        };
-        constexpr int N_ALL_AUX = (int)(sizeof(ALL_AUX) / sizeof(ALL_AUX[0]));
+        // The table lives in backend/rc_binding so the RC tab's RCn_OPTION
+        // editor and this pad cannot drift apart: one triggers a function live,
+        // the other binds it to a switch, but they must agree on what exists.
+        const RcFirmware fw = rc_firmware_for(
+            (vs && vs->has_heartbeat) ? vs->type : MAV_TYPE_QUADROTOR);
+        const auto& aux_options = rc_aux_options();
 
         // Firmware badge
-        const char* fw_label = "COPTER";
-        switch (fw) {
-        case FwType::Plane: fw_label = "PLANE"; break;
-        case FwType::Rover: fw_label = "ROVER"; break;
-        case FwType::Sub:   fw_label = "SUB";   break;
-        default: break;
-        }
+        const char* fw_label = rc_firmware_label(fw);
         if (!connected) {
             ImGui::TextColored(col_no_link_muted(), "No link — COPTER defaults");
         } else {
@@ -598,18 +408,10 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
             static const char* const pos_labels[] = { "LOW", "MID", "HI" };
 
-            for (int i = 0; i < N_ALL_AUX; ++i) {
-                const AuxFn& fn = ALL_AUX[i];
+            for (int i = 0; i < (int)aux_options.size(); ++i) {
+                const RcAuxOption& fn = aux_options[i];
 
-                // Firmware compatibility filter
-                bool compat = false;
-                switch (fw) {
-                case FwType::Copter: compat = fn.c; break;
-                case FwType::Plane:  compat = fn.p; break;
-                case FwType::Rover:  compat = fn.r; break;
-                case FwType::Sub:    compat = fn.s; break;
-                }
-                if (!compat) continue;
+                if (!fn.supported(fw)) continue;
 
                 // Search filter — match on name or numeric ID
                 if (srch_up[0] != '\0') {
@@ -617,14 +419,14 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                     for (int k = 0; k < 63 && fn.label[k]; ++k)
                         name_up[k] = (char)toupper((unsigned char)fn.label[k]);
                     char id_str[8];
-                    snprintf(id_str, sizeof(id_str), "%u", (unsigned)fn.id);
+                    snprintf(id_str, sizeof(id_str), "%u", (unsigned)fn.value);
                     if (strstr(name_up, srch_up) == nullptr &&
                         strstr(id_str, srch_up) == nullptr) continue;
                 }
 
                 ImGui::PushID(i);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("%3u", (unsigned)fn.id);
+                ImGui::TextDisabled("%3u", (unsigned)fn.value);
                 ImGui::SameLine(id_w);
                 ImGui::TextUnformatted(fn.label);
                 ImGui::SameLine(lbl_w);
@@ -634,9 +436,9 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                     char btn_id[16];
                     snprintf(btn_id, sizeof(btn_id), "%s##%d", pos_labels[p], i);
                     if (ui_grid_button(btn_id, { btn3_w, 0.0f })) {
-                        sender->do_aux_function(tsys, tcomp, fn.id, (uint8_t)p);
+                        sender->do_aux_function(tsys, tcomp, fn.value, (uint8_t)p);
                         gcs_log("aux fn %u (%s) → %s",
-                                (unsigned)fn.id, fn.label, pos_labels[p]);
+                                (unsigned)fn.value, fn.label, pos_labels[p]);
                     }
                 }
                 ImGui::PopID();

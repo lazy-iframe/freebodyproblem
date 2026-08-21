@@ -285,6 +285,8 @@ add_executable(freebodyproblem
     frontend/widgets/plugin_rail.cpp
     backend/mavlink_sender.cpp
     backend/connection.cpp
+    backend/rc_calibration.cpp
+    backend/rc_binding.cpp
     frontend/main.cpp
     frontend/settings.cpp
     frontend/param_file.cpp
@@ -297,6 +299,7 @@ add_executable(freebodyproblem
     frontend/widgets/sidebar_left/tab_themes.cpp
     frontend/widgets/sidebar_left/tab_mission.cpp
     frontend/widgets/sidebar_left/tab_mavlink.cpp
+    frontend/widgets/sidebar_left/tab_rc.cpp
     frontend/widgets/sidebar_left/mavlink_display_generated.cpp
     frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp
     frontend/widgets/sidebar_themes.cpp

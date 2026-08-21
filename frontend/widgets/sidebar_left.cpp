@@ -66,7 +66,7 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     }
 
     // Tab identity, so the dispatch below never drifts when the grid changes.
-    enum class Tab { Connection, Console, Flight, Mavlink, Params, Mission, Settings };
+    enum class Tab { Connection, Console, Flight, Mavlink, Params, Mission, Rc, Settings };
     static Tab selected = Tab::Connection;
 
     // ── Station header + tab grid (2-column) ──────────────────────────────────
@@ -78,7 +78,7 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
             { "CONNECTION", Tab::Connection }, { "CONSOLE", Tab::Console  },
             { "FLIGHT",     Tab::Flight     }, { "MAVLINK", Tab::Mavlink  },
             { "PARAMS",     Tab::Params     }, { "MISSION", Tab::Mission  },
-            { "SETTINGS",   Tab::Settings   },
+            { "RADIO",         Tab::Rc         }, { "SETTINGS", Tab::Settings },
         };
         constexpr int TAB_COUNT = (int)(sizeof(tabs) / sizeof(tabs[0]));
 
@@ -99,6 +99,7 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                                            total_bytes, parse_errors);              break;
     case Tab::Params:     draw_tab_params(sender, vs, params);                      break;
     case Tab::Mission:    draw_tab_mission(sender, vs, pick);                       break;
+    case Tab::Rc:         draw_tab_rc(sender, vs, params);                          break;
     case Tab::Settings:   draw_tab_themes(settings);                                break;
     case Tab::Console:    break;   // no panel yet — reserved
     }
