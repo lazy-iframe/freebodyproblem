@@ -28,7 +28,7 @@
 //   Chrome     : header strips #242A19, seams #46552F
 //   Primary    : amber  #ECB94E  (labels, chips, active state)
 //   Data       : pale green  #97EA89  (live telemetry values)
-//   Muted      : dim olive  #6E7B55  (field labels, log)
+//   Muted      : olive  #B4C68F  (field labels, log), #93A375 (disabled text)
 //   Danger     : salmon red  #EF8271
 //   Warning    : amber-orange  #E0913A
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,11 +48,24 @@ struct ThemeVars {
     ImVec4 col_warning        = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange #E0913A
     ImVec4 col_error          = { 0.937f, 0.510f, 0.443f, 1.0f }; // salmon red #EF8271
     ImVec4 col_error_alt      = { 0.945f, 0.604f, 0.541f, 1.0f };
-    ImVec4 col_log            = { 0.431f, 0.482f, 0.333f, 1.0f }; // dim olive #6E7B55 — labels/log
+    // Labels, the console log, and every quiet heading. Brightened from the
+    // original #6E7B55, which sat at about 3.6:1 on bg_panel — far under what
+    // an olive this desaturated needs to stay readable on a screen in daylight.
+    // #B4C68F is about 9:1, and still a clear step under col_data, so a label
+    // never competes with the number next to it.
+    ImVec4 col_log            = { 0.706f, 0.776f, 0.561f, 1.0f }; // olive #B4C68F — labels/log
     ImVec4 col_armed          = { 0.937f, 0.420f, 0.353f, 1.0f }; // hot salmon red
     ImVec4 col_disarmed       = { 0.925f, 0.725f, 0.306f, 1.0f }; // amber
+    // Left where it was: this one is a plate *background* — the NO LINK and
+    // INTLK LOW blocks — with col_text_on_dark written across it. Brightening
+    // it would take the bone lettering on those plates down to about 1.9:1.
     ImVec4 col_no_link        = { 0.431f, 0.482f, 0.333f, 1.0f }; // dim olive
-    ImVec4 col_no_link_muted  = { 0.278f, 0.318f, 0.216f, 1.0f };
+    // ImGuiCol_TextDisabled, and everything spoken in that voice: "Waiting for
+    // GPS…", empty-list notes, the placeholder under a control nothing has
+    // filled in yet. Was #475137, which is 2.0:1 on bg_panel — legible only if
+    // you already knew what it said. #93A375 is about 6:1 while staying a step
+    // below col_log, so the hierarchy of label over aside survives.
+    ImVec4 col_no_link_muted  = { 0.576f, 0.639f, 0.459f, 1.0f }; // #93A375
     ImVec4 col_reboot         = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange
     ImVec4 col_active_text    = { 0.055f, 0.067f, 0.043f, 1.0f }; // near-black — text on amber
     ImVec4 col_text_on_dark   = { 0.902f, 0.918f, 0.878f, 1.0f }; // bone — text on dark plates (red/olive)
@@ -107,7 +120,12 @@ struct ThemeVars {
     // wears. An engaged button is not themed here either: it borrows col_armed,
     // the same red as the ARMED annunciator, so red means one thing throughout.
     ImVec4 plugin_accent        = { 0.614f, 0.837f, 0.951f, 1.0f }; // #9DD5F3 light blue
-    ImVec4 plugin_accent_dim    = { 0.402f, 0.582f, 0.683f, 1.0f }; // #6694AE idle seams/captions
+    // The rail's equivalent of col_log, and raised alongside it for the same
+    // reason: at #6694AE the FUNCTION captions were about 5:1, readable only
+    // because they are short and you already know what they say. #7EB0CC is
+    // about 7:1 and still well under plugin_accent, so an idle caption does not
+    // read as an engaged one.
+    ImVec4 plugin_accent_dim    = { 0.494f, 0.690f, 0.800f, 1.0f }; // #7EB0CC idle seams/captions
 
     // ── Command flash ─────────────────────────────────────────────────────────
     ImVec4 flash_accepted_base  = { 0.204f, 0.412f, 0.153f, 0.80f };
@@ -142,12 +160,12 @@ struct ThemeVars {
     ImVec4 map_vehicle_fill     = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 map_vehicle_ring     = { 0.925f, 0.725f, 0.306f, 0.850f };
     ImVec4 map_attr_bg          = { 0.047f, 0.059f, 0.031f, 0.800f };
-    ImVec4 map_attr_text        = { 0.431f, 0.482f, 0.333f, 0.850f };
+    ImVec4 map_attr_text        = { 0.706f, 0.776f, 0.561f, 0.850f }; // olive, see col_log
 
     // ── EKF ───────────────────────────────────────────────────────────────────
     ImVec4 ekf_bg      = { 0.094f, 0.114f, 0.063f, 1.000f };
     ImVec4 ekf_outline = { 0.243f, 0.290f, 0.173f, 0.900f };
-    ImVec4 ekf_label   = { 0.431f, 0.482f, 0.333f, 0.900f };
+    ImVec4 ekf_label   = { 0.706f, 0.776f, 0.561f, 0.900f }; // olive, see col_log
 };
 
 // Single runtime-mutable instance — all color functions read from here.

@@ -28,6 +28,8 @@
 
 #include <mavlink/ardupilotmega/mavlink.h>
 
+#include "timesync.hpp"
+
 // One entry from AVAILABLE_MODES (#435). Flight stacks enumerate their own mode
 // list, which is the only portable way to know what a given vehicle supports —
 // custom_mode numbering differs between ArduCopter, ArduPlane, Rover and Sub.
@@ -199,6 +201,14 @@ struct VehicleState {
 
     // RC_CHANNELS (#65) / RC_CHANNELS_RAW (#35)
     RcChannels rc;
+
+    // TIMESYNC (#111) — how far the vehicle's boot clock runs ahead of our
+    // monotonic one, in nanoseconds. Add it to timesync_monotonic_ns() to get
+    // the vehicle's clock at that instant; that is a live reading rather than a
+    // stale snapshot, so the UI can tick a clock from it at frame rate without
+    // waiting on the next exchange. Meaningless until has_timesync.
+    int64_t time_offset_ns = 0;
+    bool    has_timesync   = false;
 
     // STATUSTEXT (#253) — every one ever received on this link, not the size of
     // the rolling window that holds them. A consumer that wants only the new
@@ -410,6 +420,15 @@ public:
     // Status text log — rolling window of the last MAX_STATUS_TEXTS messages
     const std::deque<StatusText>& status_texts() const { return status_texts_; }
 
+    // TIMESYNC. The exchange needs a sender and this class has none, so the
+    // link thread opens each round with begin_request() and drains any reply
+    // the vehicle's own requests earned, exactly as it drains the mission
+    // queues above. Link thread only.
+    TimeSync& timesync() { return timesync_; }
+    const std::vector<TimeSync::Reply>& pending_timesync_replies() const
+    { return timesync_replies_; }
+    void clear_timesync_replies() { timesync_replies_.clear(); }
+
     void print_stats();
 
 private:
@@ -431,6 +450,8 @@ private:
     std::vector<MissionReq>                    mission_reqs_;
     std::vector<ItemReq>                       item_reqs_;
     std::deque<StatusText>                     status_texts_;
+    TimeSync                                   timesync_;
+    std::vector<TimeSync::Reply>               timesync_replies_;
     static constexpr size_t MAX_STATUS_TEXTS = 200;
 
     uint64_t total_messages_ = 0;

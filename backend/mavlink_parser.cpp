@@ -194,6 +194,18 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
         break;
     }
 
+    case MAVLINK_MSG_ID_TIMESYNC: {
+        mavlink_timesync_t ts;
+        mavlink_msg_timesync_decode(&msg, &ts);
+        TimeSync::Reply reply;
+        if (timesync_.on_timesync(ts.tc1, ts.ts1, msg.sysid, msg.compid,
+                                  timesync_monotonic_ns(), &reply))
+            timesync_replies_.push_back(reply);
+        state_.time_offset_ns = timesync_.offset_ns();
+        state_.has_timesync   = timesync_.synced();
+        break;
+    }
+
     case MAVLINK_MSG_ID_ATTITUDE: {
         mavlink_attitude_t att;
         mavlink_msg_attitude_decode(&msg, &att);

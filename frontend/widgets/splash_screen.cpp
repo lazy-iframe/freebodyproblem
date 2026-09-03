@@ -302,20 +302,28 @@ bool draw_splash_screen(float elapsed, ImFont* title_font)
 
     // ── Progress bar + hint ───────────────────────────────────────────────────
     {
-        const float prog  = elapsed / SPLASH_DURATION;
-        const float bar_w = 200.f, bar_h = 2.f;
-        const float bar_x = cx - bar_w * .5f;
-        const float bar_y = wpy + SPLASH_H - 20.f;
+        const char* hint = "Press any key or click to continue";
+        const ImVec2 hs  = ImGui::CalcTextSize(hint);
+
+        // Laid out from the bottom edge up, so the hint keeps a margin below it
+        // whatever the font's line height turns out to be. Anchoring the bar
+        // instead left the hint hanging off the panel: the bar sat 20 px above
+        // the edge, and a line of text is taller than that.
+        constexpr float PAD_BOTTOM = 16.f;   // matches the title's top margin
+        constexpr float HINT_GAP   = 7.f;    // bar to hint
+
+        const float prog   = elapsed / SPLASH_DURATION;
+        const float bar_w  = 200.f, bar_h = 2.f;
+        const float bar_x  = cx - bar_w * .5f;
+        const float hint_y = wpy + SPLASH_H - PAD_BOTTOM - hs.y;
+        const float bar_y  = hint_y - HINT_GAP - bar_h;
 
         dl->AddRectFilled({bar_x, bar_y}, {bar_x+bar_w,        bar_y+bar_h},
                           tv(g_theme.bg_child_dark, alpha));
         dl->AddRectFilled({bar_x, bar_y}, {bar_x+bar_w*prog,   bar_y+bar_h},
                           tv(g_theme.accent, alpha*.85f));
 
-        const char* hint = "Press any key or click to continue";
-        ImVec2 hs = ImGui::CalcTextSize(hint);
-        dl->AddText(nullptr, 0.f,
-                    {cx - hs.x*.5f, bar_y + 5.f},
+        dl->AddText(nullptr, 0.f, {cx - hs.x*.5f, hint_y},
                     tv(g_theme.col_no_link_muted, alpha), hint);
     }
 

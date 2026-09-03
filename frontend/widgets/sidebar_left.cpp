@@ -66,7 +66,7 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     }
 
     // Tab identity, so the dispatch below never drifts when the grid changes.
-    enum class Tab { Connection, Console, Flight, Mavlink, Params, Mission, Rc,
+    enum class Tab { Connection, Flight, Mavlink, Params, Mission, Rc,
                      Sensors, Settings };
     static Tab selected = Tab::Connection;
 
@@ -75,12 +75,12 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
 
     {
         struct TabDef { const char* label; Tab id; };
+        // Filled row by row, so each line below is one row: left tab, right tab.
         static const TabDef tabs[] = {
-            { "CONNECTION", Tab::Connection }, { "CONSOLE", Tab::Console  },
-            { "FLIGHT",     Tab::Flight     }, { "MAVLINK", Tab::Mavlink  },
-            { "PARAMS",     Tab::Params     }, { "MISSION", Tab::Mission  },
-            { "RADIO",      Tab::Rc         }, { "SENSORS", Tab::Sensors  },
-            { "SETTINGS",   Tab::Settings   },
+            { "CONNECTION", Tab::Connection }, { "PARAMS",   Tab::Params   },
+            { "FLIGHT",     Tab::Flight     }, { "SENSORS",  Tab::Sensors  },
+            { "MISSION",    Tab::Mission    }, { "RADIO",    Tab::Rc       },
+            { "MAVLINK",    Tab::Mavlink    }, { "SETTINGS", Tab::Settings },
         };
         constexpr int TAB_COUNT = (int)(sizeof(tabs) / sizeof(tabs[0]));
 
@@ -105,7 +105,6 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     case Tab::Rc:         draw_tab_rc(sender, vs, params);                          break;
     case Tab::Sensors:    draw_tab_sensors(sender, vs, params);                     break;
     case Tab::Settings:   draw_tab_themes(settings);                                break;
-    case Tab::Console:    break;   // no panel yet — reserved
     }
 
     ImGui::End();

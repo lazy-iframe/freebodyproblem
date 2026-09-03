@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.4.0 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.4.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -291,6 +291,7 @@ add_executable(freebodyproblem
     backend/mag_calibration.cpp
     backend/sensor_inventory.cpp
     backend/geodesic_grid.cpp
+    backend/timesync.cpp
     backend/rc_binding.cpp
     frontend/main.cpp
     frontend/settings.cpp

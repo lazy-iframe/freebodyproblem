@@ -21,6 +21,7 @@
 #include "ui_kit.hpp"
 #include "imgui.h"
 #include "../app_log.hpp"
+#include "../../backend/timesync.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -145,19 +146,31 @@ void draw_topbar(const VehicleState& vs,
         const float arm_x0     = io.DisplaySize.x - BTN_W_ARM - 10.0f;
         const float intlk_x0   = arm_x0 - BTN_GAP - BTN_W_INTLK;
 
-        // Mission clock: elapsed since the GCS came up (reset on each link start).
-        static double s_clock_epoch = -1.0;
-        static bool   s_was_linked  = false;
-        const bool    linked        = (link_status == LinkStatus::Connected);
-        if (linked && !s_was_linked) s_clock_epoch = ImGui::GetTime();
-        s_was_linked = linked;
-        if (s_clock_epoch < 0.0) s_clock_epoch = ImGui::GetTime();
+        // Vehicle uptime, read across the link by TIMESYNC rather than counted
+        // here: this is the flight controller's own clock, the same one its
+        // logs and its time_boot_ms fields are stamped with, so a time read off
+        // this bar can be taken straight to a log. It survives the GCS
+        // reconnecting and it restarts when the vehicle reboots, which is the
+        // event that actually matters — a calibration that ends in a reboot
+        // shows up here as the clock going back to zero.
+        const bool linked = (link_status == LinkStatus::Connected);
+        const bool have_boot_time = linked && vs.has_timesync;
 
-        const int    clk    = (int)(ImGui::GetTime() - s_clock_epoch);
-        char         clk_s[16];
-        snprintf(clk_s, sizeof(clk_s), "%02d:%02d:%02d",
-                 clk / 3600, (clk / 60) % 60, clk % 60);
-        const float  clk_w  = fu->CalcTextSizeA(17.0f, FLT_MAX, 0.0f, clk_s).x;
+        char clk_s[16];
+        if (have_boot_time) {
+            const int64_t boot_ns = timesync_monotonic_ns() + vs.time_offset_ns;
+            const int     clk     = (int)(boot_ns > 0 ? boot_ns / 1000000000 : 0);
+            snprintf(clk_s, sizeof(clk_s), "%02d:%02d:%02d",
+                     clk / 3600, (clk / 60) % 60, clk % 60);
+        } else {
+            // No exchange has completed, so there is no reading to show. A
+            // zeroed clock would be a lie that ticks.
+            snprintf(clk_s, sizeof(clk_s), "--:--:--");
+        }
+
+        const char*  clk_label = "TIME SINCE BOOT";
+        const float  clk_w  = std::max(fu->CalcTextSizeA(17.0f, FLT_MAX, 0.0f, clk_s).x,
+                                       ui_tracked_width(fm, UI_SZ_MICRO, clk_label));
         const float  clk_x0 = intlk_x0 - BTN_GAP - clk_w - CELL_PAD * 2.0f;
 
         // ── Close (×) button — far left ───────────────────────────────────────
@@ -347,13 +360,13 @@ void draw_topbar(const VehicleState& vs,
 
         dl->PopClipRect();
 
-        // ── Mission clock ─────────────────────────────────────────────────────
+        // ── Vehicle uptime ────────────────────────────────────────────────────
         {
             ui_tracked_text(dl, fm, UI_SZ_MICRO,
                             { wp.x + clk_x0 + CELL_PAD, wp.y + LABEL_Y },
-                            C_LABEL, "LINK TIME");
+                            C_LABEL, clk_label);
             dl->AddText(fu, 17.0f, { wp.x + clk_x0 + CELL_PAD, wp.y + VALUE_Y },
-                        linked ? C_VALUE : C_DIM, clk_s);
+                        have_boot_time ? C_VALUE : C_DIM, clk_s);
         }
 
         // ── ARM / DISARM / INTERLOCK ─────────────────────────────────────────

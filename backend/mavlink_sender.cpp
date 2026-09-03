@@ -354,6 +354,18 @@ void MavlinkSender::send_mission_ack(uint8_t tsys, uint8_t tcomp)
     queue_.emplace(buf, buf + len);
 }
 
+void MavlinkSender::send_timesync(uint8_t tsys, uint8_t tcomp,
+                                  int64_t tc1, int64_t ts1)
+{
+    mavlink_message_t msg;
+    mavlink_msg_timesync_pack(GCS_SYSID, GCS_COMPID, &msg,
+                              tc1, ts1, tsys, tcomp);
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
+}
+
 void MavlinkSender::start_upload(uint8_t tsys, uint8_t tcomp,
                                   std::vector<MissionItem> items)
 {

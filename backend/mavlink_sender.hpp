@@ -255,6 +255,14 @@ public:
     // Send MISSION_ACK (#47) to signal successful receipt of all items.
     void send_mission_ack(uint8_t target_sysid, uint8_t target_compid);
 
+    // Send TIMESYNC (#111), either half of the exchange. A request is
+    // tc1 = 0, ts1 = our clock, broadcast (target ids 0); a reply carries our
+    // clock in tc1, the requester's ts1 back unchanged, and is addressed to
+    // that requester as the spec requires. See backend/timesync.hpp — this
+    // only puts the numbers on the wire.
+    void send_timesync(uint8_t target_sysid, uint8_t target_compid,
+                       int64_t tc1, int64_t ts1);
+
     // Begin mission upload — sends MISSION_COUNT and stores the item vector.
     // FC will then send MISSION_REQUEST_INT per item; link thread serves
     // each request by calling send_mission_item_at().

@@ -73,6 +73,7 @@ static inline void cleanup_sockets() {}
 #include "../backend/mavlink_parser.hpp"
 #include "../backend/mavlink_sender.hpp"
 #include "../backend/connection.hpp"
+#include "../backend/timesync.hpp"
 
 // Settings
 #include "settings.hpp"
@@ -380,10 +381,14 @@ static void link_thread_fn(LinkConfig cfg)
     bool     logged_heartbeat   = false;
     bool     logged_fw_info     = false;
     bool     logged_mission     = false;
+    bool     logged_timesync    = false;
     VehicleState::UploadStatus last_upload_status = VehicleState::UploadStatus::Idle;
 
     auto     last_rx  = Clock::now();
     RxResult rx       = RxResult::Quiet;
+    // Far enough back that the first exchange goes out as soon as there is
+    // somewhere to send it, rather than five seconds into the link.
+    auto     last_timesync_req = Clock::now() - std::chrono::hours(1);
 
     while (g_link_running.load()) {
         ssize_t n = 0;
@@ -623,6 +628,24 @@ static void link_thread_fn(LinkConfig cfg)
             }
             parser.clear_item_reqs();
 
+            // Answer TIMESYNC exchanges the vehicle opened. ArduPilot asks on
+            // its own schedule as well as answering ours, and a request left
+            // unanswered is a vehicle whose clock never lines up with ours.
+            if (vehicle_addr_set) {
+                for (const auto& r : parser.pending_timesync_replies())
+                    g_sender.send_timesync(r.tsys, r.tcomp, r.tc1, r.ts1);
+            }
+            parser.clear_timesync_replies();
+
+            if (!logged_timesync && parser.state().has_timesync) {
+                logged_timesync = true;
+                const int64_t up_s = (timesync_monotonic_ns() +
+                                      parser.state().time_offset_ns) / 1000000000;
+                gcs_log("vehicle clock synced \xe2\x80\x94 up %02d:%02d:%02d",
+                        (int)(up_s / 3600), (int)((up_s / 60) % 60),
+                        (int)(up_s % 60));
+            }
+
             const auto& ps = parser.state();
 
             // Log new vehicle STATUSTEXT messages to the bottom bar
@@ -743,6 +766,24 @@ static void link_thread_fn(LinkConfig cfg)
                 gcs_log("link silent for %.0f s \xe2\x80\x94 giving up", quiet);
                 g_link_status.store(LinkStatus::Timeout);
                 break;
+            }
+        }
+
+        // ── Clock sync ────────────────────────────────────────────────────────
+        // One exchange every few seconds, not one and done: the first can be
+        // dropped by a vehicle still booting, and repeating keeps the offset
+        // from drifting as the two clocks run at slightly different rates. The
+        // reply lands back in the parser, which updates the offset the topbar
+        // clock is driven from.
+        if (vehicle_addr_set) {
+            constexpr double TIMESYNC_INTERVAL_S = 5.0;
+            const double since = std::chrono::duration<double>(
+                                     Clock::now() - last_timesync_req).count();
+            if (since >= TIMESYNC_INTERVAL_S) {
+                last_timesync_req = Clock::now();
+                const int64_t ts1 =
+                    parser.timesync().begin_request(timesync_monotonic_ns());
+                g_sender.send_timesync(0, 0, 0, ts1);   // broadcast request
             }
         }
 
