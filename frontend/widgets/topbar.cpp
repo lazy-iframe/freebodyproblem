@@ -351,7 +351,7 @@ void draw_topbar(const VehicleState& vs,
         {
             ui_tracked_text(dl, fm, UI_SZ_MICRO,
                             { wp.x + clk_x0 + CELL_PAD, wp.y + LABEL_Y },
-                            C_LABEL, "MSN TIME");
+                            C_LABEL, "LINK TIME");
             dl->AddText(fu, 17.0f, { wp.x + clk_x0 + CELL_PAD, wp.y + VALUE_Y },
                         linked ? C_VALUE : C_DIM, clk_s);
         }

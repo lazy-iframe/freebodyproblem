@@ -18,14 +18,120 @@
 
 #include "sidebar_internal.hpp"
 #include "../sidebar_themes.hpp"
+#include "../../app_log.hpp"
 #include "../../settings.hpp"
+#include "../../../backend/sensor_inventory.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <vector>
 
-void draw_tab_connection(const VehicleState* vs,
+// The system behind the firmware line: who is on the link, what board it is,
+// and what else on the vehicle speaks for itself.
+//
+// Here rather than with the calibrations it was first written for. It is not
+// about a sensor — it is what the link found, which is this tab's subject, and
+// it answers the question the FIRMWARE line above raises.
+static void draw_system_block(MavlinkSender* sender, const VehicleState* vs,
+                              uint8_t tsys, uint8_t tcomp)
+{
+    ImGui::Spacing();
+    themed_sep();
+    ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "SYSTEM");
+    ImGui::Spacing();
+
+    const char* ap   = mav_autopilot_name(vs->autopilot);
+    const char* kind = mav_vehicle_type_name(vs->type);
+
+    // The stack's name and version are on the FIRMWARE line above; what is here
+    // is what that line leaves out.
+    if (ap) ImGui::Text("System %u \xe2\x80\x94 %s", vs->sysid, ap);
+    else    ImGui::Text("System %u \xe2\x80\x94 autopilot %u", vs->sysid,
+                        (unsigned)vs->autopilot);
+    if (kind) ImGui::TextDisabled("%s", kind);
+
+    if (vs->has_fw_info) {
+        // Vendor and product are the board's USB identifiers, which is as close
+        // as AUTOPILOT_VERSION comes to naming the hardware. Hex because that
+        // is how they are published and searched for.
+        if (vs->vendor_id || vs->product_id)
+            ImGui::TextDisabled("board %04X:%04X  rev %u",
+                                vs->vendor_id, vs->product_id, vs->board_version);
+        if (vs->board_uid)
+            ImGui::TextDisabled("uid %016llx", (unsigned long long)vs->board_uid);
+    } else {
+        ImGui::TextDisabled("No AUTOPILOT_VERSION yet.");
+    }
+
+    if (vs->has_comp_info && vs->comp_info_uri[0]) {
+        // The reply is a pointer, not the information: COMPONENT_INFORMATION
+        // carries a MAVLink FTP URI to a JSON file on the vehicle. Reading it
+        // would mean an FTP client this GCS does not have, so the URI is shown
+        // for what it is rather than dressed up as metadata.
+        ImGui::Spacing();
+        ImGui::TextDisabled("Metadata (component %u):", vs->comp_info_compid);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", vs->comp_info_uri);
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Spacing();
+    if (ui_grid_button("REFRESH COMPONENT INFO", { -1.0f, 26.0f })) {
+        // AUTOPILOT_VERSION for the board and its capabilities;
+        // COMPONENT_INFORMATION for where its metadata lives. Both are sent
+        // only when asked for, which is why there is a button at all.
+        sender->request_message(tsys, tcomp, 148);
+        sender->request_message(tsys, tcomp, 395);
+        gcs_log("requested AUTOPILOT_VERSION and COMPONENT_INFORMATION");
+    }
+
+    // Components, from their heartbeats. Sensors on the autopilot's own buses
+    // are not components and never appear here — a compass has no MAV_COMP_ID.
+    // What does appear is anything speaking MAVLink for itself: a gimbal, a
+    // DroneCAN node, an IMU that reports separately.
+    if (vs->component_count > 0) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Components heard from:");
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_param_list());
+        ImGui::PushStyleColor(ImGuiCol_Border,  col_separator());
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
+
+        // Sized to its contents, so it has nothing of its own to scroll.
+        const float h = vs->component_count * ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        if (ImGui::BeginChild("##components", { -1.0f, h }, true,
+                              ImGuiWindowFlags_NoScrollbar |
+                              ImGuiWindowFlags_NoScrollWithMouse)) {
+            for (int i = 0; i < vs->component_count; ++i) {
+                const auto& c    = vs->components[i];
+                const char* name = mav_component_name(c.compid);
+                const bool  self = (c.sysid == vs->sysid && c.compid == vs->compid);
+
+                if (self) ImGui::TextColored(accent_col(), "%u/%u  %s",
+                                             c.sysid, c.compid,
+                                             name ? name : "unnamed");
+                else if (name) ImGui::Text("%u/%u  %s", c.sysid, c.compid, name);
+                else           ImGui::Text("%u/%u", c.sysid, c.compid);
+
+                if (ImGui::IsItemHovered()) {
+                    const char* t = mav_vehicle_type_name(c.type);
+                    const char* a = mav_autopilot_name(c.autopilot);
+                    ImGui::SetTooltip("%s, %s \xe2\x80\x94 %u heartbeats",
+                                      t ? t : "unknown type",
+                                      a ? a : "unknown stack", c.heartbeats);
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+    }
+}
+
+void draw_tab_connection(MavlinkSender* sender,
+                         const VehicleState* vs,
                          ConnectionRequest* conn_out,
                          LinkStatus link_status,
                          AppSettings* settings)
@@ -34,6 +140,15 @@ void draw_tab_connection(const VehicleState* vs,
     ImGui::TextColored(accent_col(), "CONNECTION");
     themed_sep();
     ImGui::Spacing();
+
+    // The saved profiles, the firmware line and the system block below it run
+    // past the fold on a short window, and the sidebar window itself is created
+    // with NoScrollbar — so the panel brings its own scroll region rather than
+    // quietly clipping the end of itself. The heading above stays outside it.
+    if (!ImGui::BeginChild("##conn_scroll", { -1.0f, -1.0f }, false)) {
+        ImGui::EndChild();
+        return;
+    }
 
     // Mini-tab bar: Serial | TCP | UDP
     static int  conn_tab     = 2; // default: UDP
@@ -312,4 +427,12 @@ void draw_tab_connection(const VehicleState* vs,
         ImGui::Text("%s %s", ap_name, vs->fw_version);
         ImGui::TextDisabled("%.8s", vs->fw_hash);
     }
+
+    // Below the firmware line, and not gated on it: the components list and the
+    // button that asks for AUTOPILOT_VERSION are most wanted exactly when it
+    // has not arrived.
+    if (vs && vs->has_heartbeat)
+        draw_system_block(sender, vs, vs->sysid, vs->compid);
+
+    ImGui::EndChild();
 }

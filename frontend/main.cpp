@@ -187,6 +187,39 @@ struct LinkConfig {
 
 static constexpr double CONNECT_TIMEOUT_S = 10.0;
 
+// How long a link that has been talking may go completely silent before it is
+// declared lost. Generous on purpose: an autopilot busy with a sensor
+// calibration answers slowly, and cutting a calibration short because the
+// vehicle spent a few seconds thinking would be worse than noticing late.
+// Even at ArduPilot's 1 Hz heartbeat this is fifteen missed beats — silence
+// this long is a link that has gone, not one that is busy.
+static constexpr double LINK_SILENCE_TIMEOUT_S = 15.0;
+
+// What a receive attempt actually meant.
+//
+// A read that returned nothing is not a read that failed, and telling them
+// apart is what distinguishes a quiet link from a dead one. Every non-positive
+// result used to be treated as "nothing yet", so a serial port whose device had
+// disappeared — an autopilot re-enumerating its USB after a reboot, a radio
+// unplugged — and a TCP peer that had hung up both looked exactly like a
+// vehicle with nothing to say. The thread then span on a dead handle forever
+// while the UI went on reporting a healthy link.
+enum class RxResult { Data, Quiet, Closed, Failed };
+
+#ifdef _WIN32
+static inline int  last_net_error()          { return WSAGetLastError(); }
+static inline bool net_error_is_transient(int e)
+{
+    return e == WSAEWOULDBLOCK || e == WSAETIMEDOUT || e == WSAEINTR;
+}
+#else
+static inline int  last_net_error()          { return errno; }
+static inline bool net_error_is_transient(int e)
+{
+    return e == EAGAIN || e == EWOULDBLOCK || e == EINTR || e == ETIMEDOUT;
+}
+#endif
+
 static void link_thread_fn(LinkConfig cfg)
 {
     init_sockets();
@@ -224,9 +257,15 @@ static void link_thread_fn(LinkConfig cfg)
 #ifdef _WIN32
         DWORD tv_ms = 200;
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv_ms, sizeof(tv_ms));
+        DWORD snd_ms = 500;
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_ms, sizeof(snd_ms));
 #else
         timeval tv{0, 200'000};
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        // A send that cannot complete must fail rather than park the link
+        // thread; see the note in serial_write().
+        timeval stv{0, 500'000};
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
 #endif
         is_stream = false;
 
@@ -289,6 +328,8 @@ static void link_thread_fn(LinkConfig cfg)
         fcntl(fd, F_SETFL, flags);
         timeval tv{0, 200'000};
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        timeval stv{0, 500'000};
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
 #endif
         is_stream = true;
 
@@ -341,6 +382,9 @@ static void link_thread_fn(LinkConfig cfg)
     bool     logged_mission     = false;
     VehicleState::UploadStatus last_upload_status = VehicleState::UploadStatus::Idle;
 
+    auto     last_rx  = Clock::now();
+    RxResult rx       = RxResult::Quiet;
+
     while (g_link_running.load()) {
         ssize_t n = 0;
 
@@ -349,22 +393,59 @@ static void link_thread_fn(LinkConfig cfg)
             socklen_t   src_len = sizeof(src);
             n = recvfrom(fd, (char*)buf, sizeof(buf), 0,
                          reinterpret_cast<sockaddr*>(&src), &src_len);
+            // A datagram socket has no end of stream: a zero-length datagram is
+            // odd but harmless, and only a hard error means the socket is gone.
+            rx = (n > 0)  ? RxResult::Data
+               : (n == 0) ? RxResult::Quiet
+               : net_error_is_transient(last_net_error()) ? RxResult::Quiet
+                                                          : RxResult::Failed;
             if (n > 0 && !vehicle_addr_set) {
                 vehicle_addr     = src;
                 vehicle_addr_set = true;
             }
         } else if (is_serial) {
             n = serial_read(ser, buf, sizeof(buf));
+            // The port is configured VMIN=0/VTIME=2 on POSIX and with an
+            // equivalent read timeout on Windows, so a timeout arrives as 0
+            // bytes. A negative result is the device itself reporting trouble —
+            // most often that it is no longer there.
+            rx = (n > 0)  ? RxResult::Data
+               : (n == 0) ? RxResult::Quiet
+                          : RxResult::Failed;
+#ifndef _WIN32
+            if (n < 0 && errno == EINTR) rx = RxResult::Quiet;
+#endif
             if (n > 0 && !vehicle_addr_set)
                 vehicle_addr_set = true;
         } else {
             // recv(), not read(): Winsock sockets are not CRT file descriptors.
             n = recv(fd, (char*)buf, sizeof(buf), 0);
+            // On a stream socket zero means the peer closed cleanly. That is a
+            // finished connection, not an idle one.
+            rx = (n > 0)  ? RxResult::Data
+               : (n == 0) ? RxResult::Closed
+               : net_error_is_transient(last_net_error()) ? RxResult::Quiet
+                                                          : RxResult::Failed;
             if (n > 0 && !vehicle_addr_set)
                 vehicle_addr_set = true;
         }
 
+        if (rx == RxResult::Closed) {
+            gcs_log("link closed by the vehicle");
+            g_link_status.store(LinkStatus::Timeout);
+            break;
+        }
+        if (rx == RxResult::Failed) {
+            // The usual cause is the port disappearing underneath us: an
+            // autopilot rebooting takes its USB serial device with it, which is
+            // exactly what happens after a calibration that ends in a reboot.
+            gcs_log("link read failed: %s", strerror(errno));
+            g_link_status.store(LinkStatus::Error);
+            break;
+        }
+
         if (n > 0) {
+            last_rx = Clock::now();
             // Mark connected on first data
             if (g_link_status.load() == LinkStatus::Connecting) {
                 g_link_status.store(LinkStatus::Connected);
@@ -650,6 +731,19 @@ static void link_thread_fn(LinkConfig cfg)
                 g_link_status.store(LinkStatus::Timeout);
                 break;
             }
+        } else {
+            // A link that was talking and has stopped. Nothing here reports an
+            // error — UDP in particular cannot, since there is no connection to
+            // fail — so silence is the only evidence there is, and without this
+            // the panel would go on showing a live link and a frozen counter
+            // until somebody thought to reconnect.
+            const double quiet = std::chrono::duration<double>(
+                                     Clock::now() - last_rx).count();
+            if (quiet >= LINK_SILENCE_TIMEOUT_S) {
+                gcs_log("link silent for %.0f s \xe2\x80\x94 giving up", quiet);
+                g_link_status.store(LinkStatus::Timeout);
+                break;
+            }
         }
 
         // Flush outbound commands
@@ -872,6 +966,7 @@ static void render_ui()
     // Before any panel draws: a calibration sweep records from the live stream,
     // not from whether its tab happens to be visible.
     rc_tab_pump(&vs);
+    sensors_tab_pump(&vs, status_texts, ImGui::GetTime());
 
     draw_topbar(vs, stats, total_msg, total_bytes, errors, &g_sender,
                 g_link_status.load(), &g_close_req);

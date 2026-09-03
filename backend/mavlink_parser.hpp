@@ -200,10 +200,109 @@ struct VehicleState {
     // RC_CHANNELS (#65) / RC_CHANNELS_RAW (#35)
     RcChannels rc;
 
+    // STATUSTEXT (#253) — every one ever received on this link, not the size of
+    // the rolling window that holds them. A consumer that wants only the new
+    // ones cannot count entries in that window: it drops its oldest at 200, so
+    // an index into it silently points at a different message afterwards.
+    uint32_t statustext_total = 0;
+
+    // MAV_CMD_ACCELCAL_VEHICLE_POS (42429), arriving as a COMMAND_LONG from the
+    // vehicle. During an accelerometer calibration ArduPilot sends this
+    // alongside the human-readable STATUSTEXT, and it is the authoritative half
+    // of the pair: an enum rather than a sentence, and the only place SUCCESS
+    // and FAILED are reported as values rather than prose.
+    //
+    // `accelcal_seq` ticks on every one received, including a repeat of the
+    // same position — the vehicle re-sends if it thinks the GCS missed one, and
+    // a caller watching only the value would take the repeat for silence.
+    uint32_t accelcal_pos = 0;   // ACCELCAL_VEHICLE_POS, 0 when none seen
+    uint32_t accelcal_seq = 0;
+
+    // COMMAND_ACK for MAV_CMD_PREFLIGHT_CALIBRATION (241) — the vehicle's
+    // verdict on a calibration it was asked to run. Latched here rather than
+    // read from the ACK queue because that queue is drained on the link thread
+    // and cleared every pass, and the panel that cares runs a frame later.
+    //
+    // `calib_ack_seq` ticks on every one received, the same as accelcal_seq
+    // above and for the same reason: two runs in a row can end the same way,
+    // and a caller watching only the result would take the second for silence.
+    uint8_t  calib_ack_result = 255;  // MAV_RESULT; 255 when none seen
+    uint32_t calib_ack_seq    = 0;
+
+    // COMMAND_ACK for the compass calibration commands — DO_START_MAG_CAL
+    // (42424), DO_ACCEPT_MAG_CAL (42425) and DO_CANCEL_MAG_CAL (42426).
+    //
+    // Separate from calib_ack_* above because they are separate commands: a
+    // vehicle refusing to start a compass calibration says so here, and a run
+    // driven through these never touches PREFLIGHT_CALIBRATION at all.
+    uint16_t magcal_ack_cmd    = 0;    // which of the three answered
+    uint8_t  magcal_ack_result = 255;  // MAV_RESULT; 255 when none seen
+    uint32_t magcal_ack_seq    = 0;
+
+    // MAG_CAL_PROGRESS (#191) and MAG_CAL_REPORT (#192) — ArduPilot's account
+    // of a compass calibration, one message per compass.
+    //
+    // Kept as a slot per compass rather than as a single latched message: the
+    // vehicle interleaves several compasses and sends all their reports at
+    // once, so one latch would drop every compass but the last to arrive.
+    // `magcal_seq` ticks on each message, so a consumer can tell an unchanged
+    // pass from a repeated one.
+    static constexpr int MAX_COMPASSES = 3;
+    struct MagCalCompass {
+        bool    seen           = false;  // a message has arrived for this one
+        uint8_t status         = 0;      // MAG_CAL_STATUS
+        uint8_t completion_pct = 0;      // 0-100, from MAG_CAL_PROGRESS
+        bool    reported       = false;  // MAG_CAL_REPORT arrived: it is done
+        bool    autosaved      = false;  // the vehicle stored the new offsets
+        float   fitness        = 0.f;    // RMS milligauss, lower is better
+        // Which parts of the sphere of directions the compass has been turned
+        // through: 80 bits over ArduPilot's geodesic grid, LSB-first in each
+        // byte. See geodesic_grid.hpp. Only MAG_CAL_PROGRESS carries it, so it
+        // keeps its last value once the compass has reported.
+        uint8_t completion_mask[10] = {};
+        // Value of magcal_seq when this slot was last written, so a consumer
+        // can tell what belongs to the calibration it started from what a
+        // previous one left behind.
+        uint32_t seq           = 0;
+    };
+    MagCalCompass magcal[MAX_COMPASSES];
+    uint32_t      magcal_seq = 0;
+
     // AUTOPILOT_VERSION (#148)
     char     fw_version[32] = {};   // e.g. "4.3.7"
     char     fw_hash[17]    = {};   // first 8 bytes of flight_custom_version as hex
     bool     has_fw_info    = false;
+    uint16_t vendor_id      = 0;    // USB vendor of the board, 0 when unreported
+    uint16_t product_id     = 0;    // USB product of the board
+    uint32_t board_version  = 0;
+    uint64_t capabilities   = 0;    // MAV_PROTOCOL_CAPABILITY bitmask
+    uint64_t board_uid      = 0;    // 0 when the board does not report one
+
+    // COMPONENT_INFORMATION (#395) — where a component keeps its metadata, not
+    // the metadata itself: the reply carries MAVLink FTP URIs to JSON files
+    // onboard, and nothing this GCS can show without fetching them. Kept so the
+    // panel can say the component answered, and say where it pointed.
+    char     comp_info_uri[101]  = {};
+    uint8_t  comp_info_compid    = 0;   // who answered
+    bool     has_comp_info       = false;
+
+    // Every component heard from, autopilot or not — HEARTBEAT (#0) is the only
+    // announcement a component makes, and a compass or IMU that sends its own
+    // is a separate MAV_COMP_ID on the same system.
+    //
+    // Recorded before the autopilot filter that the rest of this state goes
+    // through: the point here is what else is on the bus, which is exactly what
+    // that filter throws away.
+    static constexpr int MAX_COMPONENTS = 16;
+    struct Component {
+        uint8_t  sysid      = 0;
+        uint8_t  compid     = 0;
+        uint8_t  type       = 0;   // MAV_TYPE
+        uint8_t  autopilot  = 0;   // MAV_AUTOPILOT
+        uint32_t heartbeats = 0;
+    };
+    Component components[MAX_COMPONENTS];
+    int       component_count = 0;
 
     // PARAM_VALUE (#22) — progress counters; map lives in MavlinkParser::params_
     uint16_t param_count      = 0;  // total parameter count reported by FC

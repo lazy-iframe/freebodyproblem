@@ -18,6 +18,7 @@
 
 #pragma once
 #include <unordered_map>
+#include <vector>
 #include <string>
 #include "../../backend/mavlink_parser.hpp"
 #include "../../backend/mavlink_sender.hpp"
@@ -43,6 +44,18 @@ struct ConnectionRequest {
 // looking at something else — switching to PARAMS mid-sweep must not silently
 // stop measuring, and in fullscreen video the sidebar is not drawn at all.
 void rc_tab_pump(const VehicleState* vs);
+
+// Feed the SENSORS panel's calibrations — accelerometer and gyroscope.
+//
+// Same reason as rc_tab_pump, more sharply: a calibration is a conversation the
+// vehicle is driving, and it keeps asking for positions whether or not this
+// panel is the one on screen. Miss the messages and the exchange stalls with
+// the vehicle waiting on an answer that will never come.
+//
+// `now` is a monotonic seconds clock, used to time out a gyro calibration whose
+// COMMAND_ACK never arrives.
+void sensors_tab_pump(const VehicleState* vs, const std::vector<StatusText>& texts,
+                      double now);
 
 void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        ConnectionRequest* conn_out, LinkStatus link_status,

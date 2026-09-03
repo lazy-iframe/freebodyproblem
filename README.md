@@ -38,6 +38,21 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Point-and-click waypoint editing**: click map to place waypoints during mission planning
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map
 
+### Radio
+- **Live channel monitor**: a bar per channel with its PWM, marked with the stick or switch it is bound to, listing only the channels the receiver is actually sending
+- **Three-step calibration**: centre, sweep, review — endpoints and trim are measured from the receiver, then written as `RC*_MIN` / `MAX` / `TRIM` / `REVERSED` in one confirmed commit, with nothing sent to the vehicle until you press it
+- **Stick binding with DETECT**: press DETECT beside an axis and move that stick; the channel that moves is bound
+- **Flight-mode slots**: ArduPilot's six mode-switch positions, each a dropdown of the modes the vehicle itself published (AVAILABLE_MODES), beside the live bar showing which band the switch is in
+- **Aux function binding**: pick a channel and the function it triggers, from the table the connected firmware implements
+
+### Sensor Calibration
+- **What the vehicle is made of**: compasses, accelerometers and gyros read out of the parameter table — chip name, bus and address, external and in-use flags — for both ArduPilot's `COMPASS_DEV_ID` / `INS_*_ID` naming and PX4's `CAL_*_ID`
+- **Accelerometer**: the full six-position routine, the vehicle asking for each position in turn and the panel reporting when the airframe has been placed
+- **Gyroscope**: hold still and wait; the COMMAND_ACK is the verdict
+- **Compass**: ArduPilot's own `DO_START_MAG_CAL`, with progress and per-compass verdicts from `MAG_CAL_PROGRESS` / `MAG_CAL_REPORT`, and `DO_ACCEPT_MAG_CAL` to commit offsets the vehicle is holding but has not stored
+- **Coverage sphere**: the 80-section geodesic grid ArduPilot tracks coverage with, drawn in body frame — lit where the compass has been turned, dim where it has not, far side visible through the near one, drag to turn. It says *which* rotations are still missing, which a percentage cannot
+- **One at a time**: the three sections disable each other while any is running, since the vehicle takes one calibration at a time and a second would silently withdraw the first
+
 ### Connection
 - **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
 - **Auto-discovery**: serial port enumeration with device descriptions
@@ -389,6 +404,56 @@ precision so a saved value reloads as the same float rather than as an edit.
 7. Click **UPLOAD** to send mission to vehicle
 8. Click **CLEAR** to erase vehicle mission (zero waypoints)
 
+### Radio Calibration
+1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
+   disabled until the vehicle's current values are known, and a red banner says so
+2. Navigate to the **RADIO** tab and check the monitor: one row per channel the
+   receiver is sending, so a radio that is off or unbound is obvious before you start
+3. Click **START CALIBRATION**
+4. **1 / 3 CENTRE** — centre the sticks, throttle fully down, then **CAPTURE**
+5. **2 / 3 SWEEP** — move every stick and switch to both stops. The amber band on
+   each bar is the travel recorded so far, and the progress reads against the
+   channels actually carrying a signal, not the eighteen the protocol allows.
+   **FINISH** when the count stops rising
+6. **3 / 3 REVIEW** — check each channel's endpoints and trim, and tick **REV**
+   where a stick runs the wrong way. A sweep cannot tell direction, so reversal
+   is the one value you have to set; it is seeded from the vehicle so an
+   already-correct radio is not un-reversed
+7. **COMMIT** writes the lot after a confirmation naming the parameter count.
+   **DISCARD** leaves the vehicle untouched
+
+The calibration keeps recording while you look at another tab — it is the
+vehicle and the radio doing the work, not the panel.
+
+Below the calibration: **BINDING** binds each axis to a channel (press
+**DETECT**, move that stick), sets ArduPilot's six flight-mode slots from the
+mode list the vehicle published, and binds an aux function to a channel. Each
+row writes on its own.
+
+### Sensor Calibration
+1. Fetch parameters first, as above — the device lists are read from them
+2. Navigate to the **SENSORS** tab. Each section lists what the vehicle actually
+   has: chip name, bus and address, and whether a compass is external and in use
+3. **Disarm before calibrating.** Every button here is disabled while armed
+4. **Accelerometer** — press **CALIBRATE ACCELEROMETER**, then place the airframe
+   as the vehicle asks (level, on each side, nose down, nose up, on its back) and press
+   the button for each position. The vehicle drives the sequence; the panel
+   reports when the airframe is in place
+5. **Gyroscope** — press **CALIBRATE GYROSCOPE** and leave the vehicle still.
+   It answers with a single ACK, which is the result
+6. **Magnetometer** — press **CALIBRATE MAGNETOMETER** and rotate the vehicle
+   slowly through every orientation, keeping clear of metal, magnets and wiring.
+   The sphere fills in as directions are covered: turn the airframe so the dim
+   patches come round. On ArduPilot the run ends with a per-compass verdict and
+   a worst-fit figure in milligauss; press **ACCEPT CALIBRATION** if the vehicle
+   is holding the offsets rather than storing them
+7. Reboot when it is done — new offsets take effect at boot, and there is a
+   **REBOOT VEHICLE** button on the panel
+
+Only one calibration runs at a time: starting a second would silently withdraw
+the first, so each section greys out the others while it is busy. A run also
+survives a tab switch, and is abandoned with a log line if the link drops.
+
 ### MAVLink Inspector
 1. Navigate to **MAVLINK** tab
 2. View message ID, name, and receive rate in scrollable table
@@ -465,6 +530,10 @@ vehicle disarmed.**
 - **connection.cpp**: Serial port enumeration (Linux/Windows)
 - **mavlink_parser.cpp**: Stateless MAVLink message decoder with per-ID stats tracking
 - **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic
+- **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
+- **accel_calibration.cpp** / **gyro_calibration.cpp** / **mag_calibration.cpp**: the GCS half of each calibration — link-free state machines fed messages and a clock
+- **sensor_inventory.cpp**: compass/accel/gyro devices decoded out of the parameter table (device-ID packing, chip names)
+- **geodesic_grid.cpp**: ArduPilot's 80-section coverage grid, for drawing what a compass calibration has and has not seen
 
 ### Frontend (`frontend/`)
 - **main.cpp**: GLFW/OpenGL event loop, link thread management, MAVLink I/O
@@ -472,7 +541,7 @@ vehicle disarmed.**
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
 - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
-  - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink)
+  - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink, radio, sensors)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
   - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
@@ -565,7 +634,7 @@ Example `settings.json`:
 
 ## Future Plans
 
-- Implementations of "Console", "Radio" and "ESC" tabs which are for Mavlink Console, Radio Controller calibration and connection management, and ESC configuration along with motor test respectively.
+- Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
 - Multi-Vehicle Support
 - PX4 Support
 - macOS Support

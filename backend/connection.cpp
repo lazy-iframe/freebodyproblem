@@ -32,6 +32,7 @@
 #include <cstdlib>   // realpath
 #include <fstream>
 #include <fcntl.h>
+#include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -292,13 +293,37 @@ int serial_write(SerialHandle h, const void* buf, std::size_t len)
 {
     if (h == SERIAL_INVALID) return -1;
 #ifdef _WIN32
+    // COMMTIMEOUTS already caps a write at WriteTotalTimeoutConstant, so this
+    // cannot block indefinitely the way the POSIX path could.
     DWORD put = 0;
     if (!WriteFile(reinterpret_cast<HANDLE>(h), buf, static_cast<DWORD>(len),
                    &put, nullptr))
         return -1;
     return static_cast<int>(put);
 #else
-    return static_cast<int>(write(static_cast<int>(h), buf, len));
+    // Wait for room before writing, and give up if none appears.
+    //
+    // The port is opened blocking, which is what the read side wants. It also
+    // means write() sleeps until the kernel's transmit buffer has space, and
+    // that buffer stops draining whenever the autopilot stops reading its
+    // UART — which is exactly what a busy sensor calibration or a reboot looks
+    // like from this end. A blocked write there takes the whole link thread
+    // with it: no more reads, a frozen message counter, and a UI still showing
+    // a healthy link.
+    //
+    // A dropped frame is the better failure. Commands are not retransmitted
+    // here anyway, and the caller pops the queue whatever this returns.
+    const int fd = static_cast<int>(h);
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(fd, &wfds);
+    timeval tv{0, 500'000};   // 500 ms, well beyond a frame at any sane baud
+
+    const int ready = select(fd + 1, nullptr, &wfds, nullptr, &tv);
+    if (ready <= 0) return 0;   // no room, or interrupted — nothing written
+
+    return static_cast<int>(write(fd, buf, len));
 #endif
 }
 

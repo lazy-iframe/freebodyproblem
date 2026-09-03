@@ -109,6 +109,96 @@ public:
                       float p4 = 0.f, float p5 = 0.f, float p6 = 0.f,
                       float p7 = 0.f);
 
+    // MAV_CMD_REQUEST_MESSAGE (512) — ask a component to send one message now.
+    // The general form of the two named requests above; used for the ones a
+    // vehicle only sends when asked, such as AUTOPILOT_VERSION (148) and
+    // COMPONENT_INFORMATION (395).
+    //
+    // Addressed like everything else here, which for this command matters: a
+    // compass or IMU with its own MAV_COMP_ID answers for itself, and asking
+    // the autopilot gets the autopilot's answer.
+    void request_message(uint8_t target_sysid, uint8_t target_compid,
+                         uint16_t message_id);
+
+    // ── Sensor calibration ───────────────────────────────────────────────────
+
+    // MAV_CMD_PREFLIGHT_CALIBRATION (241). One sensor per message: the command
+    // takes a parameter per sensor and the spec is explicit that all the others
+    // must be zero, so this is the raw form and the named helpers below are the
+    // only shapes the GCS itself sends.
+    void preflight_calibration(uint8_t target_sysid, uint8_t target_compid,
+                               float gyro = 0.f, float mag = 0.f, float baro = 0.f,
+                               float rc = 0.f, float accel = 0.f, float airspeed = 0.f,
+                               float esc = 0.f);
+
+    // Begin the six-position accelerometer calibration: PREFLIGHT_CALIBRATION
+    // with the accelerometer parameter at 1.
+    //
+    // The vehicle then drives the exchange. It asks for each orientation twice
+    // over — once as a STATUSTEXT for the operator to read, once as a
+    // MAV_CMD_ACCELCAL_VEHICLE_POS command carrying the position as an enum —
+    // and waits for send_accelcal_vehicle_pos() before moving to the next.
+    void calibrate_accelerometer(uint8_t target_sysid, uint8_t target_compid);
+
+    // Begin a gyroscope calibration: PREFLIGHT_CALIBRATION with the gyro
+    // parameter at 1.
+    //
+    // Unlike the accelerometer there is no exchange to follow — the vehicle
+    // samples its own gyros while it sits still, then answers with the
+    // COMMAND_ACK for this command. It must not be moved while it does.
+    void calibrate_gyroscope(uint8_t target_sysid, uint8_t target_compid);
+
+    // Begin a magnetometer calibration the way ArduPilot expects one:
+    // MAV_CMD_DO_START_MAG_CAL (42424), the command written for this job.
+    //
+    // Its parameters, and the ones chosen here:
+    //   param1  bitmask of compasses; 0 is "every one you can start"
+    //   param2  retry on failure         — 1, so a bad run is retried onboard
+    //   param3  autosave                 — 0, so the offsets wait to be accepted
+    //   param4  delay before starting    — 0
+    //   param5  autoreboot               — 0, never: rebooting is the operator's
+    //
+    // autosave is deliberately off. The vehicle calculates the offsets and holds
+    // them, and nothing is written until accept_mag_cal() below — so a fit the
+    // operator can see and dislike is one they can still walk away from.
+    void start_mag_cal(uint8_t target_sysid, uint8_t target_compid);
+
+    // MAV_CMD_DO_ACCEPT_MAG_CAL (42425) — commit the offsets from the run that
+    // just finished. param1 is a bitmask of compasses; 0 is all of them, which
+    // is what a calibration of all of them accepts.
+    void accept_mag_cal(uint8_t target_sysid, uint8_t target_compid);
+
+    // MAV_CMD_DO_CANCEL_MAG_CAL (42426) — stop a running compass calibration
+    // and keep the old offsets. Its own command: the all-zero
+    // PREFLIGHT_CALIBRATION below is how the accelerometer routine is
+    // withdrawn, and would leave this one running.
+    void cancel_mag_cal(uint8_t target_sysid, uint8_t target_compid);
+
+    // Begin a magnetometer calibration the portable way: PREFLIGHT_CALIBRATION
+    // with the magnetometer parameter at 1.
+    //
+    // For PX4, which has no DO_START_MAG_CAL. ArduPilot accepts this too and
+    // starts the same routine, but with autosave on and nothing to accept, so
+    // the panel uses start_mag_cal() there and keeps this for the other stack.
+    void calibrate_magnetometer(uint8_t target_sysid, uint8_t target_compid);
+
+    // Abandon a calibration in progress: PREFLIGHT_CALIBRATION with every
+    // parameter zero, which is how a GCS withdraws the request.
+    void cancel_calibration(uint8_t target_sysid, uint8_t target_compid);
+
+    // MAV_CMD_ACCELCAL_VEHICLE_POS (42429) — "the vehicle is now in this
+    // position". `position` is an ACCELCAL_VEHICLE_POS value.
+    void send_accelcal_vehicle_pos(uint8_t target_sysid, uint8_t target_compid,
+                                   uint32_t position);
+
+    // MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN (246), param1=1 — restart the
+    // autopilot. ArduPilot stores new accelerometer offsets but keeps flying on
+    // the ones it booted with, so a calibration is not in force until this.
+    //
+    // Expect no reply and expect the link to drop: the vehicle stops answering
+    // immediately, and over USB it takes its serial device with it.
+    void reboot_autopilot(uint8_t target_sysid, uint8_t target_compid);
+
     // Request all parameters (PARAM_REQUEST_LIST #21).
     // FC responds with a stream of PARAM_VALUE (#22) messages.
     void request_param_list(uint8_t target_sysid, uint8_t target_compid);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.3.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -286,6 +286,11 @@ add_executable(freebodyproblem
     backend/mavlink_sender.cpp
     backend/connection.cpp
     backend/rc_calibration.cpp
+    backend/accel_calibration.cpp
+    backend/gyro_calibration.cpp
+    backend/mag_calibration.cpp
+    backend/sensor_inventory.cpp
+    backend/geodesic_grid.cpp
     backend/rc_binding.cpp
     frontend/main.cpp
     frontend/settings.cpp
@@ -300,6 +305,7 @@ add_executable(freebodyproblem
     frontend/widgets/sidebar_left/tab_mission.cpp
     frontend/widgets/sidebar_left/tab_mavlink.cpp
     frontend/widgets/sidebar_left/tab_rc.cpp
+    frontend/widgets/sidebar_left/tab_sensors.cpp
     frontend/widgets/sidebar_left/mavlink_display_generated.cpp
     frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp
     frontend/widgets/sidebar_themes.cpp

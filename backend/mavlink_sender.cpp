@@ -39,8 +39,11 @@ static inline int socket_write(int fd, const char* buf, int len)
 
 #include <chrono>
 #include <cstdio>
+#include <cstddef>
 #include <cstring>
 #include <mavlink/ardupilotmega/mavlink.h>
+
+#include "../frontend/app_log.hpp"   // gcs_log — thread-safe, see the header
 
 using Clock = std::chrono::steady_clock;
 
@@ -107,6 +110,93 @@ void MavlinkSender::do_set_servo(uint8_t tsys, uint8_t tcomp,
     // param1 = servo number (1-based), param2 = PWM pulse width in microseconds
     enqueue_command_long(tsys, tcomp, 183,
                          (float)servo_num, (float)pwm_us);
+}
+
+void MavlinkSender::request_message(uint8_t tsys, uint8_t tcomp, uint16_t message_id)
+{
+    // MAV_CMD_REQUEST_MESSAGE (512), param1 = message id.
+    enqueue_command_long(tsys, tcomp, 512, (float)message_id);
+}
+
+// ── Sensor calibration ───────────────────────────────────────────────────────
+
+void MavlinkSender::preflight_calibration(uint8_t tsys, uint8_t tcomp,
+                                          float gyro, float mag, float baro,
+                                          float rc, float accel, float airspeed,
+                                          float esc)
+{
+    // MAV_CMD_PREFLIGHT_CALIBRATION (241)
+    enqueue_command_long(tsys, tcomp, 241,
+                         gyro, mag, baro, rc, accel, airspeed, esc);
+}
+
+void MavlinkSender::calibrate_accelerometer(uint8_t tsys, uint8_t tcomp)
+{
+    // param5 = 1 is ArduPilot's full six-position calibration, the one that
+    // talks back and waits to be told when the airframe has been moved. The
+    // other accepted values calibrate without a conversation — 2 levels the
+    // board where it sits, 4 is the single-position form — and neither drives
+    // the exchange this GCS implements.
+    preflight_calibration(tsys, tcomp, 0.f, 0.f, 0.f, 0.f, 1.f);
+}
+
+void MavlinkSender::calibrate_gyroscope(uint8_t tsys, uint8_t tcomp)
+{
+    // param1 = 1, and every other parameter zero. ArduPilot also accepts 3 here
+    // for the gyro's temperature calibration, which is a different and far
+    // longer procedure than the one this panel drives.
+    preflight_calibration(tsys, tcomp, 1.f);
+}
+
+void MavlinkSender::start_mag_cal(uint8_t tsys, uint8_t tcomp)
+{
+    // MAV_CMD_DO_START_MAG_CAL (42424): all compasses, retry on, autosave off,
+    // no delay, no autoreboot. See the header for why autosave is off.
+    enqueue_command_long(tsys, tcomp, 42424, 0.f, 1.f, 0.f, 0.f, 0.f);
+}
+
+void MavlinkSender::accept_mag_cal(uint8_t tsys, uint8_t tcomp)
+{
+    // MAV_CMD_DO_ACCEPT_MAG_CAL (42425), param1 = 0 for every compass.
+    enqueue_command_long(tsys, tcomp, 42425);
+}
+
+void MavlinkSender::cancel_mag_cal(uint8_t tsys, uint8_t tcomp)
+{
+    // MAV_CMD_DO_CANCEL_MAG_CAL (42426), param1 = 0 for every compass.
+    enqueue_command_long(tsys, tcomp, 42426);
+}
+
+void MavlinkSender::calibrate_magnetometer(uint8_t tsys, uint8_t tcomp)
+{
+    // param2 = 1, and every other parameter zero. The PX4 path.
+    preflight_calibration(tsys, tcomp, 0.f, 1.f);
+}
+
+void MavlinkSender::cancel_calibration(uint8_t tsys, uint8_t tcomp)
+{
+    preflight_calibration(tsys, tcomp);   // every parameter zero
+}
+
+void MavlinkSender::send_accelcal_vehicle_pos(uint8_t tsys, uint8_t tcomp,
+                                              uint32_t position)
+{
+    // MAV_CMD_ACCELCAL_VEHICLE_POS (42429), position in param1.
+    //
+    // Sent as a plain COMMAND_LONG through the same queue as everything else,
+    // so it inherits the ACK plumbing: the vehicle answers each one, and a
+    // position it did not accept shows up as a rejection rather than as a
+    // calibration that quietly stops advancing.
+    enqueue_command_long(tsys, tcomp, 42429, (float)position);
+}
+
+void MavlinkSender::reboot_autopilot(uint8_t tsys, uint8_t tcomp)
+{
+    // MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN (246): param1 = 1 reboots the
+    // autopilot. Every other parameter stays zero — param2 would reboot the
+    // companion computer, and the higher ones select bootloader and shutdown
+    // modes that this GCS has no business asking for.
+    enqueue_command_long(tsys, tcomp, 246, 1.f);
 }
 
 void MavlinkSender::request_autopilot_capabilities(uint8_t tsys, uint8_t tcomp)
@@ -343,14 +433,34 @@ void MavlinkSender::request_message_interval(uint8_t tsys, uint8_t tcomp,
 
 // ── Transport ─────────────────────────────────────────────────────────────────
 
+// A frame that could not be handed to the transport at all stays queued for the
+// next pass rather than being thrown away.
+//
+// Both the serial port and the sockets now refuse a write instead of blocking
+// on one, which is what keeps a busy autopilot from taking the link thread down
+// with it. That turns "the write blocked" into "the write did nothing", and
+// popping the frame anyway would quietly lose commands exactly when the link is
+// under strain — a calibration confirmation dropped there leaves the vehicle
+// waiting for an answer that was never sent.
+//
+// A partial write is different and is not retried: the transport already has
+// the first half of that frame, so re-sending the whole thing would put a
+// malformed message on the wire. The frame is dropped and the parser at the far
+// end discards the fragment on its checksum.
+static bool frame_sent(int written, std::size_t size)
+{
+    return written > 0 || size == 0;
+}
+
 void MavlinkSender::flush_stream(int fd)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        socket_write(fd,
-                     reinterpret_cast<const char*>(frame.data()),
-                     static_cast<int>(frame.size()));
+        const int n = socket_write(fd,
+                                   reinterpret_cast<const char*>(frame.data()),
+                                   static_cast<int>(frame.size()));
+        if (!frame_sent(n, frame.size())) break;
         queue_.pop();
     }
 }
@@ -360,7 +470,8 @@ void MavlinkSender::flush_serial(SerialHandle h)
     std::lock_guard<std::mutex> lk(mtx_);
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        serial_write(h, frame.data(), frame.size());
+        const int n = serial_write(h, frame.data(), frame.size());
+        if (!frame_sent(n, frame.size())) break;
         queue_.pop();
     }
 }
@@ -370,12 +481,13 @@ void MavlinkSender::flush(int fd, const sockaddr_in& dest)
     std::lock_guard<std::mutex> lk(mtx_);
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        sendto(fd,
-               reinterpret_cast<const char*>(frame.data()),
-               static_cast<int>(frame.size()),
-               0,
-               reinterpret_cast<const sockaddr*>(&dest),
-               sizeof(dest));
+        const int n = (int)sendto(fd,
+                                  reinterpret_cast<const char*>(frame.data()),
+                                  static_cast<int>(frame.size()),
+                                  0,
+                                  reinterpret_cast<const sockaddr*>(&dest),
+                                  sizeof(dest));
+        if (!frame_sent(n, frame.size())) break;
         queue_.pop();
     }
 }
@@ -447,6 +559,22 @@ void MavlinkSender::enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t c
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+
+    // Compass calibration is traced end to end while it is being brought up:
+    // what went out, with the parameters it actually carried, so the log can be
+    // read against what the vehicle answers. See mavlink_parser.cpp for the
+    // receiving half and for the switch that quietens both.
+    if (cmd == 42424 || cmd == 42425 || cmd == 42426 || cmd == 241) {
+        const char* which = cmd == 241   ? "PREFLIGHT_CALIBRATION"
+                          : cmd == 42424 ? "DO_START_MAG_CAL"
+                          : cmd == 42425 ? "DO_ACCEPT_MAG_CAL"
+                                         : "DO_CANCEL_MAG_CAL";
+        gcs_log("magcal tx: %s (%u) to %u/%u "
+                "p1=%g p2=%g p3=%g p4=%g p5=%g p6=%g p7=%g",
+                which, (unsigned)cmd, (unsigned)tsys, (unsigned)tcomp,
+                (double)p1, (double)p2, (double)p3, (double)p4,
+                (double)p5, (double)p6, (double)p7);
+    }
 
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);

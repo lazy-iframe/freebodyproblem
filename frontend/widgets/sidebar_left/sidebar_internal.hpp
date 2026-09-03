@@ -25,7 +25,8 @@
 #include <string>
 #include <cstdint>
 
-void draw_tab_connection(const VehicleState* vs,
+void draw_tab_connection(MavlinkSender* sender,
+                         const VehicleState* vs,
                          ConnectionRequest* conn_out,
                          LinkStatus link_status,
                          AppSettings* settings);
@@ -37,6 +38,9 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
 void draw_tab_rc(MavlinkSender* sender, const VehicleState* vs,
                  const std::unordered_map<std::string, ParamEntry>* params);
+
+void draw_tab_sensors(MavlinkSender* sender, const VehicleState* vs,
+                      const std::unordered_map<std::string, ParamEntry>* params);
 
 void draw_tab_themes(AppSettings* settings);
 
