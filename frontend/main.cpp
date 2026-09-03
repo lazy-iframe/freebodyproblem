@@ -79,6 +79,7 @@ static inline void cleanup_sockets() {}
 #include "settings.hpp"
 
 // Widgets
+#include "widgets/app_icon.hpp"
 #include "widgets/theme.hpp"
 #include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
@@ -1039,11 +1040,40 @@ int main()
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
+    // How a desktop environment ties this window back to its .desktop file, and
+    // so to the installed icon. It matters most on Wayland, which has no
+    // protocol for a client to hand over icon pixels at all: there the
+    // compositor shows whatever the app id resolves to and nothing else, so an
+    // app id that matches StartupWMClass in the desktop entry is the icon.
+#ifdef GLFW_WAYLAND_APP_ID
+    glfwWindowHintString(GLFW_WAYLAND_APP_ID,   "freebodyproblem");
+#endif
+#ifdef GLFW_X11_CLASS_NAME
+    glfwWindowHintString(GLFW_X11_CLASS_NAME,    "freebodyproblem");
+    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "freebodyproblem");
+#endif
+
     GLFWwindow* window = glfwCreateWindow(1280, 720, "freebodyproblem", nullptr, nullptr);
     if (!window) {
         fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
         return 1;
+    }
+
+    {
+        // Resolved the same way the fonts are, so this works from an install
+        // prefix, from a portable directory, and from the build tree.
+        std::vector<std::string> icons;
+        for (int i = 0; i < APP_ICON_SIZE_COUNT; ++i) {
+            char rel[64], built[512];
+            snprintf(rel,   sizeof(rel),   "icons/freebodyproblem-%d.png",
+                     APP_ICON_SIZES[i]);
+            snprintf(built, sizeof(built), "%s/freebodyproblem-%d.png",
+                     GCS_ICON_DIR, APP_ICON_SIZES[i]);
+            std::string p = find_asset(rel, built);
+            if (!p.empty()) icons.push_back(std::move(p));
+        }
+        app_set_window_icon(window, icons);
     }
 
     glfwMakeContextCurrent(window);

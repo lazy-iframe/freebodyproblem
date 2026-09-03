@@ -51,12 +51,6 @@
 // Holds no link and sends nothing — it is fed messages and a clock.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The orientations the airframe has to be turned through. PX4 announces each as
-// it recognises it; ArduPilot does not, and there the list is a hint rather
-// than a checklist.
-int         mag_cal_orientation_count();
-const char* mag_cal_orientation_label(int index);   // nullptr if out of range
-
 class MagCalibration {
 public:
     enum class Phase {
@@ -117,10 +111,6 @@ public:
     // spoken. Shown verbatim.
     const std::string& message() const { return message_; }
 
-    // Orientations PX4 has said it recognised, as a bitmask over the indices of
-    // mag_cal_orientation_label(). Always 0 on ArduPilot, which does not say.
-    uint32_t detected_mask() const { return detected_; }
-
     // After a successful run: true when a compass finished well but the vehicle
     // has not stored the result — which is every ArduPilot run this panel
     // starts, since it starts them with autosave off. The offsets exist and are
@@ -145,7 +135,6 @@ private:
     Phase       phase_      = Phase::Idle;
     int         percent_    = 0;
     std::string message_;
-    uint32_t    detected_   = 0;
     bool        needs_save_ = false;
     float       worst_fitness_ = -1.0f;
 

@@ -1,0 +1,7 @@
+// Windows resource script — gives the .exe its icon in Explorer, the task bar
+// and the Alt-Tab switcher. The first icon in the resource table is the one
+// the shell uses, so this stays the only ICON entry.
+//
+// The window's own icon is set at runtime from the PNGs in this directory —
+// see frontend/widgets/app_icon.hpp — and the .ico here is built from those.
+1 ICON "icons/freebodyproblem.ico"

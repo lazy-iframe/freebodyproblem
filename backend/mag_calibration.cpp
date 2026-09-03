@@ -23,24 +23,6 @@
 
 namespace {
 
-// The six, with the word PX4 uses for each. PX4 names the side of the airframe
-// that is pointing down — "front" for nose down — and announces it as
-// "[cal] front orientation detected". ArduPilot says nothing of the kind, so
-// the keyword goes unused there and the list reads as instructions.
-struct Orientation {
-    const char* label;
-    const char* px4_word;
-};
-const Orientation kOrientations[] = {
-    { "LEVEL",        "down"  },
-    { "NOSE DOWN",    "front" },
-    { "NOSE UP",      "back"  },
-    { "LEFT SIDE",    "left"  },
-    { "RIGHT SIDE",   "right" },
-    { "UPSIDE DOWN",  "up"    },
-};
-constexpr int kOrientationCount = (int)(sizeof(kOrientations) / sizeof(kOrientations[0]));
-
 bool contains(const std::string& haystack_lower, const char* needle_lower)
 {
     return haystack_lower.find(needle_lower) != std::string::npos;
@@ -84,14 +66,6 @@ bool status_is_failure(uint8_t s)
 
 } // namespace
 
-int mag_cal_orientation_count() { return kOrientationCount; }
-
-const char* mag_cal_orientation_label(int index)
-{
-    if (index < 0 || index >= kOrientationCount) return nullptr;
-    return kOrientations[index].label;
-}
-
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 void MagCalibration::begin(uint32_t magcal_seq, double now)
@@ -99,7 +73,6 @@ void MagCalibration::begin(uint32_t magcal_seq, double now)
     phase_         = Phase::Running;
     percent_       = 0;
     message_.clear();
-    detected_      = 0;
     needs_save_    = false;
     worst_fitness_ = -1.0f;
     has_mask_      = false;
@@ -118,7 +91,6 @@ void MagCalibration::cancel()
     phase_      = Phase::Idle;
     percent_    = 0;
     message_.clear();
-    detected_   = 0;
     needs_save_ = false;
     worst_fitness_ = -1.0f;
     has_mask_   = false;
@@ -222,13 +194,6 @@ void MagCalibration::on_statustext(const StatusText& st, double now)
 
     last_word_ = now;
     message_   = st.text;
-
-    if (contains(t, "orientation detected")) {
-        for (int i = 0; i < kOrientationCount; ++i)
-            if (contains(t, kOrientations[i].px4_word))
-                detected_ |= (1u << i);
-        return;
-    }
 
     if (contains(t, "progress")) {
         const int pct = number_after(t, "progress");

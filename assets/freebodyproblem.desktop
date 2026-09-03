@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=freebodyproblem
+GenericName=Ground Control Station
+Comment=Ground control station for ArduPilot and PX4 autopilots
+Exec=freebodyproblem
+Icon=freebodyproblem
+Terminal=false
+Categories=Science;Engineering;
+Keywords=MAVLink;UAV;drone;telemetry;ArduPilot;PX4;
+StartupWMClass=freebodyproblem

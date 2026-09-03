@@ -620,32 +620,6 @@ static void start_mag_cal_for(MavlinkSender* sender, const VehicleState* vs,
 }
 
 
-// The orientations to turn the airframe through. Ticked off on PX4, which says
-// which it has recognised; on ArduPilot nothing ticks and the same list reads
-// as the instructions it also is.
-static void draw_orientation_list()
-{
-    const uint32_t detected = s_mag.detected_mask();
-    const int      count    = mag_cal_orientation_count();
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_param_list());
-    ImGui::PushStyleColor(ImGuiCol_Border,  col_separator());
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
-
-    const float h = count * ImGui::GetTextLineHeightWithSpacing() + 10.0f;
-    if (ImGui::BeginChild("##mag_steps", { -1.0f, h }, true, kNoScroll)) {
-        for (int i = 0; i < count; ++i) {
-            const bool seen = (detected & (1u << i)) != 0;
-            if (seen) ImGui::TextColored(col_ok(), "\xe2\x9c\x93 %s",
-                                         mag_cal_orientation_label(i));
-            else      ImGui::TextDisabled("  %s", mag_cal_orientation_label(i));
-        }
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(2);
-}
-
 // ── The coverage sphere ──────────────────────────────────────────────────────
 //
 // MAG_CAL_PROGRESS carries 80 bits, one for each section of the sphere of
@@ -828,8 +802,8 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         snprintf(prog, sizeof(prog), "%d %%", pct);
         ui_progress_bar(prog, pct / 100.0f, 12.0f);
 
-        // ArduPilot only. PX4 sends no mask, and there the orientation list
-        // below is the whole of what the panel knows.
+        // ArduPilot only. PX4 sends no mask, and there the percentage and the
+        // vehicle's own words are the whole of what the panel knows.
         if (const uint8_t* covered = s_mag.completion_mask()) {
             ImGui::Spacing();
             draw_coverage_sphere(covered, 190.0f);
@@ -851,9 +825,6 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
             s_mag.cancel();
             gcs_log("compass cal: cancelled");
         }
-
-        ImGui::Spacing();
-        draw_orientation_list();
         break;
     }
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.4.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.4.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -280,8 +280,17 @@ file(GLOB GCS_PLUGIN_SOURCES CONFIGURE_DEPENDS
 list(LENGTH GCS_PLUGIN_SOURCES GCS_PLUGIN_COUNT)
 message(STATUS "Plugins: ${GCS_PLUGIN_COUNT} source file(s) in plugins/")
 
+# The executable's own icon, for Explorer and the task bar. Compiled in as a
+# Windows resource; the window icon is set from the embedded PNGs on every
+# platform regardless.
+if(WIN32)
+    enable_language(RC)
+    set(GCS_WIN_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/assets/freebodyproblem.rc")
+endif()
+
 add_executable(freebodyproblem
     ${GCS_PLUGIN_SOURCES}
+    ${GCS_WIN_RESOURCES}
     frontend/widgets/plugin_rail.cpp
     backend/mavlink_sender.cpp
     backend/connection.cpp
@@ -315,6 +324,7 @@ add_executable(freebodyproblem
     frontend/widgets/video_player.cpp
     frontend/widgets/map_view.cpp
     frontend/widgets/stb_impl.cpp
+    frontend/widgets/app_icon.cpp
     frontend/widgets/sidebar_right.cpp
     frontend/widgets/ui_kit.cpp
     backend/mavlink_parser.cpp
@@ -342,6 +352,7 @@ target_link_libraries(freebodyproblem PRIVATE
 target_compile_definitions(freebodyproblem PRIVATE
     GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
     GCS_FONT_FALLBACK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
+    GCS_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
 )
 if(WIN32)
     # setupapi: serial port enumeration in backend/connection.cpp
@@ -375,6 +386,26 @@ install(FILES
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
         DESTINATION share/freebodyproblem/fonts)
+
+# The window icon, found at runtime the same way the fonts are.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/"
+        DESTINATION share/freebodyproblem/icons
+        FILES_MATCHING PATTERN "freebodyproblem-*.png")
+
+# Desktop integration — what a desktop environment reads off disk rather than
+# from the running window: the menu entry, and the icon shown beside it.
+if(UNIX AND NOT APPLE)
+    foreach(_icon_size 16 24 32 48 64 128 256 512)
+        install(FILES
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/freebodyproblem-${_icon_size}.png"
+                DESTINATION
+                    "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_icon_size}x${_icon_size}/apps"
+                RENAME freebodyproblem.png)
+    endforeach()
+
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/freebodyproblem.desktop"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+endif()
 
 if(WIN32)
     # These roots arrive on the command line as native paths ("C:\Program
@@ -438,6 +469,8 @@ if(WIN32)
     set(CPACK_NSIS_PACKAGE_NAME     "freebodyproblem")
     set(CPACK_NSIS_DISPLAY_NAME     "freebodyproblem")
     set(CPACK_NSIS_INSTALLED_ICON_NAME "${CMAKE_INSTALL_BINDIR}/freebodyproblem.exe")
+    set(CPACK_NSIS_MUI_ICON   "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/freebodyproblem.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/freebodyproblem.ico")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_MODIFY_PATH OFF)
     set(CPACK_PACKAGE_EXECUTABLES   "freebodyproblem;freebodyproblem")
