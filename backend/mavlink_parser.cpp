@@ -33,7 +33,7 @@ namespace {
 // to the GCS log exactly as it came off the wire. The SENSORS panel only ever
 // sees the latched summary of these, which is no use when the question is
 // whether the vehicle said anything at all. Set to false to quieten it.
-constexpr bool trace_mag_cal = true;
+constexpr bool trace_mag_cal = false;
 
 const char* mag_cal_status_name(uint8_t s)
 {
@@ -70,29 +70,19 @@ const char* mav_result_name(uint8_t r)
 
 int MavlinkParser::parse(const uint8_t* buf, size_t len)
 {
-    total_bytes_ += len;
-
-    int parsed = 0;
-    mavlink_message_t msg;
-
-    for (size_t i = 0; i < len; ++i) {
-        uint8_t result = mavlink_parse_char(MAVLINK_COMM_0, buf[i], &msg, &ch_status_);
-        if (result == MAVLINK_FRAMING_OK) {
-            handle_message(msg);
-            ++parsed;
-        } else if (result == MAVLINK_FRAMING_BAD_CRC ||
-                   result == MAVLINK_FRAMING_BAD_SIGNATURE) {
-            ++parse_errors_;
-        }
-    }
-
-    return parsed;
+    return framer_.feed(buf, len,
+                        [this](const mavlink_message_t& msg) { handle(msg); });
 }
 
-// ── MavlinkParser::handle_message ─────────────────────────────────────────────
+// ── MavlinkParser::handle ─────────────────────────────────────────────────────
 
-void MavlinkParser::handle_message(const mavlink_message_t& msg)
+void MavlinkParser::handle(const mavlink_message_t& msg)
 {
+    // Wrong system entirely. A caller that demultiplexes by sysid never gets
+    // here, but one feeding a shared bus straight in does, and this is what
+    // keeps a second aircraft's telemetry out of this vehicle's state.
+    if (bound_ && msg.sysid != sysid_) return;
+
     ++total_messages_;
 
     // Store last raw message per ID for the MAVLink inspector tab.
@@ -113,6 +103,45 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
     }
     stat.last_seen = now;
     ++stat.count;
+
+    // Within the right system, most of what follows describes the vehicle's own
+    // flight state and is only meaningful from the autopilot. A gimbal, camera
+    // or companion computer on the same sysid has its own MAV_COMP_ID and its
+    // own opinion of ATTITUDE; letting it write here is how a gimbal's pointing
+    // angle ends up displayed as the aircraft's.
+    //
+    // Deliberately not gated below: STATUSTEXT and COMMAND_ACK are worth having
+    // from any component, COMPONENT_INFORMATION is *about* another component by
+    // definition, and TIMESYNC is answered for whoever asked. HEARTBEAT is
+    // excluded because it is what does the binding in the first place.
+    if (bound_ && msg.compid != autopilot_compid_) {
+        switch (msg.msgid) {
+        case MAVLINK_MSG_ID_SYS_STATUS:
+        case MAVLINK_MSG_ID_GPS_RAW_INT:
+        case MAVLINK_MSG_ID_ATTITUDE:
+        case MAVLINK_MSG_ID_GLOBAL_POSITION_INT:
+        case MAVLINK_MSG_ID_VFR_HUD:
+        case MAVLINK_MSG_ID_EKF_STATUS_REPORT:
+        case MAVLINK_MSG_ID_RC_CHANNELS:
+        case MAVLINK_MSG_ID_RC_CHANNELS_RAW:
+        case MAVLINK_MSG_ID_PARAM_VALUE:
+        case MAVLINK_MSG_ID_PARAM_EXT_ACK:
+        case MAVLINK_MSG_ID_AVAILABLE_MODES:
+        case MAVLINK_MSG_ID_AVAILABLE_MODES_MONITOR:
+        case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
+        case MAVLINK_MSG_ID_MISSION_COUNT:
+        case MAVLINK_MSG_ID_MISSION_ITEM_INT:
+        case MAVLINK_MSG_ID_MISSION_REQUEST_INT:
+        case MAVLINK_MSG_ID_MISSION_REQUEST:
+        case MAVLINK_MSG_ID_MISSION_ACK:
+        case MAVLINK_MSG_ID_COMMAND_LONG:
+        case MAVLINK_MSG_ID_MAG_CAL_PROGRESS:
+        case MAVLINK_MSG_ID_MAG_CAL_REPORT:
+            return;
+        default:
+            break;
+        }
+    }
 
     // Decode and store fields for known message types
     switch (msg.msgid) {
@@ -151,12 +180,15 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
         // custom_mode field is meaningless for flight-mode display.
         if (hb.autopilot == MAV_AUTOPILOT_INVALID) break;
 
-        // Lock onto the first real autopilot we hear from and ignore all
-        // others. On a shared serial bus multiple sysids are possible.
-        if (locked_sysid_ == 0) {
-            locked_sysid_  = msg.sysid;
-            locked_compid_ = msg.compid;
-        } else if (msg.sysid != locked_sysid_ || msg.compid != locked_compid_) {
+        // Bind to the first real autopilot heard from, when the identity was
+        // not handed to us. Afterwards a heartbeat from any other component on
+        // this system updates the roster above but not the state below — it is
+        // not this vehicle's autopilot talking.
+        if (!bound_) {
+            sysid_            = msg.sysid;
+            autopilot_compid_ = msg.compid;
+            bound_            = true;
+        } else if (msg.sysid != sysid_ || msg.compid != autopilot_compid_) {
             break;
         }
 
@@ -255,17 +287,13 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
     }
 
     case MAVLINK_MSG_ID_RC_CHANNELS: {
-        // Ignore anything that is not the autopilot we locked onto at the first
-        // heartbeat. Nothing else in this parser filters by sysid, but RC is the
-        // one stream a second node on a shared bus plausibly also publishes —
-        // a companion computer forwarding its own receiver, a second autopilot
-        // on a serial splitter — and a calibration sweep that quietly mixed two
-        // receivers together would write the union of both as one channel's
-        // range.
-        if (locked_sysid_ != 0 &&
-            (msg.sysid != locked_sysid_ || msg.compid != locked_compid_))
-            break;
-
+        // The gate at the top of handle() covers this now. It used to be one of
+        // only three places that checked, and the reason it was worth checking
+        // here in particular still holds: RC is the one stream a second node on
+        // a shared bus plausibly also publishes — a companion computer
+        // forwarding its own receiver, a second autopilot on a serial splitter
+        // — and a calibration sweep that quietly mixed two receivers together
+        // would write the union of both as one channel's range.
         mavlink_rc_channels_t rc;
         mavlink_msg_rc_channels_decode(&msg, &rc);
 
@@ -287,10 +315,6 @@ void MavlinkParser::handle_message(const mavlink_message_t& msg)
     }
 
     case MAVLINK_MSG_ID_RC_CHANNELS_RAW: {
-        if (locked_sysid_ != 0 &&
-            (msg.sysid != locked_sysid_ || msg.compid != locked_compid_))
-            break;
-
         // Strictly the fallback. A vehicle sending both would otherwise have its
         // 18-channel picture overwritten eight channels at a time, and the
         // upper channels — where every aux switch lives — would flicker between
@@ -693,8 +717,8 @@ void MavlinkParser::print_stats()
 
     printf("=== MAVLink Stats  (msgs: %llu  bytes: %llu  errors: %llu) ===\n",
            (unsigned long long)total_messages_,
-           (unsigned long long)total_bytes_,
-           (unsigned long long)parse_errors_);
+           (unsigned long long)framer_.total_bytes(),
+           (unsigned long long)framer_.parse_errors());
 
     const VehicleState& s = state_;
 

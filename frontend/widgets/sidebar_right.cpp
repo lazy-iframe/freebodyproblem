@@ -17,6 +17,7 @@
 
 
 #include "sidebar_right.hpp"
+#include "vehicle_ui_state.hpp"
 #include "layout.hpp"
 #include "theme.hpp"
 #include "ui_kit.hpp"
@@ -250,9 +251,15 @@ static void cells_save(AppSettings& settings)
     settings_save(settings);
 }
 
-// Set of message IDs we've already sent a rate-request for this session.
-// Prevents re-spamming the FC every frame when data is absent.
-static std::unordered_set<uint32_t> s_requested_msgs;
+// Message IDs already asked for with SET_MESSAGE_INTERVAL, so the panel does
+// not re-spam a vehicle every frame while data is absent.
+//
+// Per vehicle, and it has to be: the record is of what *this* vehicle was
+// asked, and a shared set would tell the panel it had already requested a
+// stream from an aircraft it has never spoken to — leaving the cell blank for
+// good. See widgets/vehicle_ui_state.hpp.
+static VehicleUiState<std::unordered_set<uint32_t>> s_requested_msgs_state;
+static std::unordered_set<uint32_t>& requested_msgs() { return *s_requested_msgs_state; }
 
 // Picker state ─────────────────────────────────────────────────────────────────
 static int  s_picker_cell        = -1;
@@ -516,12 +523,12 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
         // Request the message from the FC if it's not already streaming.
         if (vs && vs->last_messages.count(s_picker_sel_msg) == 0 &&
             sender && vs->has_heartbeat &&
-            s_requested_msgs.find(s_picker_sel_msg) == s_requested_msgs.end())
+            requested_msgs().find(s_picker_sel_msg) == requested_msgs().end())
         {
             sender->request_message_interval(vs->sysid, vs->compid,
                                               s_picker_sel_msg,
                                               200000 /* 5 Hz */);
-            s_requested_msgs.insert(s_picker_sel_msg);
+            requested_msgs().insert(s_picker_sel_msg);
         }
 
         if (settings) cells_save(*settings);
@@ -625,11 +632,11 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
 
             // If this message is configured but not yet received, request it once.
             if (!has_data && sender && vs && vs->has_heartbeat &&
-                s_requested_msgs.find(cell.msg_id) == s_requested_msgs.end())
+                requested_msgs().find(cell.msg_id) == requested_msgs().end())
             {
                 sender->request_message_interval(vs->sysid, vs->compid,
                                                   cell.msg_id, 200000 /* 5 Hz */);
-                s_requested_msgs.insert(cell.msg_id);
+                requested_msgs().insert(cell.msg_id);
             }
         }
 
@@ -794,7 +801,12 @@ void draw_sidebar_right(const VehicleState& vs,
             ui_panel_header("EVENT LOG", log_meta);
 
             // Wall-clock stamps, captured as each message arrives.
-            static std::vector<std::string> s_stamps;
+            //
+            // Per vehicle: these line up positionally with that vehicle's
+            // status_texts, so a shared list would stamp one aircraft's
+            // messages with the times another's arrived.
+            static VehicleUiState<std::vector<std::string>> s_stamps_by_vehicle;
+            std::vector<std::string>& s_stamps = *s_stamps_by_vehicle;
             if (status_texts.size() < s_stamps.size()) s_stamps.clear();
             while (s_stamps.size() < status_texts.size()) {
                 const std::time_t t  = std::time(nullptr);

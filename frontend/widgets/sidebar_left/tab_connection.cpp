@@ -134,7 +134,8 @@ void draw_tab_connection(MavlinkSender* sender,
                          const VehicleState* vs,
                          ConnectionRequest* conn_out,
                          LinkStatus link_status,
-                         AppSettings* settings)
+                         AppSettings* settings,
+                         const std::vector<LinkInfo>& links)
 {
     ImGui::Spacing();
     ImGui::TextColored(accent_col(), "CONNECTION");
@@ -261,31 +262,78 @@ void draw_tab_connection(MavlinkSender* sender,
         }
     }
 
-    // Connection status + disconnect button
+    // ── Open links ────────────────────────────────────────────────────────────
+    //
+    // CONNECT above adds a link rather than replacing the one already open, so
+    // this is a list and not a status line. Several links run at once, each on
+    // its own thread carrying its own vehicles — a radio on serial and a SITL on
+    // UDP at the same time — and each is dropped independently.
     ImGui::Spacing();
-    const bool is_active = (link_status == LinkStatus::Connecting ||
-                            link_status == LinkStatus::Connected);
-    switch (link_status) {
-    case LinkStatus::Connecting:
-        ImGui::TextColored(col_warning(), "CONNECTING...");
-        break;
-    case LinkStatus::Connected:
-        ImGui::TextColored(col_ok(), "CONNECTED");
-        break;
-    case LinkStatus::Timeout:
-        ImGui::TextColored(col_error(), "TIMEOUT (10 S)");
-        break;
-    case LinkStatus::Error:
-        ImGui::TextColored(col_error(), "CONNECTION ERROR");
-        break;
-    default:
-        break;
-    }
-    if (is_active) {
-        ImGui::SameLine(0, 8);
-        if (ui_solid_button("DISCONNECT", { 0.0f, 0.0f },
-                            btn_disconnect_base(), btn_disconnect_hov()))
-            conn_out->disconnect = true;
+    themed_sep();
+    ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "LINKS");
+    ImGui::Spacing();
+
+    if (links.empty()) {
+        ImGui::TextDisabled("No links. Connect above.");
+    } else {
+        constexpr float btn_w = 22.0f;
+
+        for (const auto& li : links) {
+            ImGui::PushID((int)li.id);
+
+            // The disconnect button leads the row: it is the only action here,
+            // and lining the buttons up on the left keeps them in one column
+            // whatever the link names happen to be.
+            // Offered for dead links too, not just live ones: a link that
+            // timed out or failed to open stays listed so the operator can see
+            // why, and this is how it is cleared away.
+            if (ui_solid_button("X##drop", { btn_w, 0.0f },
+                                btn_disconnect_base(), btn_disconnect_hov())) {
+                conn_out->disconnect         = true;
+                conn_out->disconnect_link_id = li.id;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Disconnect %s", li.name.c_str());
+
+            ImGui::SameLine(0, 6);
+            ImGui::AlignTextToFramePadding();
+
+            switch (li.status) {
+            case LinkStatus::Connecting:
+                ImGui::TextColored(col_warning(), "\xe2\x97\x8f"); break;
+            case LinkStatus::Connected:
+                ImGui::TextColored(col_ok(),      "\xe2\x97\x8f"); break;
+            case LinkStatus::Timeout:
+            case LinkStatus::Error:
+                ImGui::TextColored(col_error(),   "\xe2\x97\x8f"); break;
+            default:
+                ImGui::TextDisabled("\xe2\x97\x8f");               break;
+            }
+
+            ImGui::SameLine(0, 6);
+            ImGui::TextUnformatted(li.name.c_str());
+
+            // Second line: what the link is doing and what it found. Indented
+            // under the name rather than beside it, because a serial device path
+            // already fills the width of this sidebar.
+            const char* st = "idle";
+            switch (li.status) {
+            case LinkStatus::Connecting: st = "connecting..."; break;
+            case LinkStatus::Connected:  st = "connected";     break;
+            case LinkStatus::Timeout:    st = "timeout";       break;
+            case LinkStatus::Error:      st = "error";         break;
+            default: break;
+            }
+            ImGui::Indent(btn_w + 6.0f);
+            if (li.vehicles == 1)
+                ImGui::TextDisabled("%s \xc2\xb7 1 vehicle", st);
+            else
+                ImGui::TextDisabled("%s \xc2\xb7 %d vehicles", st, li.vehicles);
+            ImGui::Unindent(btn_w + 6.0f);
+
+            ImGui::PopID();
+        }
     }
 
     // ── Connection profiles ───────────────────────────────────────────────────

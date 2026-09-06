@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
 #include "../../audio.hpp"
@@ -34,28 +35,38 @@
 // The calibrations outlive any one frame and, via sensors_tab_pump() below, any
 // one tab: the vehicle is mid-conversation and will keep asking for positions
 // whether or not this panel is the one on screen.
-static AccelCalibration s_accel;
-static GyroCalibration  s_gyro;
-static MagCalibration   s_mag;
+// Per vehicle, not per panel — see the note on RcTabState in tab_rc.cpp. An
+// accelerometer calibration is six positions of one airframe, and the operator
+// glancing at another aircraft in the fleet must not reset it.
+struct SensorTabState {
+    AccelCalibration accel;
+    GyroCalibration  gyro;
+    MagCalibration   mag;
 
-// What the pump has already handed to the state machines.
-static uint32_t s_seen_accelcal_seq = 0;
-static uint32_t s_seen_calib_ack_seq = 0;
-static uint32_t s_seen_magcal_ack_seq = 0;
-static uint32_t s_consumed_statustexts = 0;
+    // What the pump has already handed to the state machines.
+    uint32_t seen_accelcal_seq    = 0;
+    uint32_t seen_calib_ack_seq   = 0;
+    uint32_t seen_magcal_ack_seq  = 0;
+    uint32_t consumed_statustexts = 0;
+
+    uint32_t traced_magcal_seq = 0;
+    int      traced_mag_pct    = -1;
+    bool     magcal_stream_on  = false;
+};
+
+static VehicleUiState<SensorTabState> s_state;
+
+static SensorTabState& st() { return *s_state; }
 
 // Compass-calibration tracing, the panel's half of it: what the state machine
 // made of what arrived. The wire itself is traced in mavlink_parser.cpp and in
 // mavlink_sender.cpp; this is here to catch the case where the messages are
 // arriving and the machine is not moving. Set to false to quieten it.
 static constexpr bool trace_mag_cal = true;
-static uint32_t s_traced_magcal_seq = 0;
-static int      s_traced_mag_pct    = -1;
 
 // Whether MAG_CAL_PROGRESS and MAG_CAL_REPORT have been asked for. They are
 // requested when a run starts and let go of when it ends — see
 // start_mag_cal_for() for why they have to be asked for at all.
-static bool s_magcal_stream_on = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -66,31 +77,31 @@ void sensors_tab_pump(const VehicleState* vs, const std::vector<StatusText>& tex
         // The exchange cannot continue without the vehicle on the other end of
         // it, and a half-finished calibration left on screen would invite the
         // operator to keep turning the airframe for nobody.
-        if (s_accel.running()) {
-            s_accel.cancel();
+        if (st().accel.running()) {
+            st().accel.cancel();
             gcs_log("accel cal: abandoned \xe2\x80\x94 link lost");
         }
-        if (s_gyro.running()) {
-            s_gyro.cancel();
+        if (st().gyro.running()) {
+            st().gyro.cancel();
             gcs_log("gyro cal: abandoned \xe2\x80\x94 link lost");
         }
-        if (s_mag.running()) {
-            s_mag.cancel();
+        if (st().mag.running()) {
+            st().mag.cancel();
             gcs_log("compass cal: abandoned \xe2\x80\x94 link lost");
         }
-        s_seen_accelcal_seq    = 0;
-        s_seen_calib_ack_seq   = 0;
-        s_seen_magcal_ack_seq  = 0;
-        s_consumed_statustexts = 0;
-        s_traced_magcal_seq    = 0;
-        s_traced_mag_pct       = -1;
+        st().seen_accelcal_seq    = 0;
+        st().seen_calib_ack_seq   = 0;
+        st().seen_magcal_ack_seq  = 0;
+        st().consumed_statustexts = 0;
+        st().traced_magcal_seq    = 0;
+        st().traced_mag_pct       = -1;
         return;
     }
 
     // Noted before anything is fed in: a run ends on one of several inputs
     // below, and this is the one place that sees all of them.
-    const bool gyro_was_running = s_gyro.running();
-    const bool mag_was_running  = s_mag.running();
+    const bool gyro_was_running = st().gyro.running();
+    const bool mag_was_running  = st().mag.running();
 
     // New STATUSTEXTs first, so the vehicle's wording is in hand before the
     // command below settles which position it actually meant.
@@ -99,43 +110,43 @@ void sensors_tab_pump(const VehicleState* vs, const std::vector<StatusText>& tex
     // the window drops its oldest at 200, so an index into it would quietly
     // start pointing at a different message.
     const uint32_t total = vs->statustext_total;
-    if (total < s_consumed_statustexts) {
-        s_consumed_statustexts = total;      // link restarted, counter reset
-    } else if (total > s_consumed_statustexts) {
-        const uint32_t fresh = total - s_consumed_statustexts;
+    if (total < st().consumed_statustexts) {
+        st().consumed_statustexts = total;      // link restarted, counter reset
+    } else if (total > st().consumed_statustexts) {
+        const uint32_t fresh = total - st().consumed_statustexts;
         const size_t   have  = texts.size();
         // More new than the window holds means some were dropped before we
         // looked; replay what survived rather than nothing.
         const size_t   start = (fresh >= have) ? 0 : have - (size_t)fresh;
         for (size_t i = start; i < have; ++i) {
-            s_accel.on_statustext(texts[i]);
-            s_mag.on_statustext(texts[i], now);
+            st().accel.on_statustext(texts[i]);
+            st().mag.on_statustext(texts[i], now);
         }
-        s_consumed_statustexts = total;
+        st().consumed_statustexts = total;
     }
 
-    if (vs->accelcal_seq != s_seen_accelcal_seq) {
-        s_seen_accelcal_seq = vs->accelcal_seq;
-        s_accel.on_vehicle_pos(vs->accelcal_pos);
+    if (vs->accelcal_seq != st().seen_accelcal_seq) {
+        st().seen_accelcal_seq = vs->accelcal_seq;
+        st().accel.on_vehicle_pos(vs->accelcal_pos);
     }
 
     // The ACK for PREFLIGHT_CALIBRATION — the gyro's verdict, and on PX4 the
     // compass's too, so it goes to both and whichever is not running ignores
     // it. Watched by sequence rather than by value: two runs can end the same
     // way, and the second would otherwise look like silence.
-    if (vs->calib_ack_seq != s_seen_calib_ack_seq) {
-        s_seen_calib_ack_seq = vs->calib_ack_seq;
-        s_gyro.on_command_ack(vs->calib_ack_result, now);
-        s_mag.on_command_ack(vs->calib_ack_result, now);
+    if (vs->calib_ack_seq != st().seen_calib_ack_seq) {
+        st().seen_calib_ack_seq = vs->calib_ack_seq;
+        st().gyro.on_command_ack(vs->calib_ack_result, now);
+        st().mag.on_command_ack(vs->calib_ack_result, now);
     }
 
     // The compass calibration's own commands. Only the start is the machine's
     // business: an accept or a cancel is answered too, and neither says
     // anything about a run that is still going.
-    if (vs->magcal_ack_seq != s_seen_magcal_ack_seq) {
-        s_seen_magcal_ack_seq = vs->magcal_ack_seq;
+    if (vs->magcal_ack_seq != st().seen_magcal_ack_seq) {
+        st().seen_magcal_ack_seq = vs->magcal_ack_seq;
         if (vs->magcal_ack_cmd == 42424)
-            s_mag.on_start_ack(vs->magcal_ack_result, now);
+            st().mag.on_start_ack(vs->magcal_ack_result, now);
         else if (vs->magcal_ack_cmd == 42425)
             gcs_log("compass cal: accept %s",
                     vs->magcal_ack_result == 0 ? "accepted by the vehicle"
@@ -144,15 +155,15 @@ void sensors_tab_pump(const VehicleState* vs, const std::vector<StatusText>& tex
 
     // Per-compass slots, read whole every frame rather than watched for
     // changes: they are a latch, and what matters is what they all say now.
-    s_mag.on_mag_cal(vs->magcal, VehicleState::MAX_COMPASSES, now);
+    st().mag.on_mag_cal(vs->magcal, VehicleState::MAX_COMPASSES, now);
 
-    if (trace_mag_cal && s_mag.running()) {
+    if (trace_mag_cal && st().mag.running()) {
         // The slots, whenever the vehicle has written one. Printed as the
         // machine reads them, so a run that ignores a compass because its slot
         // predates the run shows up as a sequence number rather than as
         // silence.
-        if (vs->magcal_seq != s_traced_magcal_seq) {
-            s_traced_magcal_seq = vs->magcal_seq;
+        if (vs->magcal_seq != st().traced_magcal_seq) {
+            st().traced_magcal_seq = vs->magcal_seq;
             for (int i = 0; i < VehicleState::MAX_COMPASSES; ++i) {
                 const auto& c = vs->magcal[i];
                 if (!c.seen) continue;
@@ -163,25 +174,25 @@ void sensors_tab_pump(const VehicleState* vs, const std::vector<StatusText>& tex
                         (unsigned)c.seq);
             }
         }
-        if (s_mag.percent() != s_traced_mag_pct) {
-            s_traced_mag_pct = s_mag.percent();
-            gcs_log("magcal state: %d %%%s%s", s_traced_mag_pct,
-                    s_mag.message().empty() ? "" : " \xe2\x80\x94 ",
-                    s_mag.message().c_str());
+        if (st().mag.percent() != st().traced_mag_pct) {
+            st().traced_mag_pct = st().mag.percent();
+            gcs_log("magcal state: %d %%%s%s", st().traced_mag_pct,
+                    st().mag.message().empty() ? "" : " \xe2\x80\x94 ",
+                    st().mag.message().c_str());
         }
     }
 
-    s_gyro.tick(now);
-    if (gyro_was_running && !s_gyro.running())
-        gcs_log("gyro cal: %s", s_gyro.result_text());
+    st().gyro.tick(now);
+    if (gyro_was_running && !st().gyro.running())
+        gcs_log("gyro cal: %s", st().gyro.result_text());
 
-    s_mag.tick(now);
-    if (mag_was_running && !s_mag.running()) {
-        if (s_mag.phase() == MagCalibration::Phase::Succeeded)
+    st().mag.tick(now);
+    if (mag_was_running && !st().mag.running()) {
+        if (st().mag.phase() == MagCalibration::Phase::Succeeded)
             gcs_log("compass cal: complete%s",
-                    s_mag.needs_save() ? " \xe2\x80\x94 not saved by the vehicle" : "");
+                    st().mag.needs_save() ? " \xe2\x80\x94 not saved by the vehicle" : "");
         else
-            gcs_log("compass cal: failed \xe2\x80\x94 %s", s_mag.failure_text());
+            gcs_log("compass cal: failed \xe2\x80\x94 %s", st().mag.failure_text());
     }
 }
 
@@ -253,8 +264,8 @@ static void draw_sensor_devices(const ParamMap* params, SensorKind kind,
 
 static void draw_position_checklist()
 {
-    const AccelCalPos now  = s_accel.requested();
-    const int         done = s_accel.confirmed_count();
+    const AccelCalPos now  = st().accel.requested();
+    const int         done = st().accel.confirmed_count();
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_param_list());
     ImGui::PushStyleColor(ImGuiCol_Border,  col_separator());
@@ -321,13 +332,13 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
     // Only while idle. Mid-calibration the operator is being asked to do
     // something, and an inventory below the instruction is one more thing in
     // the way of reading it.
-    if (s_accel.phase() == AccelCalibration::Phase::Idle) {
+    if (st().accel.phase() == AccelCalibration::Phase::Idle) {
         draw_sensor_devices(params, SensorKind::Accel, "##accel_devs",
                             "accelerometers");
         ImGui::Spacing();
     }
 
-    switch (s_accel.phase()) {
+    switch (st().accel.phase()) {
 
     case AccelCalibration::Phase::Idle: {
         ImGui::TextWrapped("Six-position calibration. The vehicle asks for each "
@@ -339,7 +350,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
         if (ui_solid_button("CALIBRATE ACCELEROMETER", { -1.0f, 30.0f },
                             btn_write_base(), btn_write_hov())) {
             sender->calibrate_accelerometer(tsys, tcomp);
-            s_accel.begin();
+            st().accel.begin();
             gcs_log("accel cal: requested six-position calibration");
         }
         ImGui::EndDisabled();
@@ -352,7 +363,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
     case AccelCalibration::Phase::Starting:
     case AccelCalibration::Phase::Waiting:
     case AccelCalibration::Phase::Confirming: {
-        const int done  = s_accel.confirmed_count();
+        const int done  = st().accel.confirmed_count();
         const int total = accel_cal_pos_count();
 
         char prog[32];
@@ -360,12 +371,12 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
         ui_progress_bar(prog, total > 0 ? (float)done / total : 0.0f, 12.0f);
 
         ImGui::Spacing();
-        draw_vehicle_message("##accel_msg", s_accel.message(), accent_col());
+        draw_vehicle_message("##accel_msg", st().accel.message(), accent_col());
         ImGui::Spacing();
 
-        const AccelCalPos pos   = s_accel.requested();
+        const AccelCalPos pos   = st().accel.requested();
         const char*       label = accel_cal_pos_label(pos);
-        const bool        ready = (s_accel.phase() == AccelCalibration::Phase::Waiting)
+        const bool        ready = (st().accel.phase() == AccelCalibration::Phase::Waiting)
                                   && label != nullptr;
 
         // The button names the position it is confirming. A bare "OK" next to a
@@ -381,7 +392,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
                               btn_write_base(), btn_write_hov())
             : ui_grid_button(confirm_lbl, { -1.0f, 32.0f }))
         {
-            const AccelCalPos sent = s_accel.confirm();
+            const AccelCalPos sent = st().accel.confirm();
             if (sent != AccelCalPos::None) {
                 sender->send_accelcal_vehicle_pos(tsys, tcomp, (uint32_t)sent);
                 gcs_log("accel cal: reported %s", accel_cal_pos_label(sent));
@@ -396,7 +407,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
             // calibration waiting to be answered, and dropping the panel alone
             // would leave it there.
             if (connected) sender->cancel_calibration(tsys, tcomp);
-            s_accel.cancel();
+            st().accel.cancel();
             gcs_log("accel cal: cancelled");
         }
 
@@ -406,7 +417,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
     }
 
     case AccelCalibration::Phase::Succeeded: {
-        draw_vehicle_message("##accel_msg", s_accel.message(), col_ok());
+        draw_vehicle_message("##accel_msg", st().accel.message(), col_ok());
         ImGui::Spacing();
         ImGui::TextColored(col_ok(), "CALIBRATION SUCCESSFUL");
         // Not advice, a requirement: ArduPilot writes the new offsets to
@@ -426,7 +437,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
 
         ImGui::SameLine(0, 4);
         if (ui_grid_button("DONE##accel", { -1.0f, 28.0f }))
-            s_accel.cancel();
+            st().accel.cancel();
 
         // Confirmed, and never automatic. Rebooting is the GCS reaching out and
         // stopping the thing it is talking to: the link goes with it, and over
@@ -436,7 +447,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
                              "RESTART THE AUTOPILOT NOW?",
                              "REBOOT", btn_write_base()) == UiConfirm::Confirmed) {
             sender->reboot_autopilot(tsys, tcomp);
-            s_accel.cancel();
+            st().accel.cancel();
             gcs_log("reboot requested \xe2\x80\x94 the link will drop and must be "
                     "reconnected");
         }
@@ -444,7 +455,7 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
     }
 
     case AccelCalibration::Phase::Failed: {
-        draw_vehicle_message("##accel_msg", s_accel.message(), col_error());
+        draw_vehicle_message("##accel_msg", st().accel.message(), col_error());
         ImGui::Spacing();
         ImGui::TextColored(col_error(), "CALIBRATION FAILED");
         ImGui::TextWrapped("Nothing was changed. Check the airframe was still "
@@ -456,13 +467,13 @@ static void draw_accel_section(MavlinkSender* sender, bool connected, bool armed
         if (ui_solid_button("RETRY##accel", { half, 28.0f },
                             btn_write_base(), btn_write_hov())) {
             sender->calibrate_accelerometer(tsys, tcomp);
-            s_accel.begin();
+            st().accel.begin();
             gcs_log("accel cal: retrying");
         }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 4);
         if (ui_grid_button("CLOSE##accel", { -1.0f, 28.0f }))
-            s_accel.cancel();
+            st().accel.cancel();
         break;
     }
     }
@@ -476,12 +487,12 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
     ImGui::TextColored(accent_col(), "GYROSCOPE");
     ImGui::Spacing();
 
-    if (s_gyro.phase() == GyroCalibration::Phase::Idle) {
+    if (st().gyro.phase() == GyroCalibration::Phase::Idle) {
         draw_sensor_devices(params, SensorKind::Gyro, "##gyro_devs", "gyroscopes");
         ImGui::Spacing();
     }
 
-    switch (s_gyro.phase()) {
+    switch (st().gyro.phase()) {
 
     case GyroCalibration::Phase::Idle: {
         ImGui::TextWrapped("The vehicle samples its own gyros and needs a few "
@@ -493,7 +504,7 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
         if (ui_solid_button("CALIBRATE GYROSCOPE", { -1.0f, 30.0f },
                             btn_write_base(), btn_write_hov())) {
             sender->calibrate_gyroscope(tsys, tcomp);
-            s_gyro.begin(ImGui::GetTime());
+            st().gyro.begin(ImGui::GetTime());
             gcs_log("gyro cal: requested");
         }
         ImGui::EndDisabled();
@@ -507,7 +518,7 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
         // Against the timeout rather than against the calibration's own
         // progress, which the vehicle does not report. It reads as "how long
         // before this gives up", which is the only thing actually known.
-        const double elapsed = s_gyro.elapsed(ImGui::GetTime());
+        const double elapsed = st().gyro.elapsed(ImGui::GetTime());
         const float  frac    = (float)(elapsed / GyroCalibration::kTimeoutSeconds);
 
         char prog[32];
@@ -525,7 +536,7 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
             // accelerometer: it is in a calibration it was asked for, and
             // dropping the panel alone would leave it there.
             if (connected) sender->cancel_calibration(tsys, tcomp);
-            s_gyro.cancel();
+            st().gyro.cancel();
             gcs_log("gyro cal: cancelled");
         }
         break;
@@ -537,7 +548,7 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
         // offsets are the ones the vehicle goes on flying with.
         ImGui::Spacing();
         if (ui_grid_button("DONE##gyro", { -1.0f, 28.0f }))
-            s_gyro.cancel();
+            st().gyro.cancel();
         break;
     }
 
@@ -546,7 +557,7 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
         // The vehicle's own verdict, named. "denied" and "no reply" are
         // different problems from a wobbly table, and the advice below is only
         // right for one of them.
-        ImGui::TextColored(col_error(), "Vehicle said: %s", s_gyro.result_text());
+        ImGui::TextColored(col_error(), "Vehicle said: %s", st().gyro.result_text());
         ImGui::Spacing();
         ImGui::TextWrapped("The vehicle has to be completely still. Set it on "
                            "something solid, wait for it to settle, then try "
@@ -558,13 +569,13 @@ static void draw_gyro_section(MavlinkSender* sender, bool connected, bool armed,
         if (ui_solid_button("RETRY##gyro", { half, 28.0f },
                             btn_write_base(), btn_write_hov())) {
             sender->calibrate_gyroscope(tsys, tcomp);
-            s_gyro.begin(ImGui::GetTime());
+            st().gyro.begin(ImGui::GetTime());
             gcs_log("gyro cal: retrying");
         }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 4);
         if (ui_grid_button("CLOSE##gyro", { -1.0f, 28.0f }))
-            s_gyro.cancel();
+            st().gyro.cancel();
         break;
     }
     }
@@ -588,8 +599,8 @@ static void start_mag_cal_for(MavlinkSender* sender, const VehicleState* vs,
     const bool ardupilot = vs && vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA;
 
     if (trace_mag_cal) {
-        s_traced_magcal_seq = vs ? vs->magcal_seq : 0;
-        s_traced_mag_pct    = -1;
+        st().traced_magcal_seq = vs ? vs->magcal_seq : 0;
+        st().traced_mag_pct    = -1;
         gcs_log("magcal: run begun \xe2\x80\x94 target %u/%u, autopilot=%u, "
                 "baseline seq=%u",
                 (unsigned)tsys, (unsigned)tcomp,
@@ -607,7 +618,7 @@ static void start_mag_cal_for(MavlinkSender* sender, const VehicleState* vs,
         // ArduPilot sends nothing on either while no calibration is running.
         sender->request_message_interval(tsys, tcomp, 191,  200000);  // 5 Hz
         sender->request_message_interval(tsys, tcomp, 192, 1000000);  // 1 Hz
-        s_magcal_stream_on = true;
+        st().magcal_stream_on = true;
         if (trace_mag_cal)
             gcs_log("magcal tx: SET_MESSAGE_INTERVAL 191 @ 5 Hz, 192 @ 1 Hz");
 
@@ -757,8 +768,8 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
     // silent outside a calibration, so this is tidiness rather than bandwidth —
     // and it means the next run asks for them afresh on a vehicle that has
     // rebooted in between and forgotten.
-    if (s_magcal_stream_on && !s_mag.running()) {
-        s_magcal_stream_on = false;
+    if (st().magcal_stream_on && !st().mag.running()) {
+        st().magcal_stream_on = false;
         if (connected) {
             sender->request_message_interval(tsys, tcomp, 191, -1);
             sender->request_message_interval(tsys, tcomp, 192, -1);
@@ -767,12 +778,12 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         }
     }
 
-    if (s_mag.phase() == MagCalibration::Phase::Idle) {
+    if (st().mag.phase() == MagCalibration::Phase::Idle) {
         draw_sensor_devices(params, SensorKind::Compass, "##mag_devs", "compasses");
         ImGui::Spacing();
     }
 
-    switch (s_mag.phase()) {
+    switch (st().mag.phase()) {
 
     case MagCalibration::Phase::Idle: {
         ImGui::TextWrapped("Rotate the vehicle slowly through every "
@@ -786,7 +797,7 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         if (ui_solid_button("CALIBRATE MAGNETOMETER", { -1.0f, 30.0f },
                             btn_write_base(), btn_write_hov())) {
             start_mag_cal_for(sender, vs, tsys, tcomp);
-            s_mag.begin(vs ? vs->magcal_seq : 0, ImGui::GetTime());
+            st().mag.begin(vs ? vs->magcal_seq : 0, ImGui::GetTime());
         }
         ImGui::EndDisabled();
 
@@ -796,7 +807,7 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
     }
 
     case MagCalibration::Phase::Running: {
-        const int pct = s_mag.percent();
+        const int pct = st().mag.percent();
 
         char prog[32];
         snprintf(prog, sizeof(prog), "%d %%", pct);
@@ -804,13 +815,13 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
 
         // ArduPilot only. PX4 sends no mask, and there the percentage and the
         // vehicle's own words are the whole of what the panel knows.
-        if (const uint8_t* covered = s_mag.completion_mask()) {
+        if (const uint8_t* covered = st().mag.completion_mask()) {
             ImGui::Spacing();
             draw_coverage_sphere(covered, 190.0f);
         }
 
         ImGui::Spacing();
-        draw_vehicle_message("##mag_msg", s_mag.message(), accent_col());
+        draw_vehicle_message("##mag_msg", st().mag.message(), accent_col());
         ImGui::Spacing();
         ImGui::TextColored(col_warning(), "KEEP ROTATING");
 
@@ -822,7 +833,7 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
             // accelerometer routine and would leave this running. PX4 ignores
             // it, and its calibration ends on its own timeout.
             if (connected) sender->cancel_mag_cal(tsys, tcomp);
-            s_mag.cancel();
+            st().mag.cancel();
             gcs_log("compass cal: cancelled");
         }
         break;
@@ -830,10 +841,10 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
 
     case MagCalibration::Phase::Succeeded: {
         ImGui::TextColored(col_ok(), "CALIBRATION SUCCESSFUL");
-        if (s_mag.worst_fitness() >= 0.0f)
-            ImGui::TextDisabled("Worst fit: %.1f mGauss", s_mag.worst_fitness());
+        if (st().mag.worst_fitness() >= 0.0f)
+            ImGui::TextDisabled("Worst fit: %.1f mGauss", st().mag.worst_fitness());
 
-        if (const uint8_t* covered = s_mag.completion_mask()) {
+        if (const uint8_t* covered = st().mag.completion_mask()) {
             ImGui::Spacing();
             draw_coverage_sphere(covered, 190.0f);
             ImGui::Spacing();
@@ -851,7 +862,7 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         // Not optional on the ArduPilot path: the calibration is started with
         // autosave off, so the offsets exist only in the vehicle's head until
         // this is pressed, and are lost on the next boot if it is not.
-        if (s_mag.needs_save()) {
+        if (st().mag.needs_save()) {
             ImGui::TextColored(col_warning(), "Not stored yet \xe2\x80\x94 accept "
                                               "to keep it.");
             ImGui::BeginDisabled(!connected || armed);
@@ -876,18 +887,18 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         // Named for what it does. With offsets still waiting to be accepted,
         // closing the panel throws them away, and a button saying DONE next to
         // a calibration about to be lost would be the wrong word for it.
-        if (ui_grid_button(s_mag.needs_save() ? "DISCARD##mag" : "DONE##mag",
+        if (ui_grid_button(st().mag.needs_save() ? "DISCARD##mag" : "DONE##mag",
                            { -1.0f, 28.0f })) {
-            if (s_mag.needs_save())
+            if (st().mag.needs_save())
                 gcs_log("compass cal: discarded \xe2\x80\x94 offsets not accepted");
-            s_mag.cancel();
+            st().mag.cancel();
         }
 
         if (ui_confirm_popup("##confirm_reboot_mag", "REBOOT VEHICLE",
                              "RESTART THE AUTOPILOT NOW?",
                              "REBOOT", btn_write_base()) == UiConfirm::Confirmed) {
             sender->reboot_autopilot(tsys, tcomp);
-            s_mag.cancel();
+            st().mag.cancel();
             gcs_log("reboot requested \xe2\x80\x94 the link will drop and must be "
                     "reconnected");
         }
@@ -895,10 +906,10 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
     }
 
     case MagCalibration::Phase::Failed: {
-        draw_vehicle_message("##mag_msg", s_mag.message(), col_error());
+        draw_vehicle_message("##mag_msg", st().mag.message(), col_error());
         ImGui::Spacing();
         ImGui::TextColored(col_error(), "CALIBRATION FAILED");
-        ImGui::TextColored(col_error(), "Vehicle said: %s", s_mag.failure_text());
+        ImGui::TextColored(col_error(), "Vehicle said: %s", st().mag.failure_text());
         ImGui::Spacing();
         ImGui::TextWrapped("Nothing was changed. Move away from metal and "
                            "wiring, turn the vehicle more slowly, and cover "
@@ -910,12 +921,12 @@ static void draw_mag_section(MavlinkSender* sender, bool connected, bool armed,
         if (ui_solid_button("RETRY##mag", { half, 28.0f },
                             btn_write_base(), btn_write_hov())) {
             start_mag_cal_for(sender, vs, tsys, tcomp);
-            s_mag.begin(vs ? vs->magcal_seq : 0, ImGui::GetTime());
+            st().mag.begin(vs ? vs->magcal_seq : 0, ImGui::GetTime());
         }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 4);
         if (ui_grid_button("CLOSE##mag", { -1.0f, 28.0f }))
-            s_mag.cancel();
+            st().mag.cancel();
         break;
     }
     }
@@ -955,9 +966,9 @@ void draw_tab_sensors(MavlinkSender* sender, const VehicleState* vs,
     // command carries one sensor per message, so starting the second would be
     // the GCS withdrawing the first without saying so — and the operator would
     // be reading instructions for a calibration no longer running.
-    const bool accel_busy = s_accel.running();
-    const bool gyro_busy  = s_gyro.running();
-    const bool mag_busy   = s_mag.running();
+    const bool accel_busy = st().accel.running();
+    const bool gyro_busy  = st().gyro.running();
+    const bool mag_busy   = st().mag.running();
 
     ImGui::BeginDisabled(gyro_busy || mag_busy);
     draw_accel_section(sender, connected, armed, tsys, tcomp, params);

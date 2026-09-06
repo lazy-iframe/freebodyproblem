@@ -19,6 +19,7 @@
 #include "topbar.hpp"
 #include "layout.hpp"
 #include "ui_kit.hpp"
+#include "vehicle_ui_state.hpp"
 #include "imgui.h"
 #include "../app_log.hpp"
 #include "../../backend/timesync.hpp"
@@ -41,7 +42,14 @@ static constexpr float CELL_PAD    = 13.0f;   // horizontal padding inside a cel
 static constexpr float LABEL_Y     = 10.0f;   // baseline row for the tiny label
 static constexpr float VALUE_Y     = 28.0f;   // baseline row for the value
 
-static bool s_interlock = false;
+// Motor interlock, latched per vehicle.
+//
+// This is what the GCS last commanded with DO_AUX_FUNCTION, not something the
+// vehicle reports back, so it has to be remembered per aircraft: one latch
+// shared across a fleet would show a helicopter as INTLK HIGH because the quad
+// beside it was armed that way, and the next click would send that aircraft the
+// opposite of what the caption implies. See widgets/vehicle_ui_state.hpp.
+static VehicleUiState<bool> s_interlock_state;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -104,7 +112,10 @@ void draw_topbar(const VehicleState& vs,
                  uint64_t parse_errors,
                  MavlinkSender* sender,
                  LinkStatus link_status,
-                 bool* close_requested)
+                 bool* close_requested,
+                 const std::vector<VehicleChip>& vehicles,
+                 VehicleId  active,
+                 VehicleId* selected_out)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -216,7 +227,21 @@ void draw_topbar(const VehicleState& vs,
 
             const ImVec2 c0 = { wp.x + x,          wp.y + chip_y };
             const ImVec2 c1 = { c0.x + chip_w,     c0.y + chip_h };
+
+            // The chip is drawn straight onto the draw list, so it is not an
+            // ImGui item and cannot be clicked. Submitting an InvisibleButton
+            // over the same rectangle first gives it hit-testing without
+            // changing a pixel of how it looks.
+            const bool switchable = vehicles.size() > 1;
+            ImGui::SetCursorScreenPos(c0);
+            ImGui::InvisibleButton("##callsign", { chip_w, chip_h });
+            const bool chip_hot = switchable && ImGui::IsItemHovered();
+            if (switchable && ImGui::IsItemClicked())
+                ImGui::OpenPopup("##vehicle_switch");
+
             dl->AddRectFilled(c0, c1, C_AMBER);
+            if (chip_hot)
+                dl->AddRect(c0, c1, ui_col(g_theme.col_active_text, 0.55f));
 
             const ImU32 on_amber = ui_col(g_theme.col_active_text);
             ui_tracked_text(dl, fu, 20.0f,
@@ -226,6 +251,81 @@ void draw_topbar(const VehicleState& vs,
                             { c0.x + 9.0f + name_w + 8.0f,
                               c0.y + (chip_h - UI_SZ_MICRO) * 0.5f },
                             ui_col(g_theme.col_active_text, 0.75f), id_s);
+
+            // A caret only when there is somewhere to go. With one vehicle the
+            // chip stays exactly what it has always been.
+            if (switchable) {
+                const float cx = c1.x - 9.0f, cy = c0.y + chip_h * 0.5f - 1.0f;
+                dl->AddTriangleFilled({ cx - 4.0f, cy - 1.5f },
+                                      { cx + 0.0f, cy + 3.0f },
+                                      { cx + 4.0f, cy - 1.5f },
+                                      ui_col(g_theme.col_active_text, 0.85f));
+            }
+
+            ui_push_dialog_style();
+            if (ImGui::BeginPopup("##vehicle_switch",
+                                  ImGuiWindowFlags_AlwaysAutoResize |
+                                  ImGuiWindowFlags_NoTitleBar |
+                                  ImGuiWindowFlags_NoMove))
+            {
+                ui_dialog_title("SELECT VEHICLE", 260.0f);
+
+                for (const auto& v : vehicles) {
+                    // The label alone cannot carry the identity here: two
+                    // aircraft that both shipped as sysid 1 give two rows
+                    // reading "SYS1", and ImGui derives an item's ID from its
+                    // label — identical labels are one ID used twice, which is
+                    // both an assertion and a row that highlights its twin.
+                    // The link/sysid pair is unique by construction.
+                    ImGui::PushID((int)v.id.link_id);
+                    ImGui::PushID((int)v.id.sysid);
+
+                    const bool is_active = (v.id == active);
+
+                    char row[48];
+                    snprintf(row, sizeof(row), "SYS%d\xc2\xb7%d",
+                             (int)v.id.sysid, (int)v.compid);
+
+                    // Two lines per row: who it is, and where it came from.
+                    // Selectable spans both so the whole block is the target.
+                    const float line_h = ImGui::GetTextLineHeight();
+                    if (ImGui::Selectable("##veh", is_active,
+                                          ImGuiSelectableFlags_None,
+                                          { 0.0f, line_h * 2.0f + 4.0f }) &&
+                        selected_out)
+                        *selected_out = v.id;
+                    if (is_active) ImGui::SetItemDefaultFocus();
+
+                    const ImVec2 rmin = ImGui::GetItemRectMin();
+                    const ImVec2 rmax = ImGui::GetItemRectMax();
+                    ImDrawList*  rdl  = ImGui::GetWindowDrawList();
+
+                    rdl->AddText({ rmin.x + 4.0f, rmin.y + 1.0f },
+                                 is_active ? ui_col_accent()
+                                           : ui_col(g_theme.col_text_on_dark),
+                                 row);
+
+                    // State on the right of the first line, coloured by what it
+                    // means: armed is the one worth catching the eye.
+                    const char* state = v.stale ? "NO SIGNAL"
+                                      : v.armed ? "ARMED"
+                                      : v.has_heartbeat ? "idle"
+                                                        : "no heartbeat";
+                    const ImU32 scol = v.stale ? ui_col(g_theme.col_error)
+                                     : v.armed ? ui_col(g_theme.col_warning)
+                                               : ui_col_label();
+                    const float sw = ImGui::CalcTextSize(state).x;
+                    rdl->AddText({ rmax.x - sw - 4.0f, rmin.y + 1.0f }, scol, state);
+
+                    rdl->AddText({ rmin.x + 4.0f, rmin.y + line_h + 3.0f },
+                                 ui_col_label(), v.link_name);
+
+                    ImGui::PopID();
+                    ImGui::PopID();
+                }
+                ImGui::EndPopup();
+            }
+            ui_pop_dialog_style();
 
             x += chip_w + 12.0f;
         }
@@ -385,18 +485,18 @@ void draw_topbar(const VehicleState& vs,
             {
                 const ImVec2 i0 = { wp.x + intlk_x0,    wp.y + btn_y };
                 const ImVec2 i1 = { i0.x + BTN_W_INTLK, i0.y + BTN_H };
-                if (s_interlock)
+                if ((*s_interlock_state))
                     ui_status_block(dl, i0, i1, "INTLK HIGH", g_theme.col_warning, false);
                 else
                     ui_status_block(dl, i0, i1, "INTLK LOW", g_theme.col_no_link,
                                     !ilk_hovered);
             }
             if (ImGui::IsItemClicked()) {
-                s_interlock = !s_interlock;
+                (*s_interlock_state) = !(*s_interlock_state);
                 if (connected) {
                     sender->do_aux_function(tsys, tcomp, 32,
-                                            s_interlock ? 2 : 0); // 2=HIGH, 0=LOW
-                    gcs_log("interlock \xe2\x86\x92 %s", s_interlock ? "HIGH" : "LOW");
+                                            (*s_interlock_state) ? 2 : 0); // 2=HIGH, 0=LOW
+                    gcs_log("interlock \xe2\x86\x92 %s", (*s_interlock_state) ? "HIGH" : "LOW");
                 }
             }
 

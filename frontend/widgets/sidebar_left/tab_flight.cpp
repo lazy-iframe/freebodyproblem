@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
 #include "../../../backend/rc_binding.hpp"
@@ -308,11 +309,15 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
 
     // ── SERVO panel ───────────────────────────────────────────────────────────
     if (s_flight_subtab == 0) {
-        static int  s_srv_pwm[16];
-        static bool s_srv_init = false;
-        if (!s_srv_init) {
+        // Per vehicle — see widgets/vehicle_ui_state.hpp. These are outputs
+        // about to be commanded, not readings, so carrying one aircraft's
+        // slider positions over to another is the wrong kind of memory.
+        struct ServoState { int pwm[16]; bool init = false; };
+        static VehicleUiState<ServoState> s_servo;
+        int* s_srv_pwm = s_servo->pwm;
+        if (!s_servo->init) {
             for (int i = 0; i < 16; ++i) s_srv_pwm[i] = 1500;
-            s_srv_init = true;
+            s_servo->init = true;
         }
 
         ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_dark());

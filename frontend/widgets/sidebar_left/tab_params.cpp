@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "../param_meta.hpp"
 #include "../../app_log.hpp"
@@ -78,10 +79,28 @@ struct LoadRow {
 
 // The pending review. Lives across frames because the popup does — cleared when
 // the operator applies it or walks away.
-static std::vector<LoadRow> s_load_rows;
-static int s_load_matched = 0;   // in the file, already equal on the vehicle
-static int s_load_unknown = 0;   // in the file, not on this vehicle
-static int s_load_skipped = 0;   // unparseable lines
+// Per vehicle, not per panel — see widgets/vehicle_ui_state.hpp.
+//
+// Staged edits are the sharp one: a value typed against one aircraft and then
+// written after switching the callsign chip would go to a different aircraft.
+// The sorted name list matters for a quieter reason — it is rebuilt only when
+// the parameter count changes, and two vehicles running the same firmware have
+// the same count, so a shared list would keep showing the first vehicle's
+// parameter names against the second's values.
+struct ParamsTabState {
+    std::vector<LoadRow> load_rows;
+    int  load_matched = 0;   // in the file, already equal on the vehicle
+    int  load_unknown = 0;   // in the file, not on this vehicle
+    int  load_skipped = 0;   // unparseable lines
+
+    std::vector<std::string> sorted_ids;
+    size_t                   last_param_count = 0;
+
+    std::unordered_map<std::string, float> edited_vals;
+};
+
+static VehicleUiState<ParamsTabState> s_state;
+static ParamsTabState& st() { return *s_state; }
 
 void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                      const std::unordered_map<std::string, ParamEntry>* params)
@@ -140,8 +159,8 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     }
 
     // Sorted IDs — rebuilt once per fetch session when count changes
-    static std::vector<std::string> sorted_ids;
-    static size_t last_param_count = 0;
+    auto& sorted_ids       = st().sorted_ids;
+    auto& last_param_count = st().last_param_count;
     if (params->size() != last_param_count) {
         sorted_ids.clear();
         sorted_ids.reserve(params->size());
@@ -165,7 +184,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     // broadcast as a PARAM_VALUE — so a fetch and no typing at all could leave
     // WRITE ALL offering to write one parameter back. Offering, worse, to write
     // the *stale* value over the vehicle's newer one.
-    static std::unordered_map<std::string, float> edited_vals;
+    auto& edited_vals = st().edited_vals;
 
     // Rows the operator has moved away from the vehicle's value, in name order
     // so the write goes out and logs in the same order the list shows.
@@ -275,10 +294,10 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         if (ui_grid_button("LOAD", { half, 24.0f })) {
             std::vector<ParamFileRow> rows;
             std::string err;
-            s_load_rows.clear();
-            s_load_matched = s_load_unknown = s_load_skipped = 0;
+            st().load_rows.clear();
+            st().load_matched = st().load_unknown = st().load_skipped = 0;
 
-            if (!param_file_load(s_param_path, &rows, &s_load_skipped, &err)) {
+            if (!param_file_load(s_param_path, &rows, &st().load_skipped, &err)) {
                 gcs_log("param load failed: %s", err.c_str());
             } else {
                 // Only differences are offered. A value the vehicle already
@@ -286,15 +305,15 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 // would bury the twelve that matter.
                 for (const ParamFileRow& r : rows) {
                     auto it = params->find(r.id);
-                    if (it == params->end()) { ++s_load_unknown; continue; }
-                    if (r.value == it->second.value) { ++s_load_matched; continue; }
-                    s_load_rows.push_back(LoadRow{ r.id, r.value,
+                    if (it == params->end()) { ++st().load_unknown; continue; }
+                    if (r.value == it->second.value) { ++st().load_matched; continue; }
+                    st().load_rows.push_back(LoadRow{ r.id, r.value,
                                                    it->second.value, true });
                 }
 
-                if (s_load_rows.empty()) {
+                if (st().load_rows.empty()) {
                     gcs_log("%s: nothing to change (%d match, %d not on vehicle, %d bad lines)",
-                            s_param_path, s_load_matched, s_load_unknown, s_load_skipped);
+                            s_param_path, st().load_matched, st().load_unknown, st().load_skipped);
                 } else {
                     ImGui::OpenPopup("##param_load_pick");
                 }
@@ -350,27 +369,27 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         ui_dialog_title("PARAMETERS FROM FILE", PICK_W);
 
         int selected = 0;
-        for (const LoadRow& r : s_load_rows)
+        for (const LoadRow& r : st().load_rows)
             if (r.selected) ++selected;
 
         ImGui::TextDisabled("%s", s_param_path);
         ImGui::TextDisabled("%d differ \xe2\x80\x94 %d already match, %d not on vehicle, %d bad lines",
-                            (int)s_load_rows.size(), s_load_matched,
-                            s_load_unknown, s_load_skipped);
+                            (int)st().load_rows.size(), st().load_matched,
+                            st().load_unknown, st().load_skipped);
         ImGui::Spacing();
 
         // Bulk selection, with the running count beside it so the APPLY figure
         // below is never a surprise.
         constexpr float SEL_W = 130.0f;
         if (ui_grid_button("SELECT ALL", { SEL_W, 24.0f }))
-            for (LoadRow& r : s_load_rows) r.selected = true;
+            for (LoadRow& r : st().load_rows) r.selected = true;
         ImGui::SameLine(0, 4);
         if (ui_grid_button("DESELECT ALL", { SEL_W, 24.0f }))
-            for (LoadRow& r : s_load_rows) r.selected = false;
+            for (LoadRow& r : st().load_rows) r.selected = false;
         ImGui::SameLine(0, 8);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(accent_col(), "%d of %d",
-                           selected, (int)s_load_rows.size());
+                           selected, (int)st().load_rows.size());
 
         ImGui::Spacing();
 
@@ -384,8 +403,8 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             const float from_x = row_w - 190.0f;   // old value column
             const float to_x   = row_w -  90.0f;   // new value column
 
-            for (size_t i = 0; i < s_load_rows.size(); ++i) {
-                LoadRow& r = s_load_rows[i];
+            for (size_t i = 0; i < st().load_rows.size(); ++i) {
+                LoadRow& r = st().load_rows[i];
                 ImGui::PushID((int)i);
 
                 ImGui::Checkbox("##sel", &r.selected);
@@ -422,7 +441,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         if (ui_solid_button(apply_lbl, { BW, UI_DIALOG_BH },
                             btn_write_base(), btn_write_hov())) {
             int staged = 0;
-            for (const LoadRow& r : s_load_rows) {
+            for (const LoadRow& r : st().load_rows) {
                 if (!r.selected) continue;
                 edited_vals[r.id] = r.file_val;
                 ++staged;
@@ -431,7 +450,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             // hand, and WRITE ALL remains the deliberate second act.
             gcs_log("staged %d parameter%s from %s \xe2\x80\x94 press WRITE ALL to send",
                     staged, staged == 1 ? "" : "s", s_param_path);
-            s_load_rows.clear();
+            st().load_rows.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
@@ -439,7 +458,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         ImGui::SameLine(0, BGAP);
         if (ui_grid_button("CANCEL##load", { BW, UI_DIALOG_BH }) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-            s_load_rows.clear();
+            st().load_rows.clear();
             ImGui::CloseCurrentPopup();
         }
 

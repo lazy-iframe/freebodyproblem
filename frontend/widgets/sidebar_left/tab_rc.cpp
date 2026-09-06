@@ -18,6 +18,7 @@
 
 #include "sidebar_internal.hpp"
 #include "../sidebar_themes.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../../app_log.hpp"
 #include "../../audio.hpp"
 #include "../../../backend/rc_binding.hpp"
@@ -39,7 +40,30 @@
 // walk away from and one that silently stops the moment you glance elsewhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
-static RcCalibration s_cal;
+// Per vehicle, not per panel.
+//
+// A calibration is a conversation with one airframe, and switching the callsign
+// chip to look at another aircraft must not disturb it — the whole point of
+// rc_tab_pump() is that a sweep survives the operator looking elsewhere, and
+// with a fleet on screen "elsewhere" now includes another vehicle. Pending
+// binding edits are keyed here for a sharper reason: committing edits staged
+// against one aircraft to a different one would write the wrong RC map to
+// flying hardware.
+struct RcTabState {
+    RcCalibration cal;
+    uint32_t      seen_mask       = 0;
+    bool          use_param_ext   = false;
+    int           detect_target   = -1;
+    RcChannels    detect_baseline;
+    std::unordered_map<std::string, float> bind_edits;
+    int           aux_channel     = 5;
+};
+
+static VehicleUiState<RcTabState> s_state;
+
+// The vehicle whose state the panel and the pump are working on; the render
+// loop binds it before either runs. See vehicle_ui_state.hpp.
+static RcTabState& st() { return *s_state; }
 
 // Channels seen carrying a pulse on this link, one bit each, 0-based.
 //
@@ -52,11 +76,10 @@ static RcCalibration s_cal;
 //
 // Cleared when the link or the RC stream goes away, so a different airframe
 // does not inherit the last one's channel set.
-static uint32_t s_seen_mask = 0;
 
 static bool channel_seen(int idx_0based)
 {
-    return (s_seen_mask & (1u << idx_0based)) != 0u;
+    return (st().seen_mask & (1u << idx_0based)) != 0u;
 }
 
 // Plain loop rather than a popcount intrinsic: __builtin_popcount is not MSVC,
@@ -76,19 +99,14 @@ static int seen_count()
 // hardware this GCS actually flies. The switch is here for MAVLink components
 // that do implement it, and because a commit is exactly where you want to be
 // able to choose.
-static bool s_use_param_ext = false;
 
 // Channel-detection ("move the stick you want") state. -1 when nothing is armed;
 // otherwise the index into rc_stick_bindings() waiting for a movement.
-static int        s_detect_target   = -1;
-static RcChannels s_detect_baseline;
 
 // Binding values the operator has typed or demonstrated but not yet written.
 // Keyed by parameter name, so ArduPilot and PX4 runs cannot collide.
-static std::unordered_map<std::string, float> s_bind_edits;
 
 // Aux-function channel the numeric editor is pointed at, 1-based.
-static int s_aux_channel = 5;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,7 +146,7 @@ static uint8_t param_type_for(
 static void commit_write(MavlinkSender* sender, uint8_t tsys, uint8_t tcomp,
                          const char* id, float value, uint8_t type)
 {
-    if (s_use_param_ext) sender->set_param_ext(tsys, tcomp, id, value, type);
+    if (st().use_param_ext) sender->set_param_ext(tsys, tcomp, id, value, type);
     else                 sender->set_param    (tsys, tcomp, id, value, type);
 }
 
@@ -137,8 +155,8 @@ static void commit_write(MavlinkSender* sender, uint8_t tsys, uint8_t tcomp,
 static float staged_value(const std::unordered_map<std::string, ParamEntry>* params,
                           const char* id, float fallback)
 {
-    auto ed = s_bind_edits.find(id);
-    if (ed != s_bind_edits.end()) return ed->second;
+    auto ed = st().bind_edits.find(id);
+    if (ed != st().bind_edits.end()) return ed->second;
     if (const ParamEntry* p = find_param(params, id)) return p->value;
     return fallback;
 }
@@ -343,12 +361,12 @@ static void draw_monitor(const RcChannels& rc,
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 2.0f, 2.0f });
         for (int i = 0; i < RcChannels::MAX_CHANNELS; ++i) {
             if (!channel_seen(i)) continue;
-            const RcChannelCal& cal = s_cal.channel(i);
+            const RcChannelCal& cal = st().cal.channel(i);
             // The channel keeps its own number, not its position in the list:
             // a gap where a dead channel would be is the point, since RCn_*
             // parameters and every binding are named by that number.
             draw_channel_row(i + 1, rc.chan[i],
-                             s_cal.phase() == RcCalibration::Phase::Idle
+                             st().cal.phase() == RcCalibration::Phase::Idle
                                  ? nullptr : &cal,
                              bind_of_channel[i]);
         }
@@ -375,7 +393,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
 
     const bool can_calibrate = connected && rc.valid && rc.usable_count() > 0;
 
-    switch (s_cal.phase()) {
+    switch (st().cal.phase()) {
 
     case RcCalibration::Phase::Idle: {
         ImGui::BeginDisabled(!can_calibrate);
@@ -384,7 +402,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
             // reports. Which of them are really there is then decided by what
             // arrives, so an under-reported chancount cannot quietly drop a
             // channel out of the calibration.
-            s_cal.begin(RcChannels::MAX_CHANNELS);
+            st().cal.begin(RcChannels::MAX_CHANNELS);
 
             // Seed reversal from the vehicle rather than from zero. A sweep
             // cannot measure direction — the two endpoints are the same pair of
@@ -399,7 +417,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
                     const bool rev = (dialect == RcParamDialect::PX4)
                                    ? (p->value < 0.0f)
                                    : (p->value != 0.0f);
-                    s_cal.set_reversed(i, rev);
+                    st().cal.set_reversed(i, rev);
                 }
             }
 
@@ -413,7 +431,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
                 const float ch = id ? staged_value(params, id,
                                                    (float)bindings[ti].default_ch)
                                     : (float)bindings[ti].default_ch;
-                s_cal.set_throttle_channel((int)ch);
+                st().cal.set_throttle_channel((int)ch);
             }
 
             gcs_log("rc calibration started");
@@ -439,10 +457,10 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
         ImGui::BeginDisabled(!rc.valid);
         if (ui_solid_button("CAPTURE", { half, 26.0f },
                             btn_write_base(), btn_write_hov())) {
-            if (s_cal.capture_center(rc)) {
+            if (st().cal.capture_center(rc)) {
                 gcs_log("rc calibration: centre captured on %d channels \xe2\x80\x94 "
                         "now move every stick and switch to both stops",
-                        s_cal.active_count());
+                        st().cal.active_count());
             } else {
                 // capture_center() refuses a frame with nothing plausible in it.
                 gcs_log("rc calibration: no usable RC input to capture");
@@ -453,7 +471,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
 
         ImGui::SameLine(0, 4);
         if (ui_grid_button("CANCEL##cal", { -1.0f, 26.0f })) {
-            s_cal.cancel();
+            st().cal.cancel();
             gcs_log("rc calibration cancelled");
         }
         break;
@@ -470,8 +488,8 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
         // the vehicle claims. An eight-channel radio finishing its sweep should
         // read 8 / 8, not 8 / 18 — a bar that can never fill is a bar that
         // tells the operator nothing about when they are done.
-        const int swept = s_cal.usable_count();
-        const int total = s_cal.active_count();
+        const int swept = st().cal.usable_count();
+        const int total = st().cal.active_count();
         char prog[48];
         snprintf(prog, sizeof(prog), "%d / %d active channel%s",
                  swept, total, total == 1 ? "" : "s");
@@ -483,7 +501,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
         ImGui::BeginDisabled(swept == 0);
         if (ui_solid_button("FINISH", { half, 26.0f },
                             btn_write_base(), btn_write_hov())) {
-            s_cal.finish();
+            st().cal.finish();
             gcs_log("rc calibration: %d of %d active channels swept", swept, total);
         }
         ImGui::EndDisabled();
@@ -492,14 +510,14 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
 
         ImGui::SameLine(0, 4);
         if (ui_grid_button("CANCEL##cal", { -1.0f, 26.0f })) {
-            s_cal.cancel();
+            st().cal.cancel();
             gcs_log("rc calibration cancelled");
         }
         break;
     }
 
     case RcCalibration::Phase::Review: {
-        const std::vector<RcParamWrite> writes = s_cal.params(dialect);
+        const std::vector<RcParamWrite> writes = st().cal.params(dialect);
 
         ImGui::TextColored(col_warning(), "3 / 3  REVIEW");
         ImGui::TextWrapped("Check each channel's travel, then commit. Nothing has "
@@ -516,23 +534,23 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
 
             const float rev_x = ImGui::GetContentRegionAvail().x - 46.0f;
 
-            for (int i = 0; i < s_cal.channel_count(); ++i) {
+            for (int i = 0; i < st().cal.channel_count(); ++i) {
                 // Channels that never carried a pulse are not a finding — they
                 // are the empty half of an eighteen-slot protocol. Only a
                 // channel that is live but was not moved is worth a line.
-                if (!s_cal.channel_active(i)) continue;
+                if (!st().cal.channel_active(i)) continue;
 
-                const RcChannelCal& c = s_cal.channel(i);
+                const RcChannelCal& c = st().cal.channel(i);
                 ImGui::PushID(i);
 
-                if (!s_cal.channel_usable(i)) {
+                if (!st().cal.channel_usable(i)) {
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextDisabled("%2d  not moved", i + 1);
                     ImGui::PopID();
                     continue;
                 }
 
-                const uint16_t trim = (i + 1 == s_cal.throttle_channel())
+                const uint16_t trim = (i + 1 == st().cal.throttle_channel())
                                     ? c.min : c.trim;
 
                 ImGui::AlignTextToFramePadding();
@@ -545,7 +563,7 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
                 ImGui::SameLine(rev_x);
                 bool rev = c.reversed;
                 if (ImGui::Checkbox("REV", &rev))
-                    s_cal.set_reversed(i, rev);
+                    st().cal.set_reversed(i, rev);
 
                 ImGui::PopID();
             }
@@ -557,8 +575,8 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
 
         ImGui::Spacing();
 
-        // Protocol switch — see the note on s_use_param_ext.
-        ImGui::Checkbox("Commit over PARAM_EXT_SET", &s_use_param_ext);
+        // Protocol switch — see the note on RcTabState::use_param_ext.
+        ImGui::Checkbox("Commit over PARAM_EXT_SET", &st().use_param_ext);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("PARAM_SET (#23) is what ArduPilot and PX4 answer.\n"
                               "PARAM_EXT_SET (#323) is for components that\n"
@@ -588,14 +606,14 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
         ImGui::SameLine(0, 4);
         if (ui_solid_button("DISCARD##cal", { -1.0f, 26.0f },
                             btn_disconnect_base(), btn_disconnect_hov())) {
-            s_cal.cancel();
+            st().cal.cancel();
             gcs_log("rc calibration discarded \xe2\x80\x94 vehicle untouched");
         }
 
         {
             char q[128];
             snprintf(q, sizeof(q), "WRITE %d PARAMETERS FOR %d CHANNELS?",
-                     (int)writes.size(), s_cal.usable_count());
+                     (int)writes.size(), st().cal.usable_count());
             if (ui_confirm_popup("##confirm_cal_commit", "COMMIT CALIBRATION", q,
                                  "COMMIT", btn_write_base()) == UiConfirm::Confirmed) {
                 for (const RcParamWrite& w : writes) {
@@ -607,9 +625,9 @@ static void draw_calibration(MavlinkSender* sender, const VehicleState* vs,
                 // vehicle missed stays visible in the parameter table.
                 gcs_log("rc calibration committed: %d parameters over %s",
                         (int)writes.size(),
-                        s_use_param_ext ? "PARAM_EXT_SET" : "PARAM_SET");
+                        st().use_param_ext ? "PARAM_EXT_SET" : "PARAM_SET");
                 gcs_tone(GcsTone::Success);
-                s_cal.cancel();
+                st().cal.cancel();
             }
         }
         break;
@@ -646,7 +664,7 @@ static bool draw_write_row(MavlinkSender* sender,
         : ui_grid_button("WRITE", { btn_w, 0.0f });
     if (wrote) {
         commit_write(sender, tsys, tcomp, id, val, param_type_for(params, id));
-        s_bind_edits.erase(id);
+        st().bind_edits.erase(id);
     }
     ImGui::EndDisabled();
     return wrote;
@@ -701,7 +719,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
             int ch = (int)val;
             if (ImGui::InputInt("##ch", &ch, 0, 0)) {
                 ch = std::max(1, std::min(ch, (int)RcChannels::MAX_CHANNELS));
-                s_bind_edits[id] = (float)ch;
+                st().bind_edits[id] = (float)ch;
                 val = (float)ch;
             }
             if (ImGui::IsItemHovered())
@@ -710,13 +728,13 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
             // Arm detection: take a baseline now, then watch for the first
             // channel to move by more than the noise threshold.
             ImGui::SameLine(0, 4);
-            const bool armed = (s_detect_target == (int)i);
+            const bool armed = (st().detect_target == (int)i);
             if (ui_grid_button(armed ? "MOVE" : "DETECT", { det_w, 0.0f }, armed)) {
                 if (armed) {
-                    s_detect_target = -1;
+                    st().detect_target = -1;
                 } else if (rc.valid) {
-                    s_detect_baseline = rc;
-                    s_detect_target   = (int)i;
+                    st().detect_baseline = rc;
+                    st().detect_target   = (int)i;
                     gcs_log("rc: move the %s stick to bind it", b.label);
                 }
             }
@@ -821,7 +839,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
                     const std::string item =
                         choices[c].label + "##" + std::to_string(c);
                     if (ImGui::Selectable(item.c_str(), sel)) {
-                        s_bind_edits[slot.param] = (float)choices[c].mode;
+                        st().bind_edits[slot.param] = (float)choices[c].mode;
                         val = (float)choices[c].mode;
                     }
                     if (sel) ImGui::SetItemDefaultFocus();
@@ -837,7 +855,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
             int mode_num = (int)val;
             if (ImGui::InputInt("##mode_num", &mode_num, 0, 0)) {
                 mode_num = std::max(0, mode_num);
-                s_bind_edits[slot.param] = (float)mode_num;
+                st().bind_edits[slot.param] = (float)mode_num;
                 val = (float)mode_num;
             }
 
@@ -866,7 +884,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
         // binding a switch before its receiver is powered is ordinary setup.
         {
             char preview[16];
-            snprintf(preview, sizeof(preview), "CH %d", s_aux_channel);
+            snprintf(preview, sizeof(preview), "CH %d", st().aux_channel);
 
             ImGui::SetNextItemWidth(92.0f);
             if (ImGui::BeginCombo("##aux_ch", preview)) {
@@ -880,9 +898,9 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
                     else
                         snprintf(item, sizeof(item), "CH %-2d  --", c);
 
-                    if (ImGui::Selectable(item, c == s_aux_channel))
-                        s_aux_channel = c;
-                    if (c == s_aux_channel) ImGui::SetItemDefaultFocus();
+                    if (ImGui::Selectable(item, c == st().aux_channel))
+                        st().aux_channel = c;
+                    if (c == st().aux_channel) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
             }
@@ -891,8 +909,8 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
         // Built after the picker, so the row below always names the channel the
         // list is currently on.
         char aux_id[24];
-        if (!rc_aux_param(s_aux_channel, dialect, aux_id, sizeof(aux_id))) {
-            ImGui::TextDisabled("Channel %d has no option parameter.", s_aux_channel);
+        if (!rc_aux_param(st().aux_channel, dialect, aux_id, sizeof(aux_id))) {
+            ImGui::TextDisabled("Channel %d has no option parameter.", st().aux_channel);
             ImGui::PopID();
             return;
         }
@@ -902,9 +920,9 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
         ImGui::SameLine(0, 6);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", aux_id);
-        if (rc.at(s_aux_channel) > 0) {
+        if (rc.at(st().aux_channel) > 0) {
             ImGui::SameLine(0, 6);
-            ImGui::TextColored(col_data(), "%u", (unsigned)rc.at(s_aux_channel));
+            ImGui::TextColored(col_data(), "%u", (unsigned)rc.at(st().aux_channel));
         }
 
         const char* preview = rc_aux_option_label((int)val);
@@ -924,7 +942,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
                 char item[80];
                 snprintf(item, sizeof(item), "%3u  %s", (unsigned)o.value, o.label);
                 if (ImGui::Selectable(item, sel)) {
-                    s_bind_edits[aux_id] = (float)o.value;
+                    st().bind_edits[aux_id] = (float)o.value;
                     val = (float)o.value;
                 }
                 if (sel) ImGui::SetItemDefaultFocus();
@@ -940,7 +958,7 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
             int opt = (int)val;
             if (ImGui::InputInt("##aux_num", &opt, 0, 0)) {
                 opt = std::max(0, opt);
-                s_bind_edits[aux_id] = (float)opt;
+                st().bind_edits[aux_id] = (float)opt;
                 val = (float)opt;
             }
             if (ImGui::IsItemHovered())
@@ -964,15 +982,15 @@ static void draw_binding(MavlinkSender* sender, const VehicleState* vs,
 void rc_tab_pump(const VehicleState* vs)
 {
     if (!vs || !vs->has_heartbeat || !vs->rc.valid) {
-        s_seen_mask = 0;
+        st().seen_mask = 0;
         return;
     }
 
     for (int i = 0; i < RcChannels::MAX_CHANNELS; ++i)
         if (vs->rc.chan[i] > 0)
-            s_seen_mask |= (1u << i);
+            st().seen_mask |= (1u << i);
 
-    s_cal.update(vs->rc);
+    st().cal.update(vs->rc);
 }
 
 void draw_tab_rc(MavlinkSender* sender, const VehicleState* vs,
@@ -1056,24 +1074,24 @@ void draw_tab_rc(MavlinkSender* sender, const VehicleState* vs,
     // Run before anything draws so the result is visible in the same frame the
     // stick moved, and outside the binding section so it keeps working while
     // the operator scrolls away from the row that armed it.
-    if (s_detect_target >= 0) {
+    if (st().detect_target >= 0) {
         if (!rc.valid) {
-            s_detect_target = -1;
+            st().detect_target = -1;
         } else {
-            const int moved = rc_detect_moved_channel(s_detect_baseline, rc);
+            const int moved = rc_detect_moved_channel(st().detect_baseline, rc);
             if (moved > 0) {
                 const auto& bindings = rc_stick_bindings();
-                if (s_detect_target < (int)bindings.size()) {
-                    const char* id = rc_stick_param(bindings[s_detect_target],
+                if (st().detect_target < (int)bindings.size()) {
+                    const char* id = rc_stick_param(bindings[st().detect_target],
                                                     dialect);
                     if (id) {
-                        s_bind_edits[id] = (float)moved;
+                        st().bind_edits[id] = (float)moved;
                         gcs_log("rc: %s detected on channel %d \xe2\x80\x94 press WRITE to bind",
-                                bindings[s_detect_target].label, moved);
+                                bindings[st().detect_target].label, moved);
                         gcs_tone(GcsTone::Success);
                     }
                 }
-                s_detect_target = -1;
+                st().detect_target = -1;
             }
         }
     }

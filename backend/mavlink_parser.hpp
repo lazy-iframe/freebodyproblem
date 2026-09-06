@@ -28,6 +28,7 @@
 
 #include <mavlink/ardupilotmega/mavlink.h>
 
+#include "mavlink_framer.hpp"
 #include "timesync.hpp"
 
 // One entry from AVAILABLE_MODES (#435). Flight stacks enumerate their own mode
@@ -369,16 +370,42 @@ struct VehicleState {
 
 class MavlinkParser {
 public:
+    // Two ways to come by an identity.
+    //
+    // The default constructor discovers it: the first heartbeat from a real
+    // autopilot binds this parser to that sysid/compid, which is what a single
+    // link feeding a single vehicle wants and is how this class has always
+    // behaved. The two-argument form is told up front, for a link that
+    // demultiplexes several vehicles and has already decided which one this is.
+    MavlinkParser() = default;
+    MavlinkParser(uint8_t sysid, uint8_t autopilot_compid)
+        : sysid_(sysid), autopilot_compid_(autopilot_compid), bound_(true) {}
+
+    // The system this parser speaks for, once known. Zero until the first
+    // autopilot heartbeat when the identity was discovered rather than given.
+    uint8_t sysid()            const { return sysid_;            }
+    uint8_t autopilot_compid() const { return autopilot_compid_; }
+    bool    bound()            const { return bound_;            }
+
     // Feed a raw UDP datagram. Returns number of complete messages parsed.
+    //
+    // Convenience for callers that own a whole byte stream to themselves. Where
+    // one link feeds several vehicles the framing belongs to the link — one
+    // MavlinkFramer per byte stream, its output routed by sysid — and those
+    // callers use handle() directly.
     int parse(const uint8_t* buf, size_t len);
+
+    // Feed one already-framed message. The routing decision of which parser a
+    // message belongs to is the caller's; this only interprets it.
+    void handle(const mavlink_message_t& msg);
 
     const VehicleState& state() const { return state_; }
     const std::unordered_map<std::string, ParamEntry>& params() const { return params_; }
     const std::unordered_map<uint32_t, MessageStats>& msg_stats() const { return msg_stats_; }
 
-    uint64_t total_messages() const { return total_messages_; }
-    uint64_t total_bytes()    const { return total_bytes_;    }
-    uint64_t parse_errors()   const { return parse_errors_;  }
+    uint64_t total_messages() const { return total_messages_;          }
+    uint64_t total_bytes()    const { return framer_.total_bytes();    }
+    uint64_t parse_errors()   const { return framer_.parse_errors();   }
 
     // ACK queue — drained each frame by main.cpp, forwarded to MavlinkSender
     const std::vector<CommandAck>& pending_acks() const { return ack_queue_; }
@@ -432,19 +459,31 @@ public:
     void print_stats();
 
 private:
-    void handle_message(const mavlink_message_t& msg);
-
-    mavlink_status_t                           ch_status_{};
+    // Framing for the parse() convenience path only. A link that feeds several
+    // vehicles frames upstream of here and never touches this one.
+    MavlinkFramer                              framer_;
     std::unordered_map<uint32_t, MessageStats> msg_stats_;
     VehicleState                               state_;
     std::unordered_map<std::string, ParamEntry> params_;
 
-    // Source lock — set on the first heartbeat from a real autopilot.
-    // All subsequent state updates are only accepted from this sysid/compid.
-    // Prevents stray heartbeats from gimbals, companion computers, etc.
-    // (common on USB serial) from corrupting custom_mode and armed state.
-    uint8_t locked_sysid_  = 0;
-    uint8_t locked_compid_ = 0;
+    // Which system and component this parser speaks for.
+    //
+    // This replaces what used to be called the source lock. The lock was set on
+    // the first autopilot heartbeat and meant to keep stray traffic from
+    // gimbals and companion computers — common on a USB serial bus — out of the
+    // vehicle's state. It only ever worked for three message types: HEARTBEAT
+    // and the two RC_CHANNELS variants re-checked it, while ATTITUDE,
+    // GLOBAL_POSITION_INT, PARAM_VALUE, the mission messages and everything
+    // else wrote state_ no matter who sent them. A second vehicle on the same
+    // link therefore interleaved its telemetry into this one silently.
+    //
+    // The gate now lives at the top of handle(), where it covers every message
+    // rather than three, and is expressed as two separate questions: is this
+    // the right system, and within it, is this the autopilot rather than some
+    // other component announcing itself.
+    uint8_t sysid_            = 0;
+    uint8_t autopilot_compid_ = 0;
+    bool    bound_            = false;
     std::vector<CommandAck>                    ack_queue_;
     std::vector<ParamExtAck>                   param_ext_acks_;
     std::vector<MissionReq>                    mission_reqs_;
@@ -455,6 +494,4 @@ private:
     static constexpr size_t MAX_STATUS_TEXTS = 200;
 
     uint64_t total_messages_ = 0;
-    uint64_t total_bytes_    = 0;
-    uint64_t parse_errors_   = 0;
 };

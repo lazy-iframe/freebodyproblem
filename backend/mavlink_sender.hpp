@@ -54,6 +54,20 @@ public:
     static constexpr uint8_t GCS_SYSID  = 255;
     static constexpr uint8_t GCS_COMPID = 190;
 
+    // How many senders can exist at once — one per vehicle, since each needs a
+    // MAVLink TX channel of its own. See the note on chan_ below.
+    static constexpr int MAX_CHANNELS = MAVLINK_COMM_NUM_BUFFERS;
+
+    // Takes the next free TX channel. Throws nothing: past MAX_CHANNELS the
+    // sender shares channel 0, which is safe (the pack mutex covers it) and only
+    // costs a shared sequence counter. Callers that care cap vehicle count
+    // instead of relying on that.
+    MavlinkSender();
+    ~MavlinkSender();
+
+    MavlinkSender(const MavlinkSender&)            = delete;
+    MavlinkSender& operator=(const MavlinkSender&) = delete;
+
     // ── High-level commands ───────────────────────────────────────────────────
 
     void arm   (uint8_t target_sysid, uint8_t target_compid);
@@ -303,6 +317,11 @@ public:
     CmdFlashState query_flash(uint16_t cmd) const;
 
 private:
+    // Takes an already-acquired channel index, or -1 when none was free. The
+    // public constructor delegates here so both channel members are set from a
+    // single acquisition rather than from a shared scratch variable.
+    explicit MavlinkSender(int acquired);
+
     // Serialise a COMMAND_LONG and push onto the queue
     void enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
                               float p1 = 0.f, float p2 = 0.f, float p3 = 0.f,
@@ -313,6 +332,21 @@ private:
         CmdFlashState state = CmdFlashState::Normal;
         std::chrono::steady_clock::time_point changed_at{};
     };
+
+    // This sender's MAVLink TX channel.
+    //
+    // Every mavlink_msg_*_pack() funnels through mavlink_finalize_message(),
+    // which is hardcoded to MAVLINK_COMM_0 and increments *that* channel's
+    // sequence counter — a global. Two senders packing at once would therefore
+    // race, and worse, would share one sequence number: each vehicle counts the
+    // gaps in the GCS's sequence to estimate link quality, so a shared counter
+    // reads to every vehicle as heavy packet loss. A channel each fixes both.
+    const uint8_t                           chan_;
+
+    // True when channels ran out and this sender had to share channel 0. Packing
+    // then goes through a process-wide mutex, since the sequence counter behind
+    // that channel is no longer ours alone.
+    const bool                              shared_chan_;
 
     mutable std::mutex                      mtx_;
     std::queue<std::vector<uint8_t>>        queue_;

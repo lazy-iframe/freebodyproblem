@@ -293,6 +293,9 @@ add_executable(freebodyproblem
     ${GCS_WIN_RESOURCES}
     frontend/widgets/plugin_rail.cpp
     backend/mavlink_sender.cpp
+    backend/vehicle.cpp
+    backend/link.cpp
+    backend/fleet.cpp
     backend/connection.cpp
     backend/rc_calibration.cpp
     backend/accel_calibration.cpp
@@ -327,6 +330,7 @@ add_executable(freebodyproblem
     frontend/widgets/app_icon.cpp
     frontend/widgets/sidebar_right.cpp
     frontend/widgets/ui_kit.cpp
+    frontend/widgets/vehicle_ui_state.cpp
     backend/mavlink_parser.cpp
 )
 target_include_directories(freebodyproblem PRIVATE

@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
 #include "../../audio.hpp"
@@ -89,58 +90,66 @@ static const char* cmd_short(uint16_t cmd)
     return buf;
 }
 
-// ── Per-item expand state (indexed by waypoint index in s_edit) ───────────────
+// ── Editor state ─────────────────────────────────────────────────────────────
 
-static std::vector<bool> s_open;  // one entry per waypoint in s_edit
-
-// ── Editable copy ─────────────────────────────────────────────────────────────
-
-static std::vector<MissionItem> s_edit;
-static uint16_t  s_fetch_gen         = 0;     // snapshot of mission_count when last synced
-static bool      s_has_edit          = false;
-static bool      s_upload_done       = false;  // show result badge once
-static bool      s_cleared           = false;  // user pressed CLEAR; don't auto-re-sync
-static bool      s_fetching          = false;  // FETCH pressed; waiting for fresh FC reply
-static bool      s_fetch_reset_seen  = false;  // has_mission went false after FETCH → MISSION_COUNT received
-
-// Sync s_edit from vehicle state when a fresh fetch arrives.
-// Will NOT fire after the user has pressed CLEAR (s_cleared) or while the user
-// has pending edits (s_has_edit) to avoid clobbering unsaved work.
+// Per vehicle, not per panel — see widgets/vehicle_ui_state.hpp.
 //
-// When s_fetching is true we wait for has_mission to go false (MISSION_COUNT
-// received) and then true again (all items downloaded) before we sync.  This
+// The editor holds a mission the operator is building. Switching the callsign
+// chip to look at another aircraft and then pressing UPLOAD would otherwise
+// send this aircraft's plan to that one; keying it also means the plan is still
+// there when they switch back.
+struct MissionTabState {
+    std::vector<bool>        open;   // per-item expand state, one per waypoint
+    std::vector<MissionItem> edit;
+    uint16_t fetch_gen        = 0;      // mission_count when last synced
+    bool     has_edit         = false;
+    bool     upload_done      = false;  // show result badge once
+    bool     cleared          = false;  // user pressed CLEAR; don't auto-re-sync
+    bool     fetching         = false;  // FETCH pressed; awaiting fresh reply
+    bool     fetch_reset_seen = false;  // has_mission went false after FETCH
+};
+
+static VehicleUiState<MissionTabState> s_state;
+static MissionTabState& st() { return *s_state; }
+
+// Sync the editor from vehicle state when a fresh fetch arrives.
+// Will NOT fire after the user has pressed CLEAR, or while there are pending
+// edits, to avoid clobbering unsaved work.
+//
+// While a fetch is in flight we wait for has_mission to go false (MISSION_COUNT
+// received) and then true again (all items downloaded) before syncing. This
 // prevents the stale vs->mission from the previous download from being copied
-// into s_edit in the frames between pressing FETCH and the FC responding.
+// into the editor in the frames between pressing FETCH and the FC responding.
 static void maybe_sync(const VehicleState* vs)
 {
     const bool cur_has_mission = (vs && vs->has_mission);
 
-    if (s_fetching) {
+    if (st().fetching) {
         if (!cur_has_mission)
-            s_fetch_reset_seen = true;  // MISSION_COUNT received, items on the way
-        else if (s_fetch_reset_seen) {
+            st().fetch_reset_seen = true;  // MISSION_COUNT received, items on the way
+        else if (st().fetch_reset_seen) {
             // has_mission just became true again → fresh download complete
-            s_edit      = vs->mission;
-            s_fetch_gen = vs->mission_count;
-            s_has_edit  = true;
-            s_fetching          = false;
-            s_fetch_reset_seen  = false;
-            s_open.assign(s_edit.size(), false);
-            s_upload_done = false;
+            st().edit      = vs->mission;
+            st().fetch_gen = vs->mission_count;
+            st().has_edit  = true;
+            st().fetching          = false;
+            st().fetch_reset_seen  = false;
+            st().open.assign(st().edit.size(), false);
+            st().upload_done = false;
         }
         return;
     }
 
     if (!cur_has_mission) return;
-    if (s_cleared)  return;   // wait for explicit FETCH after a CLEAR
-    if (s_has_edit) return;   // don't overwrite unsaved edits
-    if (vs->mission_count == s_fetch_gen) return;  // already up to date
+    if (st().cleared)  return;   // wait for explicit FETCH after a CLEAR
+    if (st().has_edit) return;   // don't overwrite unsaved edits
+    if (vs->mission_count == st().fetch_gen) return;  // already up to date
 
-    s_edit      = vs->mission;
-    s_fetch_gen = vs->mission_count;
-    s_has_edit  = true;
-    s_open.assign(s_edit.size(), false);
-    s_upload_done = false;
+    st().edit      = vs->mission;
+    st().fetch_gen = vs->mission_count;
+    st().has_edit  = true;
+    st().open.assign(st().edit.size(), false);
+    st().upload_done = false;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -251,14 +260,14 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
     // ── Publish live edit pointer so map_view can draw current edits ──────────
     if (pick)
-        pick->edit_mission = s_has_edit ? &s_edit : nullptr;
+        pick->edit_mission = st().has_edit ? &st().edit : nullptr;
 
     // ── Consume a completed map pick ──────────────────────────────────────────
     if (pick && pick->pick_done) {
         const int idx = pick->active_index;
-        if (idx >= 0 && idx < (int)s_edit.size()) {
-            s_edit[idx].lat = pick->picked_lat;
-            s_edit[idx].lon = pick->picked_lon;
+        if (idx >= 0 && idx < (int)st().edit.size()) {
+            st().edit[idx].lat = pick->picked_lat;
+            st().edit[idx].lon = pick->picked_lon;
         }
         pick->pick_done    = false;
         pick->active_index = -1;
@@ -283,11 +292,11 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     ImGui::BeginDisabled(!connected);
     if (ui_grid_button("FETCH", { btn_w, 24.0f }) && connected) {
         sender->request_mission_list(tsys, tcomp);
-        s_has_edit          = false;
-        s_fetch_gen         = 0;
-        s_cleared           = false;
-        s_fetching          = true;   // wait for fresh FC reply before syncing
-        s_fetch_reset_seen  = false;
+        st().has_edit          = false;
+        st().fetch_gen         = 0;
+        st().cleared           = false;
+        st().fetching          = true;   // wait for fresh FC reply before syncing
+        st().fetch_reset_seen  = false;
         if (pick) { pick->active_index = -1; pick->pick_done = false; }
         gcs_log("requesting mission list");
     }
@@ -295,14 +304,14 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
     ImGui::SameLine(0, 4);
 
-    ImGui::BeginDisabled(!s_has_edit);
+    ImGui::BeginDisabled(!st().has_edit);
     if (ui_solid_button("CLEAR", { btn_w, 24.0f },
-                        btn_disconnect_base(), btn_disconnect_hov()) && s_has_edit) {
-        s_edit.clear();
-        s_open.clear();
-        s_has_edit    = false;
-        s_cleared     = true;   // block auto-re-sync until user presses FETCH
-        s_upload_done = false;
+                        btn_disconnect_base(), btn_disconnect_hov()) && st().has_edit) {
+        st().edit.clear();
+        st().open.clear();
+        st().has_edit    = false;
+        st().cleared     = true;   // block auto-re-sync until user presses FETCH
+        st().upload_done = false;
         if (pick) { pick->active_index = -1; pick->pick_done = false; pick->edit_mission = nullptr; }
     }
     ImGui::EndDisabled();
@@ -320,7 +329,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("%d waypoints", (int)s_edit.size());
+    ImGui::TextDisabled("%d waypoints", (int)st().edit.size());
     ImGui::Spacing();
     themed_sep();
     ImGui::Spacing();
@@ -336,13 +345,13 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 4.0f, 2.0f });
 
         // Ensure open vector is sized
-        if ((int)s_open.size() != (int)s_edit.size())
-            s_open.resize(s_edit.size(), false);
+        if ((int)st().open.size() != (int)st().edit.size())
+            st().open.resize(st().edit.size(), false);
 
         int to_delete = -1;
 
-        for (int i = 0; i < (int)s_edit.size(); ++i) {
-            MissionItem& item = s_edit[i];
+        for (int i = 0; i < (int)st().edit.size(); ++i) {
+            MissionItem& item = st().edit[i];
             item.seq = (uint16_t)i;  // keep seq in sync with list position
 
             ImGui::PushID(i);
@@ -352,9 +361,9 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             // right-aligned layout below is computed against fixed widths, and
             // the shared chrome needs an explicit size.
             const ImVec2 icon_sz = { 18.0f, ImGui::GetFontSize() + 2.0f };
-            const char* arrow = s_open[i] ? "v" : ">";
+            const char* arrow = st().open[i] ? "v" : ">";
             if (ui_grid_button(arrow, icon_sz))
-                s_open[i] = !s_open[i];
+                st().open[i] = !st().open[i];
             ImGui::SameLine(0, 4);
 
             // ── Row header (seq, cmd, alt) ────────────────────────────────────
@@ -400,7 +409,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
                 to_delete = i;
 
             // ── Expanded fields ───────────────────────────────────────────────
-            if (s_open[i]) {
+            if (st().open[i]) {
                 // Command selector
                 ImGui::Indent(12.0f);
                 ImGui::TextDisabled("Cmd");
@@ -428,9 +437,9 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             ImGui::PopID();
         }
 
-        if (to_delete >= 0 && to_delete < (int)s_edit.size()) {
-            s_edit.erase(s_edit.begin() + to_delete);
-            s_open.erase(s_open.begin() + to_delete);
+        if (to_delete >= 0 && to_delete < (int)st().edit.size()) {
+            st().edit.erase(st().edit.begin() + to_delete);
+            st().open.erase(st().open.begin() + to_delete);
         }
 
         ImGui::PopStyleVar();
@@ -446,21 +455,21 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             snprintf(opt, sizeof(opt), "%s (%u)", CMD_TABLE[c].name, CMD_TABLE[c].id);
             if (ImGui::Selectable(opt, false)) {
                 MissionItem ni{};
-                ni.seq     = (uint16_t)s_edit.size();
+                ni.seq     = (uint16_t)st().edit.size();
                 ni.command = CMD_TABLE[c].id;
                 ni.frame   = 3; // MAV_FRAME_GLOBAL_RELATIVE_ALT
                 // Pre-fill lat/lon from last waypoint with valid coords
-                for (int k = (int)s_edit.size() - 1; k >= 0; --k) {
-                    if (s_edit[k].lat != 0.0 || s_edit[k].lon != 0.0) {
-                        ni.lat = s_edit[k].lat;
-                        ni.lon = s_edit[k].lon;
-                        ni.alt = s_edit[k].alt;
+                for (int k = (int)st().edit.size() - 1; k >= 0; --k) {
+                    if (st().edit[k].lat != 0.0 || st().edit[k].lon != 0.0) {
+                        ni.lat = st().edit[k].lat;
+                        ni.lon = st().edit[k].lon;
+                        ni.alt = st().edit[k].alt;
                         break;
                     }
                 }
-                s_edit.push_back(ni);
-                s_open.push_back(true); // expand new item
-                s_has_edit = true;      // protect manual edits from auto-sync
+                st().edit.push_back(ni);
+                st().open.push_back(true); // expand new item
+                st().has_edit = true;      // protect manual edits from auto-sync
             }
         }
         ImGui::EndCombo();
@@ -468,16 +477,16 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
     // ── Upload ────────────────────────────────────────────────────────────────
     ImGui::Spacing();
-    ImGui::BeginDisabled(!connected || s_edit.empty());
-    if (ui_grid_button("UPLOAD MISSION", { -1.0f, 26.0f }) && connected && !s_edit.empty()) {
+    ImGui::BeginDisabled(!connected || st().edit.empty());
+    if (ui_grid_button("UPLOAD MISSION", { -1.0f, 26.0f }) && connected && !st().edit.empty()) {
         // Renumber seqs, mark first item current
-        for (int i = 0; i < (int)s_edit.size(); ++i) {
-            s_edit[i].seq        = (uint16_t)i;
-            s_edit[i].is_current = (i == 0);
+        for (int i = 0; i < (int)st().edit.size(); ++i) {
+            st().edit[i].seq        = (uint16_t)i;
+            st().edit[i].is_current = (i == 0);
         }
-        sender->start_upload(tsys, tcomp, s_edit);
-        s_upload_done = false;
-        gcs_log("uploading %d waypoints", (int)s_edit.size());
+        sender->start_upload(tsys, tcomp, st().edit);
+        st().upload_done = false;
+        gcs_log("uploading %d waypoints", (int)st().edit.size());
     }
     ImGui::EndDisabled();
 

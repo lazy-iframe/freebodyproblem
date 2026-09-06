@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "mavlink_display_generated.hpp"
 #include "imgui.h"
@@ -26,8 +27,16 @@
 #include <unordered_map>
 #include <cstdint>
 
-static uint32_t s_selected_id  = UINT32_MAX;
-static uint32_t s_prev_sel     = UINT32_MAX; // detect selection changes
+// The inspector's selection follows the vehicle: a message ID selected on one
+// aircraft need not be a message the next one sends at all, and the field list
+// beneath it would be describing a row that is no longer there. The request
+// form below it is a scratchpad and stays where the operator left it.
+struct MavlinkTabState {
+    uint32_t selected_id = UINT32_MAX;
+    uint32_t prev_sel    = UINT32_MAX;   // detect selection changes
+};
+static VehicleUiState<MavlinkTabState> s_state;
+
 static int      s_req_msg_id   = 0;
 static float    s_req_hz       = 4.0f;
 
@@ -99,7 +108,7 @@ void draw_tab_mavlink(MavlinkSender* sender,
 
             for (const Row& r : rows) {
                 ImGui::TableNextRow();
-                const bool selected = (r.id == s_selected_id);
+                const bool selected = (r.id == s_state->selected_id);
 
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID((int)r.id);
@@ -109,7 +118,7 @@ void draw_tab_mavlink(MavlinkSender* sender,
                         ImGuiSelectableFlags_SpanAllColumns |
                         ImGuiSelectableFlags_AllowOverlap,
                         { 0.0f, 0.0f }))
-                    s_selected_id = selected ? UINT32_MAX : r.id;
+                    s_state->selected_id = selected ? UINT32_MAX : r.id;
                 const bool row_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal);
                 ImGui::PopID();
 
@@ -146,10 +155,10 @@ void draw_tab_mavlink(MavlinkSender* sender,
     }
 
     // Sync req ID when selection changes
-    if (s_selected_id != s_prev_sel) {
-        if (s_selected_id != UINT32_MAX)
-            s_req_msg_id = (int)s_selected_id;
-        s_prev_sel = s_selected_id;
+    if (s_state->selected_id != s_state->prev_sel) {
+        if (s_state->selected_id != UINT32_MAX)
+            s_req_msg_id = (int)s_state->selected_id;
+        s_state->prev_sel = s_state->selected_id;
     }
 
     // ── Detail panel ──────────────────────────────────────────────────────────
@@ -157,20 +166,20 @@ void draw_tab_mavlink(MavlinkSender* sender,
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
     if (ImGui::BeginChild("##mavdetail", { -1.0f, det_h }, false)) {
 
-        if (s_selected_id == UINT32_MAX) {
+        if (s_state->selected_id == UINT32_MAX) {
             ImGui::TextDisabled("Select a message to inspect.");
         } else {
-            const char* dname = mavlink_display_name(s_selected_id);
+            const char* dname = mavlink_display_name(s_state->selected_id);
             if (dname) {
                 ImGui::TextColored(accent_col(), "%s", dname);
                 ImGui::SameLine(0, 6);
-                ImGui::TextDisabled("(#%u)", s_selected_id);
+                ImGui::TextDisabled("(#%u)", s_state->selected_id);
             } else {
-                ImGui::TextColored(accent_col(), "MSG_%u", s_selected_id);
+                ImGui::TextColored(accent_col(), "MSG_%u", s_state->selected_id);
             }
 
             if (stats) {
-                auto it = stats->find(s_selected_id);
+                auto it = stats->find(s_state->selected_id);
                 if (it != stats->end()) {
                     ImGui::SameLine(0, 10);
                     ImGui::TextDisabled("%llu msgs  %.1f Hz",
@@ -185,10 +194,10 @@ void draw_tab_mavlink(MavlinkSender* sender,
             ImGui::Spacing();
 
             if (vs) {
-                auto it = vs->last_messages.find(s_selected_id);
+                auto it = vs->last_messages.find(s_state->selected_id);
                 if (it != vs->last_messages.end()) {
                     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 4.0f, 2.0f });
-                    mavlink_display_draw(s_selected_id, it->second);
+                    mavlink_display_draw(s_state->selected_id, it->second);
                     ImGui::PopStyleVar();
                 } else {
                     ImGui::TextDisabled("No data received yet.");

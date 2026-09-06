@@ -19,9 +19,11 @@
 #pragma once
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 #include "../../backend/mavlink_parser.hpp"
 #include "../../backend/mavlink_sender.hpp"
 #include "../../backend/connection.hpp"
+#include "../../backend/vehicle.hpp"
 
 void draw_topbar(const VehicleState& vs,
                  const std::unordered_map<uint32_t, MessageStats>& stats,
@@ -30,4 +32,12 @@ void draw_topbar(const VehicleState& vs,
                  uint64_t parse_errors,
                  MavlinkSender* sender,
                  LinkStatus link_status,
-                 bool* close_requested);
+                 bool* close_requested,
+                 // The callsign chip is the vehicle switcher: it already shows
+                 // which system is on screen, so clicking it to choose a
+                 // different one puts the control where the operator is already
+                 // looking. `vehicles` is the whole fleet; `*selected_out` is
+                 // filled in only on the frame a row is clicked.
+                 const std::vector<VehicleChip>& vehicles,
+                 VehicleId  active,
+                 VehicleId* selected_out);

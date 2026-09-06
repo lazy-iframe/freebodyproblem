@@ -22,30 +22,18 @@
 // Each telemetry panel lives in its own file under frontend/widgets/.
 
 // ── Platform socket abstraction ───────────────────────────────────────────────
+// Sockets and serial ports live behind backend/link.cpp now; all this file
+// still needs from the platform is the path to its own executable.
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
 #  endif
-#  include <winsock2.h>
-#  include <ws2tcpip.h>
-#  include <windows.h>   // GetModuleFileNameA / MAX_PATH — must follow winsock2.h
-   typedef int ssize_t;
-#  define close_socket closesocket
-static inline void init_sockets()    { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); }
-static inline void cleanup_sockets() { WSACleanup(); }
+#  include <windows.h>   // GetModuleFileNameA / MAX_PATH
 #else
-#  include <arpa/inet.h>
-#  include <netinet/in.h>
-#  include <sys/socket.h>
-#  include <sys/select.h>
-#  include <sys/time.h>
-#  include <unistd.h>
-#  include <fcntl.h>
-#  define close_socket close
-static inline void init_sockets()    {}
-static inline void cleanup_sockets() {}
+#  include <unistd.h>    // readlink
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -74,6 +62,9 @@ static inline void cleanup_sockets() {}
 #include "../backend/mavlink_sender.hpp"
 #include "../backend/connection.hpp"
 #include "../backend/timesync.hpp"
+#include "../backend/link.hpp"
+#include "../backend/vehicle.hpp"
+#include "../backend/fleet.hpp"
 
 // Settings
 #include "settings.hpp"
@@ -81,6 +72,7 @@ static inline void cleanup_sockets() {}
 // Widgets
 #include "widgets/app_icon.hpp"
 #include "widgets/theme.hpp"
+#include "widgets/vehicle_ui_state.hpp"
 #include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
 #include "widgets/sidebar_left.hpp"
@@ -98,20 +90,25 @@ using Clock = std::chrono::steady_clock;
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
-static std::mutex          g_mtx;
-static VehicleState        g_state;
-static std::unordered_map<std::string, ParamEntry> g_params;
-static uint32_t            g_params_generation = 0;
-static std::unordered_map<uint32_t, MessageStats> g_msg_stats;
-static std::vector<StatusText> g_status_texts;
-static uint64_t            g_total_messages = 0;
-static uint64_t            g_total_bytes    = 0;
-static uint64_t            g_parse_errors   = 0;
+// Every link and every vehicle behind them, each with its own thread. What used
+// to be a single link thread writing a single VehicleState now lives here; this
+// file keeps only the log and whichever vehicle the operator is looking at.
+static Fleet g_fleet;
 
-static std::atomic<bool>       g_link_running{false};
-static std::atomic<LinkStatus> g_link_status{LinkStatus::Idle};
+// Handed to the widgets when there is no vehicle. Every panel takes a
+// MavlinkSender* unconditionally and always has, so the alternative is a null
+// check at several dozen call sites for a case where the answer is always "do
+// nothing". Nothing ever flushes this one, so commands aimed at a vehicle that
+// is not there are discarded, which is what should happen to them.
+static MavlinkSender g_null_sender;
 
-// App console log — written from any thread (under g_mtx), read by UI
+// App console log — written from any thread, read by the UI.
+//
+// Its own mutex, not the one guarding vehicle state. Those used to be the same
+// lock, which was harmless when one link thread wrote and one UI thread read.
+// With a thread per vehicle all logging at once, sharing a lock with the UI's
+// per-frame snapshot copy would make the log a convoy point.
+static std::mutex              g_log_mtx;
 static std::deque<std::string> g_app_log;
 static constexpr size_t        APP_LOG_MAX = 200;
 
@@ -123,15 +120,13 @@ void gcs_log(const char* fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     {
-        std::lock_guard<std::mutex> lk(g_mtx);
+        std::lock_guard<std::mutex> lk(g_log_mtx);
         if (g_app_log.size() >= APP_LOG_MAX) g_app_log.pop_front();
         g_app_log.push_back(buf);
     }
     fprintf(stderr, "[gcs] %s\n", buf);
 }
 
-// Outbound command queue — enqueued by UI thread, flushed by link thread
-static MavlinkSender  g_sender;
 
 // ── Asset resolution ──────────────────────────────────────────────────────────
 //
@@ -177,751 +172,6 @@ static std::string find_asset(const std::string& relative,
     return {};
 }
 
-// ── Link thread ───────────────────────────────────────────────────────────────
-
-struct LinkConfig {
-    ConnType type    = ConnType::UDP;
-    char     host[64]   = "0.0.0.0";
-    int      port       = 14550;
-    char     device[64] = {};
-    int      baud       = 57600;
-};
-
-static constexpr double CONNECT_TIMEOUT_S = 10.0;
-
-// How long a link that has been talking may go completely silent before it is
-// declared lost. Generous on purpose: an autopilot busy with a sensor
-// calibration answers slowly, and cutting a calibration short because the
-// vehicle spent a few seconds thinking would be worse than noticing late.
-// Even at ArduPilot's 1 Hz heartbeat this is fifteen missed beats — silence
-// this long is a link that has gone, not one that is busy.
-static constexpr double LINK_SILENCE_TIMEOUT_S = 15.0;
-
-// What a receive attempt actually meant.
-//
-// A read that returned nothing is not a read that failed, and telling them
-// apart is what distinguishes a quiet link from a dead one. Every non-positive
-// result used to be treated as "nothing yet", so a serial port whose device had
-// disappeared — an autopilot re-enumerating its USB after a reboot, a radio
-// unplugged — and a TCP peer that had hung up both looked exactly like a
-// vehicle with nothing to say. The thread then span on a dead handle forever
-// while the UI went on reporting a healthy link.
-enum class RxResult { Data, Quiet, Closed, Failed };
-
-#ifdef _WIN32
-static inline int  last_net_error()          { return WSAGetLastError(); }
-static inline bool net_error_is_transient(int e)
-{
-    return e == WSAEWOULDBLOCK || e == WSAETIMEDOUT || e == WSAEINTR;
-}
-#else
-static inline int  last_net_error()          { return errno; }
-static inline bool net_error_is_transient(int e)
-{
-    return e == EAGAIN || e == EWOULDBLOCK || e == EINTR || e == ETIMEDOUT;
-}
-#endif
-
-static void link_thread_fn(LinkConfig cfg)
-{
-    init_sockets();
-    g_link_status.store(LinkStatus::Connecting);
-
-    int          fd        = -1;
-    SerialHandle ser       = SERIAL_INVALID;
-    bool         is_stream = false;
-    const bool   is_serial = (cfg.type == ConnType::Serial);
-
-    sockaddr_in vehicle_addr{};
-    bool        vehicle_addr_set = false;
-
-    // ── Open transport ────────────────────────────────────────────────────────
-    if (cfg.type == ConnType::UDP) {
-        fd = (int)socket(PF_INET, SOCK_DGRAM, 0);
-        if (fd < 0) {
-            perror("socket");
-            g_link_status.store(LinkStatus::Error);
-            cleanup_sockets();
-            return;
-        }
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        inet_pton(AF_INET, cfg.host, &addr.sin_addr);
-        addr.sin_port = htons((uint16_t)cfg.port);
-        if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-            perror("bind");
-            close_socket(fd);
-            g_link_status.store(LinkStatus::Error);
-            cleanup_sockets();
-            return;
-        }
-        // Short poll interval so we can check g_link_running and the timeout
-#ifdef _WIN32
-        DWORD tv_ms = 200;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv_ms, sizeof(tv_ms));
-        DWORD snd_ms = 500;
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_ms, sizeof(snd_ms));
-#else
-        timeval tv{0, 200'000};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        // A send that cannot complete must fail rather than park the link
-        // thread; see the note in serial_write().
-        timeval stv{0, 500'000};
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
-#endif
-        is_stream = false;
-
-    } else if (cfg.type == ConnType::TCP) {
-#ifndef _WIN32
-        fd = (int)socket(PF_INET, SOCK_STREAM, 0);
-        if (fd < 0) {
-            perror("socket");
-            g_link_status.store(LinkStatus::Error);
-            cleanup_sockets();
-            return;
-        }
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        inet_pton(AF_INET, cfg.host, &addr.sin_addr);
-        addr.sin_port = htons((uint16_t)cfg.port);
-
-        // Non-blocking connect with 10 s timeout
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        int rc = connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        if (rc == -1 && errno == EINPROGRESS) {
-            fd_set wfds, efds;
-            FD_ZERO(&wfds); FD_SET(fd, &wfds);
-            FD_ZERO(&efds); FD_SET(fd, &efds);
-            timeval tv{(long)CONNECT_TIMEOUT_S, 0};
-            rc = select(fd + 1, nullptr, &wfds, &efds, &tv);
-            if (rc == 0) {
-                gcs_log("TCP connect timeout");
-                close_socket(fd);
-                g_link_status.store(LinkStatus::Timeout);
-                cleanup_sockets();
-                return;
-            }
-            if (rc < 0 || FD_ISSET(fd, &efds)) {
-                perror("connect");
-                close_socket(fd);
-                g_link_status.store(LinkStatus::Error);
-                cleanup_sockets();
-                return;
-            }
-            // Verify connection actually succeeded
-            int err = 0; socklen_t elen = sizeof(err);
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
-            if (err != 0) {
-                gcs_log("TCP connect error: %s", strerror(err));
-                close_socket(fd);
-                g_link_status.store(LinkStatus::Error);
-                cleanup_sockets();
-                return;
-            }
-        } else if (rc != 0) {
-            perror("connect");
-            close_socket(fd);
-            g_link_status.store(LinkStatus::Error);
-            cleanup_sockets();
-            return;
-        }
-        // Restore blocking with 200 ms receive timeout
-        fcntl(fd, F_SETFL, flags);
-        timeval tv{0, 200'000};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        timeval stv{0, 500'000};
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
-#endif
-        is_stream = true;
-
-    } else { // Serial
-        ser = serial_open(cfg.device, cfg.baud);
-        if (ser == SERIAL_INVALID) {
-            gcs_log("failed to open serial port %s", cfg.device);
-            g_link_status.store(LinkStatus::Error);
-            cleanup_sockets();
-            return;
-        }
-        is_stream = true;
-    }
-
-    // ── Receive / timeout loop ────────────────────────────────────────────────
-    MavlinkParser parser;
-    uint8_t buf[2048];
-    bool     rates_requested    = false;
-    // AVAILABLE_MODES enumeration. The spec's "request index 0 for all modes"
-    // form is not what ArduPilot implements — it replies with index 1 alone —
-    // so the list has to be walked one index at a time. The index-0 probe is
-    // still worth sending first because its number_modes field is how we learn
-    // how far to walk. Sweeps are repeated to refill gaps left by packet loss;
-    // when they run out the UI falls back to its built-in tables.
-    auto     modes_last_req   = Clock::now();
-    int      modes_cursor     = 0;      // highest index requested this sweep
-    int      modes_sweeps     = 0;
-    int      modes_probes     = 0;
-    bool     modes_logged     = false;  // one-shot completion log
-    constexpr int    MODES_MAX_SWEEPS = 3;
-    constexpr int    MODES_MAX_PROBES = 3;
-    constexpr double MODES_REQ_S      = 0.10;  // pacing between index requests
-    constexpr double MODES_PROBE_S    = 2.0;   // retry interval for the probe
-    auto     link_start         = Clock::now();
-    uint32_t last_params_gen    = 0;
-    uint32_t link_known_params_gen = 0;   // link-thread-local; avoids shared reads outside mutex
-    bool     link_params_complete  = false; // latched, so completion logs once per fetch
-    auto     last_param_time    = Clock::now();
-    // Bulk parameter fetch. `param_fetch_active` follows the PARAM_REQUEST_LIST
-    // this GCS sent, never the PARAM_VALUEs coming back — see the note on
-    // MavlinkSender::param_list_seq(). Everything below only runs inside a fetch
-    // somebody actually asked for.
-    uint32_t seen_param_list_seq = 0;
-    bool     param_fetch_active  = false;
-    int      param_stall_rounds  = 0;     // consecutive stall rounds with no new params
-    uint16_t param_stall_mark    = 0;     // params_received at the last stall round
-    size_t   last_status_count  = 0;      // track new STATUSTEXT arrivals for logging
-    bool     logged_heartbeat   = false;
-    bool     logged_fw_info     = false;
-    bool     logged_mission     = false;
-    bool     logged_timesync    = false;
-    VehicleState::UploadStatus last_upload_status = VehicleState::UploadStatus::Idle;
-
-    auto     last_rx  = Clock::now();
-    RxResult rx       = RxResult::Quiet;
-    // Far enough back that the first exchange goes out as soon as there is
-    // somewhere to send it, rather than five seconds into the link.
-    auto     last_timesync_req = Clock::now() - std::chrono::hours(1);
-
-    while (g_link_running.load()) {
-        ssize_t n = 0;
-
-        if (!is_stream) {
-            sockaddr_in src{};
-            socklen_t   src_len = sizeof(src);
-            n = recvfrom(fd, (char*)buf, sizeof(buf), 0,
-                         reinterpret_cast<sockaddr*>(&src), &src_len);
-            // A datagram socket has no end of stream: a zero-length datagram is
-            // odd but harmless, and only a hard error means the socket is gone.
-            rx = (n > 0)  ? RxResult::Data
-               : (n == 0) ? RxResult::Quiet
-               : net_error_is_transient(last_net_error()) ? RxResult::Quiet
-                                                          : RxResult::Failed;
-            if (n > 0 && !vehicle_addr_set) {
-                vehicle_addr     = src;
-                vehicle_addr_set = true;
-            }
-        } else if (is_serial) {
-            n = serial_read(ser, buf, sizeof(buf));
-            // The port is configured VMIN=0/VTIME=2 on POSIX and with an
-            // equivalent read timeout on Windows, so a timeout arrives as 0
-            // bytes. A negative result is the device itself reporting trouble —
-            // most often that it is no longer there.
-            rx = (n > 0)  ? RxResult::Data
-               : (n == 0) ? RxResult::Quiet
-                          : RxResult::Failed;
-#ifndef _WIN32
-            if (n < 0 && errno == EINTR) rx = RxResult::Quiet;
-#endif
-            if (n > 0 && !vehicle_addr_set)
-                vehicle_addr_set = true;
-        } else {
-            // recv(), not read(): Winsock sockets are not CRT file descriptors.
-            n = recv(fd, (char*)buf, sizeof(buf), 0);
-            // On a stream socket zero means the peer closed cleanly. That is a
-            // finished connection, not an idle one.
-            rx = (n > 0)  ? RxResult::Data
-               : (n == 0) ? RxResult::Closed
-               : net_error_is_transient(last_net_error()) ? RxResult::Quiet
-                                                          : RxResult::Failed;
-            if (n > 0 && !vehicle_addr_set)
-                vehicle_addr_set = true;
-        }
-
-        if (rx == RxResult::Closed) {
-            gcs_log("link closed by the vehicle");
-            g_link_status.store(LinkStatus::Timeout);
-            break;
-        }
-        if (rx == RxResult::Failed) {
-            // The usual cause is the port disappearing underneath us: an
-            // autopilot rebooting takes its USB serial device with it, which is
-            // exactly what happens after a calibration that ends in a reboot.
-            gcs_log("link read failed: %s", strerror(errno));
-            g_link_status.store(LinkStatus::Error);
-            break;
-        }
-
-        if (n > 0) {
-            last_rx = Clock::now();
-            // Mark connected on first data
-            if (g_link_status.load() == LinkStatus::Connecting) {
-                g_link_status.store(LinkStatus::Connected);
-                gcs_log("link established");
-            }
-
-            // First MAVLink message: request telemetry rates and firmware info
-            if (!rates_requested) {
-                rates_requested = true;
-                g_sender.request_message_interval(1, 1,  30,  50000); // ATTITUDE           @ 20 Hz
-                g_sender.request_message_interval(1, 1,  74, 100000); // VFR_HUD            @ 10 Hz
-                g_sender.request_message_interval(1, 1,  33, 200000); // GLOBAL_POSITION_INT @  5 Hz
-                g_sender.request_message_interval(1, 1,   1, 500000); // SYS_STATUS         @  2 Hz
-                g_sender.request_message_interval(1, 1,  24, 500000); // GPS_RAW_INT        @  2 Hz
-                g_sender.request_message_interval(1, 1, 193, 200000); // EKF_STATUS_REPORT  @  5 Hz
-                // RC_CHANNELS at 10 Hz. Fast enough that a calibration sweep
-                // catches a stick's true stop rather than wherever it happened
-                // to be sampled, and that the RC panel's bars track the sticks
-                // instead of stepping after them.
-                g_sender.request_message_interval(1, 1,  65, 100000); // RC_CHANNELS        @ 10 Hz
-                g_sender.request_autopilot_capabilities(1, 1);
-                g_sender.request_available_modes(1, 1);
-                modes_last_req = Clock::now();
-                ++modes_probes;
-                // DEBUG
-                std::fprintf(stderr, "[modes] probe for number_modes (%d/%d)\n",
-                             modes_probes, MODES_MAX_PROBES);
-                gcs_log("telemetry rates configured");
-            }
-
-            parser.parse(buf, static_cast<size_t>(n));
-
-            // Log command ACKs for user-visible commands
-            for (const auto& ack : parser.pending_acks()) {
-                g_sender.notify_ack(ack.command, ack.result);
-                const char* cname = nullptr;
-                switch (ack.command) {
-                case 400: cname = "arm/disarm";   break;
-                case  22: cname = "takeoff";      break;
-                case  20: cname = "RTL";          break;
-                case 176: cname = "mode change";  break;
-                case 218: cname = "aux function"; break;
-                default:  break;
-                }
-                // Tone only for commands with a name above, i.e. the ones a
-                // person pressed a button for. The rate and capability requests
-                // this GCS fires on connect ACK too, and a burst of beeps at
-                // every connect teaches the operator to ignore the sound.
-                if (cname)
-                    gcs_tone(ack.result == 0 ? GcsTone::Success
-                                             : GcsTone::Failure);
-
-                // DEBUG: the vehicle's verdict on our AVAILABLE_MODES request.
-                // UNSUPPORTED (3) here means the firmware predates the
-                // standard modes protocol; ACCEPTED (0) with no AVAILABLE_MODES
-                // arriving means it accepted but did not stream them.
-                if (ack.command == 512)
-                    std::fprintf(stderr,
-                                 "[modes] rx COMMAND_ACK for REQUEST_MESSAGE(512) "
-                                 "result=%u (%s)\n", ack.result,
-                                 ack.result == 0 ? "ACCEPTED"
-                               : ack.result == 1 ? "TEMPORARILY_REJECTED"
-                               : ack.result == 2 ? "DENIED"
-                               : ack.result == 3 ? "UNSUPPORTED"
-                               : ack.result == 4 ? "FAILED"
-                                                 : "other");
-                if (cname) {
-                    const char* result = (ack.result == 0) ? "accepted"
-                                       : (ack.result == 1) ? "temp. rejected"
-                                       : (ack.result == 2) ? "denied"
-                                       : (ack.result == 4) ? "failed"
-                                                           : "rejected";
-                    gcs_log("ack: %s → %s", cname, result);
-                }
-            }
-            parser.clear_acks();
-
-            // PARAM_EXT_ACK — the extended parameter protocol's reply. Unlike a
-            // PARAM_SET, which is answered with a PARAM_VALUE echo the table
-            // picks up on its own, this one goes nowhere unless it is logged:
-            // it names the parameter and says outright whether the write took.
-            for (const auto& pa : parser.pending_param_ext_acks()) {
-                const char* verdict = (pa.result == PARAM_ACK_ACCEPTED)          ? "accepted"
-                                    : (pa.result == PARAM_ACK_VALUE_UNSUPPORTED) ? "value unsupported"
-                                    : (pa.result == PARAM_ACK_FAILED)            ? "failed"
-                                    : (pa.result == PARAM_ACK_IN_PROGRESS)       ? "in progress"
-                                                                                 : "rejected";
-                gcs_log("param_ext: %s \xe2\x86\x92 %s", pa.param_id, verdict);
-                if (pa.result != PARAM_ACK_IN_PROGRESS)
-                    gcs_tone(pa.result == PARAM_ACK_ACCEPTED ? GcsTone::Success
-                                                             : GcsTone::Failure);
-            }
-            parser.clear_param_ext_acks();
-
-            // Walk the vehicle's mode list one index at a time, and restart
-            // the walk if AVAILABLE_MODES_MONITOR reports the list changed.
-            {
-                const auto&   ms    = parser.state();
-                const uint8_t tsys  = ms.sysid  ? ms.sysid  : 1;
-                const uint8_t tcomp = ms.compid ? ms.compid : 1;
-
-                if (ms.modes_dirty) {
-                    parser.clear_modes_dirty();
-                    modes_cursor = 0;
-                    modes_sweeps = 0;
-                    modes_probes = 0;
-                    modes_logged = false;
-                    gcs_log("vehicle mode list changed — re-requesting");
-                }
-
-                const double since = std::chrono::duration<double>(
-                                         Clock::now() - modes_last_req).count();
-
-                if (rates_requested && !ms.modes_complete &&
-                    modes_sweeps < MODES_MAX_SWEEPS)
-                {
-                    if (ms.modes_expected == 0) {
-                        // No number_modes yet: either the probe was lost or the
-                        // firmware does not implement the protocol at all.
-                        if (since >= MODES_PROBE_S && modes_probes < MODES_MAX_PROBES) {
-                            g_sender.request_available_modes(tsys, tcomp);
-                            modes_last_req = Clock::now();
-                            ++modes_probes;
-                            std::fprintf(stderr, "[modes] probe for number_modes (%d/%d)\n",
-                                         modes_probes, MODES_MAX_PROBES);
-                        }
-                    } else if (since >= MODES_REQ_S) {
-                        // Next index we have not received yet. Indices already
-                        // in hand are skipped, so a retry sweep only re-asks
-                        // for the genuine gaps.
-                        int next = 0;
-                        for (int i = modes_cursor + 1; i <= ms.modes_expected; ++i) {
-                            if (!ms.has_mode_index(static_cast<uint8_t>(i))) {
-                                next = i;
-                                break;
-                            }
-                        }
-                        if (next != 0) {
-                            g_sender.request_available_mode(tsys, tcomp,
-                                                            static_cast<uint8_t>(next));
-                            modes_cursor   = next;
-                            modes_last_req = Clock::now();
-                        } else {
-                            // Reached the end with gaps still open — sweep again.
-                            modes_cursor = 0;
-                            ++modes_sweeps;
-                            std::fprintf(stderr,
-                                         "[modes] sweep %d/%d ended with %zu of %u\n",
-                                         modes_sweeps, MODES_MAX_SWEEPS,
-                                         ms.available_modes.size(), ms.modes_expected);
-                        }
-                    }
-                }
-
-                if (ms.modes_complete && !modes_logged) {
-                    modes_logged = true;
-                    std::fprintf(stderr, "[modes] complete: %zu modes\n",
-                                 ms.available_modes.size());
-                    gcs_log("mode list: %zu modes", ms.available_modes.size());
-                }
-            }
-
-            // Drain per-item mission requests generated by MISSION_COUNT /
-            // MISSION_ITEM_INT handlers (one request triggers the next).
-            if (vehicle_addr_set) {
-                for (const auto& req : parser.pending_mission_reqs())
-                    g_sender.request_mission_item(req.tsys, req.tcomp, req.seq);
-            }
-            parser.clear_mission_reqs();
-
-            // Drain FC's MISSION_REQUEST_INT during mission upload
-            if (vehicle_addr_set) {
-                for (const auto& req : parser.pending_item_reqs())
-                    g_sender.send_mission_item_at(req.tsys, req.tcomp, req.seq);
-            }
-            parser.clear_item_reqs();
-
-            // Answer TIMESYNC exchanges the vehicle opened. ArduPilot asks on
-            // its own schedule as well as answering ours, and a request left
-            // unanswered is a vehicle whose clock never lines up with ours.
-            if (vehicle_addr_set) {
-                for (const auto& r : parser.pending_timesync_replies())
-                    g_sender.send_timesync(r.tsys, r.tcomp, r.tc1, r.ts1);
-            }
-            parser.clear_timesync_replies();
-
-            if (!logged_timesync && parser.state().has_timesync) {
-                logged_timesync = true;
-                const int64_t up_s = (timesync_monotonic_ns() +
-                                      parser.state().time_offset_ns) / 1000000000;
-                gcs_log("vehicle clock synced \xe2\x80\x94 up %02d:%02d:%02d",
-                        (int)(up_s / 3600), (int)((up_s / 60) % 60),
-                        (int)(up_s % 60));
-            }
-
-            const auto& ps = parser.state();
-
-            // Log new vehicle STATUSTEXT messages to the bottom bar
-            {
-                const auto& sts = parser.status_texts();
-                static const char* const kSev[] = {
-                    "EMRG","ALRT","CRIT","ERR","WARN","NOTE","INFO","DEBUG"
-                };
-                for (size_t i = last_status_count; i < sts.size(); ++i)
-                    gcs_log("[vehicle/%s] %s", kSev[sts[i].severity & 7], sts[i].text);
-                last_status_count = sts.size();
-            }
-
-            // Log first heartbeat
-            if (ps.has_heartbeat && !logged_heartbeat) {
-                logged_heartbeat = true;
-                gcs_log("heartbeat: sys=%d comp=%d", (int)ps.sysid, (int)ps.compid);
-            }
-
-            // Log firmware info once received
-            if (ps.has_fw_info && !logged_fw_info) {
-                logged_fw_info = true;
-                const char* ap = "unknown";
-                if (ps.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-                    switch (ps.type) {
-                    case MAV_TYPE_FIXED_WING:   ap = "ArduPlane";  break;
-                    case MAV_TYPE_GROUND_ROVER: ap = "ArduRover";  break;
-                    case MAV_TYPE_SUBMARINE:    ap = "ArduSub";    break;
-                    default:                    ap = "ArduCopter"; break;
-                    }
-                } else if (ps.autopilot == MAV_AUTOPILOT_PX4) {
-                    ap = "PX4";
-                }
-                gcs_log("firmware: %s %s (%.8s)", ap, ps.fw_version, ps.fw_hash);
-            }
-
-            // Log mission completion once
-            if (ps.has_mission && !logged_mission) {
-                logged_mission = true;
-                gcs_log("mission loaded: %u waypoints", (unsigned)ps.mission_count);
-                g_sender.send_mission_ack(ps.sysid, ps.compid);
-            }
-
-            // Log upload result when status changes
-            if (ps.upload_status != last_upload_status) {
-                last_upload_status = ps.upload_status;
-                if (ps.upload_status == VehicleState::UploadStatus::Accepted) {
-                    gcs_log("mission upload accepted");
-                    gcs_tone(GcsTone::Success);
-                    g_sender.clear_upload();
-                } else if (ps.upload_status == VehicleState::UploadStatus::Failed) {
-                    gcs_log("mission upload failed (result=%u)", (unsigned)ps.upload_ack_result);
-                    gcs_tone(GcsTone::Failure);
-                    g_sender.clear_upload();
-                }
-            }
-
-            // Track last-param-arrival time for retransmit logic
-            if (ps.params_generation != last_params_gen) {
-                last_params_gen = ps.params_generation;
-                last_param_time = Clock::now();
-            }
-
-            // Completion is an edge; republishing the table is not. Both used to
-            // hang off the same test, which was wrong once a fetch had finished:
-            // params_generation ticks on every PARAM_VALUE, and after completion
-            // the ones that keep arriving — the echo of a write, or the counters
-            // a vehicle saves as it runs — all arrive with params_received still
-            // equal to param_count. Every one of them therefore read as a fresh
-            // completion and logged "parameters loaded" again.
-            // (link-thread-local comparisons avoid shared reads)
-            const bool params_complete = ps.param_count > 0 &&
-                                         ps.params_received >= ps.param_count;
-            const bool params_changed  = ps.params_generation != link_known_params_gen;
-            const bool params_just_completed = params_complete && !link_params_complete;
-            link_params_complete = params_complete;
-
-            {
-                std::lock_guard<std::mutex> lk(g_mtx);
-                g_state          = ps;   // cheap: VehicleState is now all scalars
-                // Owned by this thread, not the parser — see the field's note.
-                g_state.param_fetch_active = param_fetch_active;
-                g_msg_stats      = parser.msg_stats();
-                g_total_messages = parser.total_messages();
-                g_total_bytes    = parser.total_bytes();
-                g_parse_errors   = parser.parse_errors();
-                g_status_texts.assign(parser.status_texts().begin(),
-                                      parser.status_texts().end());
-
-                // Republished on any change once the set is complete, so a value
-                // the vehicle alters on its own still reaches the table.
-                if (params_complete && params_changed) {
-                    g_params              = parser.params();
-                    g_params_generation   = ps.params_generation;
-                    link_known_params_gen = ps.params_generation;
-                }
-            }
-
-            if (params_just_completed)
-                gcs_log("parameters loaded: %u params", (unsigned)ps.param_count);
-        } else if (!rates_requested) {
-            // No data yet — check 10 s timeout
-            double elapsed = std::chrono::duration<double>(Clock::now() - link_start).count();
-            if (elapsed >= CONNECT_TIMEOUT_S) {
-                gcs_log("connection timeout after %.0f s", elapsed);
-                g_link_status.store(LinkStatus::Timeout);
-                break;
-            }
-        } else {
-            // A link that was talking and has stopped. Nothing here reports an
-            // error — UDP in particular cannot, since there is no connection to
-            // fail — so silence is the only evidence there is, and without this
-            // the panel would go on showing a live link and a frozen counter
-            // until somebody thought to reconnect.
-            const double quiet = std::chrono::duration<double>(
-                                     Clock::now() - last_rx).count();
-            if (quiet >= LINK_SILENCE_TIMEOUT_S) {
-                gcs_log("link silent for %.0f s \xe2\x80\x94 giving up", quiet);
-                g_link_status.store(LinkStatus::Timeout);
-                break;
-            }
-        }
-
-        // ── Clock sync ────────────────────────────────────────────────────────
-        // One exchange every few seconds, not one and done: the first can be
-        // dropped by a vehicle still booting, and repeating keeps the offset
-        // from drifting as the two clocks run at slightly different rates. The
-        // reply lands back in the parser, which updates the offset the topbar
-        // clock is driven from.
-        if (vehicle_addr_set) {
-            constexpr double TIMESYNC_INTERVAL_S = 5.0;
-            const double since = std::chrono::duration<double>(
-                                     Clock::now() - last_timesync_req).count();
-            if (since >= TIMESYNC_INTERVAL_S) {
-                last_timesync_req = Clock::now();
-                const int64_t ts1 =
-                    parser.timesync().begin_request(timesync_monotonic_ns());
-                g_sender.send_timesync(0, 0, 0, ts1);   // broadcast request
-            }
-        }
-
-        // Flush outbound commands
-        if (vehicle_addr_set) {
-            if (is_serial)
-                g_sender.flush_serial(ser);
-            else if (!is_stream)
-                g_sender.flush(fd, vehicle_addr);
-            else
-                g_sender.flush_stream(fd);
-        }
-
-        // ── Bulk parameter fetch: arm, retransmit, give up ────────────────────
-        {
-            const auto& ps = parser.state();
-
-            // A PARAM_REQUEST_LIST went out — from the PARAMS tab, a plugin, or
-            // our own retry below. That, and only that, opens a fetch.
-            const uint32_t list_seq = g_sender.param_list_seq();
-            if (list_seq != seen_param_list_seq) {
-                seen_param_list_seq = list_seq;
-                parser.clear_params();   // count this fetch from zero
-                param_fetch_active  = true;
-                param_stall_rounds  = 0;
-                param_stall_mark    = 0;
-                last_param_time     = Clock::now();
-            }
-
-            if (param_fetch_active && ps.param_count > 0 &&
-                ps.params_received >= ps.param_count)
-                param_fetch_active = false;   // complete
-
-            // Retransmit after a stall. Individual PARAM_REQUEST_READs are for
-            // filling the handful of gaps packet loss leaves at the end of a
-            // fetch, and are the wrong tool for a fetch that never got going:
-            // a vehicle queues them in a small fixed-depth buffer — ArduPilot's
-            // is 20 — and silently drops the rest, so asking for a thousand
-            // missing indices at once gets about twenty answered and a thousand
-            // discarded, every round, forever. PARAM_REQUEST_LIST goes down the
-            // vehicle's separate streaming path instead, which is paced against
-            // its own link budget and drops nothing; it is why pressing FETCH
-            // ALL completes a fetch that the gap-filling never could.
-            constexpr double PARAM_STALL_S       = 2.0;
-            constexpr int    PARAM_READ_BURST    = 16;  // <= a vehicle's request queue depth
-            constexpr int    PARAM_GIVEUP_ROUNDS = 5;   // ~10 s with nothing arriving
-
-            if (vehicle_addr_set && param_fetch_active &&
-                ps.param_count > 0 &&
-                ps.params_received < ps.param_count)
-            {
-                double stall = std::chrono::duration<double>(
-                                   Clock::now() - last_param_time).count();
-                if (stall >= PARAM_STALL_S) {
-                    // Rounds are only counted as lost when nothing at all
-                    // arrived, so a slow link retries as long as it is moving.
-                    if (ps.params_received == param_stall_mark) ++param_stall_rounds;
-                    else                                        param_stall_rounds = 0;
-                    param_stall_mark = ps.params_received;
-
-                    if (param_stall_rounds >= PARAM_GIVEUP_ROUNDS) {
-                        gcs_log("param fetch abandoned at %u/%u — no reply in %.0f s; "
-                                "press FETCH ALL to retry",
-                                (unsigned)ps.params_received, (unsigned)ps.param_count,
-                                PARAM_STALL_S * PARAM_GIVEUP_ROUNDS);
-                        param_fetch_active = false;
-                    } else {
-                        std::unordered_set<uint16_t> have;
-                        have.reserve(parser.params().size());
-                        for (const auto& [key, e] : parser.params())
-                            have.insert(e.index);
-
-                        std::vector<uint16_t> missing;
-                        for (uint16_t idx = 0; idx < ps.param_count; ++idx)
-                            if (have.find(idx) == have.end())
-                                missing.push_back(idx);
-
-                        if ((int)missing.size() > PARAM_READ_BURST) {
-                            g_sender.request_param_list(ps.sysid, ps.compid);
-                            // Our own retry is the same fetch continuing, not a
-                            // new one: adopt the sequence number so the arming
-                            // branch above does not reset the give-up counter
-                            // and leave this looping until the link drops.
-                            seen_param_list_seq = g_sender.param_list_seq();
-                            gcs_log("param fetch stalled at %u/%u — re-requesting full list "
-                                    "(%d missing)",
-                                    (unsigned)ps.params_received, (unsigned)ps.param_count,
-                                    (int)missing.size());
-                        } else {
-                            for (uint16_t idx : missing)
-                                g_sender.request_param_read(ps.sysid, ps.compid,
-                                                            (int16_t)idx);
-                            gcs_log("param fetch stalled at %u/%u — re-requesting %d missing",
-                                    (unsigned)ps.params_received, (unsigned)ps.param_count,
-                                    (int)missing.size());
-                        }
-                    }
-                    last_param_time = Clock::now(); // rate-limit re-requests to once per 2 s
-                }
-            }
-        }
-    }
-
-    if (is_serial) serial_close(ser);
-    else           close_socket(fd);
-    cleanup_sockets();
-}
-
-// ── Link management ───────────────────────────────────────────────────────────
-
-static std::thread g_link_thread;
-
-static void start_link(const LinkConfig& cfg)
-{
-    if (g_link_thread.joinable()) {
-        g_link_running = false;
-        g_link_thread.join();
-    }
-
-    // Clear stale telemetry from the previous link
-    {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        g_state             = VehicleState{};
-        g_params.clear();
-        g_params_generation = 0;
-        g_msg_stats.clear();
-        g_status_texts.clear();
-        g_total_messages    = 0;
-        g_total_bytes       = 0;
-        g_parse_errors      = 0;
-    }
-
-    g_link_running = true;
-    g_link_status.store(LinkStatus::Idle);  // thread sets Connecting immediately
-    g_link_thread  = std::thread(link_thread_fn, cfg);
-}
-
 // ── Frame render ──────────────────────────────────────────────────────────────
 
 static ConnectionRequest g_conn_req{};
@@ -936,27 +186,37 @@ static double  g_splash_start      = -1.0;
 
 static void render_ui()
 {
-    g_conn_req.requested  = false;
-    g_conn_req.disconnect = false;
+    g_conn_req.requested          = false;
+    g_conn_req.disconnect         = false;
+    g_conn_req.disconnect_link_id = 0;
     g_close_req           = false;
 
-    VehicleState vs;
-    std::unordered_map<std::string, ParamEntry> params;
-    std::unordered_map<uint32_t, MessageStats> stats;
-    std::vector<StatusText> status_texts;
+    // The vehicle on screen. Held for the whole frame so that a link dropping on
+    // another thread cannot destroy it midway through drawing it.
+    std::shared_ptr<Vehicle> veh = g_fleet.active();
+
+    VehicleSnapshot snap;
+    if (veh) veh->snapshot(snap);
+
+    // Bound to the names the panels below already use. An absent vehicle leaves
+    // these default-constructed, which is exactly the disconnected screen.
+    VehicleState& vs                = snap.state;
+    auto&         params            = snap.params;
+    auto&         stats             = snap.msg_stats;
+    auto&         status_texts      = snap.status_texts;
+    const uint64_t total_msg        = snap.total_messages;
+    const uint64_t total_bytes      = snap.total_bytes;
+    const uint64_t errors           = snap.parse_errors;
+
+    MavlinkSender* sender = veh ? &veh->sender() : &g_null_sender;
+
     std::deque<std::string> app_log;
-    uint64_t total_msg, total_bytes, errors;
     {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        vs           = g_state;
-        params       = g_params;
-        stats        = g_msg_stats;
-        status_texts = g_status_texts;
-        app_log      = g_app_log;
-        total_msg    = g_total_messages;
-        total_bytes  = g_total_bytes;
-        errors       = g_parse_errors;
+        std::lock_guard<std::mutex> lk(g_log_mtx);
+        app_log = g_app_log;
     }
+
+    const LinkStatus link_status = g_fleet.display_status();
 
     // Armed cue, counted in HEARTBEATs rather than seconds of wall clock. At
     // the 1 Hz ArduPilot sends them, every fifth beat is a beep about every
@@ -988,7 +248,7 @@ static void render_ui()
     // thread sets a status: one edge, one tone, whatever the cause.
     {
         static LinkStatus prev_link = LinkStatus::Idle;
-        const LinkStatus  now_link  = g_link_status.load();
+        const LinkStatus  now_link  = link_status;
         if (now_link != prev_link) {
             if (now_link == LinkStatus::Connected)
                 gcs_tone(GcsTone::Success);
@@ -1006,19 +266,56 @@ static void render_ui()
     const bool video_full = center_view_video_fullscreen();
 
     // Before any panel draws: a calibration sweep records from the live stream,
-    // not from whether its tab happens to be visible.
-    rc_tab_pump(&vs);
-    sensors_tab_pump(&vs, status_texts, ImGui::GetTime());
+    // not from whether its tab happens to be visible — and now, not from whether
+    // its aircraft is the one on screen. Every vehicle is pumped, so a compass
+    // calibration on one keeps advancing while the operator watches another.
+    {
+        const double now_s = ImGui::GetTime();
+        for (const auto& v : g_fleet.vehicles()) {
+            VehicleSnapshot vsnap;
+            v->snapshot(vsnap);
+            ui_bind_vehicle(v->id());
+            rc_tab_pump(&vsnap.state);
+            sensors_tab_pump(&vsnap.state, vsnap.status_texts, now_s);
+        }
+    }
 
-    draw_topbar(vs, stats, total_msg, total_bytes, errors, &g_sender,
-                g_link_status.load(), &g_close_req);
+    // Forget the panel state of vehicles that have gone, so a link that is
+    // disconnected and reopened does not inherit the last airframe's half-run
+    // calibration or its staged RC edits.
+    {
+        static std::vector<VehicleId> known;
+        std::vector<VehicleId> now_ids;
+        for (const auto& v : g_fleet.vehicles()) now_ids.push_back(v->id());
+
+        for (const VehicleId& old_id : known) {
+            if (std::find(now_ids.begin(), now_ids.end(), old_id) == now_ids.end())
+                ui_forget_vehicle(old_id);
+        }
+        known.swap(now_ids);
+    }
+
+    // Everything drawn from here on reads the vehicle on screen. Panels that
+    // keep per-vehicle state look this up rather than holding a static of their
+    // own — see widgets/vehicle_ui_state.hpp.
+    ui_bind_vehicle(veh ? veh->id() : VehicleId{});
+
+    // The callsign chip doubles as the vehicle switcher, so the topbar needs the
+    // fleet as well as the vehicle it is drawing.
+    const std::vector<VehicleChip> chips  = g_fleet.chips();
+    VehicleId                      picked{};
+
+    draw_topbar(vs, stats, total_msg, total_bytes, errors, sender,
+                link_status, &g_close_req, chips, g_fleet.active_id(), &picked);
+    if (picked.valid()) g_fleet.set_active(picked);
+
     if (!video_full)
-        draw_sidebar_left(&g_sender, &vs, &g_conn_req, g_link_status.load(), &params, &g_settings,
+        draw_sidebar_left(sender, &vs, &g_conn_req, link_status, &params, &g_settings,
                           &stats, total_msg, total_bytes, errors,
-                          &g_mission_pick);
-    draw_center_view(vs, &g_sender, &g_mission_pick);
+                          g_fleet.links(), &g_mission_pick);
+    draw_center_view(vs, sender, &g_mission_pick);
     if (!video_full)
-        draw_sidebar_right(vs, status_texts, &g_sender, &g_settings);
+        draw_sidebar_right(vs, status_texts, sender, &g_settings);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -1180,22 +477,13 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
 
         if (g_conn_req.disconnect) {
-            if (g_link_thread.joinable()) {
-                g_link_running = false;
-                g_link_thread.join();
-            }
-            {
-                std::lock_guard<std::mutex> lk(g_mtx);
-                g_state             = VehicleState{};
-                g_params.clear();
-                g_params_generation = 0;
-                g_msg_stats.clear();
-                g_status_texts.clear();
-                g_total_messages    = 0;
-                g_total_bytes       = 0;
-                g_parse_errors      = 0;
-            }
-            g_link_status.store(LinkStatus::Idle);
+            // The CONNECTION tab names the link to drop, since several are live
+            // at once. Zero is the catch-all for anything that still asks for
+            // "disconnect" without saying which.
+            if (g_conn_req.disconnect_link_id != 0)
+                g_fleet.disconnect(g_conn_req.disconnect_link_id);
+            else
+                g_fleet.disconnect_all();
             gcs_log("disconnected");
         } else if (g_conn_req.requested) {
             LinkConfig cfg;
@@ -1206,7 +494,7 @@ int main()
             strncpy(cfg.device, g_conn_req.device, sizeof(cfg.device) - 1);
             gcs_log("connecting: type=%d  host=%s  port=%d  dev=%s  baud=%d",
                     (int)cfg.type, cfg.host, cfg.port, cfg.device, cfg.baud);
-            start_link(cfg);
+            g_fleet.connect(cfg);
         }
 
         ImGui::Render();
@@ -1219,10 +507,9 @@ int main()
         glfwSwapBuffers(window);
     }
 
-    if (g_link_thread.joinable()) {
-        g_link_running = false;
-        g_link_thread.join();
-    }
+    // Links first, then the vehicles they were feeding: once no link thread is
+    // running, nothing can push into a vehicle's inbox or reach for its sender.
+    g_fleet.disconnect_all();
 
     settings_save(g_settings);
 

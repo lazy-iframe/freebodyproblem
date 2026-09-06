@@ -41,9 +41,88 @@ static inline int socket_write(int fd, const char* buf, int len)
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+#include <bitset>
+#include <mutex>
 #include <mavlink/ardupilotmega/mavlink.h>
-
 #include "../frontend/app_log.hpp"   // gcs_log — thread-safe, see the header
+
+namespace {
+
+// MAVLink TX channel allocation.
+//
+// A channel is an index into the library's global array of per-channel status,
+// which is where the outgoing sequence counter lives. Handing each sender its
+// own means two senders never touch the same counter; the free list exists so a
+// vehicle that comes and goes over a session does not exhaust the sixteen.
+//
+// Channel 0 is the shared fallback once they run out. Senders on it serialise
+// their packing through pack_mutex() below, because sharing a channel means
+// sharing that sequence counter and an unguarded increment of it is a race.
+// Callers are expected to cap vehicle count below MAX_CHANNELS so this stays
+// unreachable; it exists so that exceeding the cap degrades rather than breaks.
+std::mutex&                         chan_mutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+std::bitset<MavlinkSender::MAX_CHANNELS>& chan_taken()
+{
+    static std::bitset<MavlinkSender::MAX_CHANNELS> b;
+    return b;
+}
+
+// Serialises packing for senders that had to share channel 0.
+std::mutex& pack_mutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+// Held only by a sender sharing channel 0; a no-op lock otherwise.
+struct PackLock {
+    std::unique_lock<std::mutex> lk;
+    explicit PackLock(bool shared)
+    {
+        if (shared) lk = std::unique_lock<std::mutex>(pack_mutex());
+    }
+};
+
+// Returns the channel, or -1 when none is free and the caller must share 0.
+int acquire_channel()
+{
+    std::lock_guard<std::mutex> lk(chan_mutex());
+    auto& taken = chan_taken();
+    for (size_t i = 0; i < taken.size(); ++i) {
+        if (!taken.test(i)) { taken.set(i); return static_cast<int>(i); }
+    }
+    return -1;
+}
+
+void release_channel(uint8_t chan, bool shared)
+{
+    if (shared) return;
+    std::lock_guard<std::mutex> lk(chan_mutex());
+    auto& taken = chan_taken();
+    if (chan < taken.size()) taken.reset(chan);
+}
+
+} // namespace
+
+MavlinkSender::MavlinkSender() : MavlinkSender(acquire_channel()) {}
+
+MavlinkSender::MavlinkSender(int acquired)
+    : chan_(acquired < 0 ? uint8_t{0} : static_cast<uint8_t>(acquired))
+    , shared_chan_(acquired < 0)
+{
+    if (shared_chan_)
+        std::fprintf(stderr,
+                     "[mavlink] TX channels exhausted (%d); sharing channel 0\n",
+                     MAX_CHANNELS);
+}
+
+MavlinkSender::~MavlinkSender() { release_channel(chan_, shared_chan_); }
+
 
 using Clock = std::chrono::steady_clock;
 
@@ -226,7 +305,8 @@ void MavlinkSender::request_param_list(uint8_t tsys, uint8_t tcomp)
 {
     // PARAM_REQUEST_LIST (#21) — FC responds with a PARAM_VALUE stream
     mavlink_message_t msg;
-    mavlink_msg_param_request_list_pack(GCS_SYSID, GCS_COMPID, &msg, tsys, tcomp);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_param_request_list_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg, tsys, tcomp);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -247,8 +327,9 @@ void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,
 {
     // PARAM_REQUEST_READ (#20) — empty param_id means "look up by index"
     mavlink_message_t msg;
-    mavlink_msg_param_request_read_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                        tsys, tcomp, "", param_index);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_param_request_read_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                             tsys, tcomp, "", param_index);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
@@ -260,8 +341,9 @@ void MavlinkSender::set_param(uint8_t tsys, uint8_t tcomp,
 {
     // PARAM_SET (#23) — FC echoes the accepted value back as PARAM_VALUE
     mavlink_message_t msg;
-    mavlink_msg_param_set_pack(GCS_SYSID, GCS_COMPID, &msg,
-                               tsys, tcomp, param_id, value, param_type);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_param_set_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                    tsys, tcomp, param_id, value, param_type);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -308,8 +390,9 @@ void MavlinkSender::set_param_ext(uint8_t tsys, uint8_t tcomp,
     encode_param_ext_value(payload, value, param_type);
 
     mavlink_message_t msg;
-    mavlink_msg_param_ext_set_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                   tsys, tcomp, param_id, payload, param_type);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_param_ext_set_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                        tsys, tcomp, param_id, payload, param_type);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -321,8 +404,9 @@ void MavlinkSender::set_param_ext(uint8_t tsys, uint8_t tcomp,
 void MavlinkSender::request_mission_list(uint8_t tsys, uint8_t tcomp)
 {
     mavlink_message_t msg;
-    mavlink_msg_mission_request_list_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                           tsys, tcomp, MAV_MISSION_TYPE_MISSION);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_mission_request_list_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                                tsys, tcomp, MAV_MISSION_TYPE_MISSION);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
@@ -332,8 +416,9 @@ void MavlinkSender::request_mission_list(uint8_t tsys, uint8_t tcomp)
 void MavlinkSender::request_mission_item(uint8_t tsys, uint8_t tcomp, uint16_t seq)
 {
     mavlink_message_t msg;
-    mavlink_msg_mission_request_int_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                         tsys, tcomp, seq, MAV_MISSION_TYPE_MISSION);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_mission_request_int_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                              tsys, tcomp, seq, MAV_MISSION_TYPE_MISSION);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
@@ -343,11 +428,12 @@ void MavlinkSender::request_mission_item(uint8_t tsys, uint8_t tcomp, uint16_t s
 void MavlinkSender::send_mission_ack(uint8_t tsys, uint8_t tcomp)
 {
     mavlink_message_t msg;
-    mavlink_msg_mission_ack_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                  tsys, tcomp,
-                                  MAV_MISSION_ACCEPTED,
-                                  MAV_MISSION_TYPE_MISSION,
-                                  0);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_mission_ack_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                       tsys, tcomp,
+                                       MAV_MISSION_ACCEPTED,
+                                       MAV_MISSION_TYPE_MISSION,
+                                       0);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
@@ -358,8 +444,9 @@ void MavlinkSender::send_timesync(uint8_t tsys, uint8_t tcomp,
                                   int64_t tc1, int64_t ts1)
 {
     mavlink_message_t msg;
-    mavlink_msg_timesync_pack(GCS_SYSID, GCS_COMPID, &msg,
-                              tc1, ts1, tsys, tcomp);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_timesync_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                   tc1, ts1, tsys, tcomp);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
@@ -370,11 +457,12 @@ void MavlinkSender::start_upload(uint8_t tsys, uint8_t tcomp,
                                   std::vector<MissionItem> items)
 {
     mavlink_message_t msg;
-    mavlink_msg_mission_count_pack(GCS_SYSID, GCS_COMPID, &msg,
-                                   tsys, tcomp,
-                                   (uint16_t)items.size(),
-                                   MAV_MISSION_TYPE_MISSION,
-                                   0 /* opaque_id */);
+    PackLock _pl(shared_chan_);
+    mavlink_msg_mission_count_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                        tsys, tcomp,
+                                        (uint16_t)items.size(),
+                                        MAV_MISSION_TYPE_MISSION,
+                                        0 /* opaque_id */);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
 
@@ -390,8 +478,9 @@ void MavlinkSender::send_mission_item_at(uint8_t tsys, uint8_t tcomp, uint16_t s
 
     const MissionItem& it = upload_items_[seq];
     mavlink_message_t msg;
-    mavlink_msg_mission_item_int_pack(
-        GCS_SYSID, GCS_COMPID, &msg,
+    PackLock _pl(shared_chan_);
+    mavlink_msg_mission_item_int_pack_chan(
+        GCS_SYSID, GCS_COMPID, chan_, &msg,
         tsys, tcomp,
         it.seq,
         it.frame,
@@ -427,8 +516,9 @@ void MavlinkSender::request_message_interval(uint8_t tsys, uint8_t tcomp,
     // MAV_CMD_SET_MESSAGE_INTERVAL = 511
     // param1 = message ID, param2 = interval in microseconds
     mavlink_message_t msg;
-    mavlink_msg_command_long_pack(
-        GCS_SYSID, GCS_COMPID, &msg,
+    PackLock _pl(shared_chan_);
+    mavlink_msg_command_long_pack_chan(
+        GCS_SYSID, GCS_COMPID, chan_, &msg,
         tsys, tcomp,
         511, 0,
         (float)message_id, (float)interval_us,
@@ -560,9 +650,9 @@ void MavlinkSender::enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t c
                                          float p4, float p5, float p6, float p7)
 {
     mavlink_message_t msg;
-    mavlink_msg_command_long_pack(
-        GCS_SYSID, GCS_COMPID,
-        &msg,
+    PackLock _pl(shared_chan_);
+    mavlink_msg_command_long_pack_chan(
+        GCS_SYSID, GCS_COMPID, chan_, &msg,
         tsys, tcomp,
         cmd,
         0,              // confirmation (0 = first transmission)

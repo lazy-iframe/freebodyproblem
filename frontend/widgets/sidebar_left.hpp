@@ -23,10 +23,16 @@
 #include "../../backend/mavlink_parser.hpp"
 #include "../../backend/mavlink_sender.hpp"
 #include "../../backend/connection.hpp"
+#include "../../backend/vehicle.hpp"
+#include "../../backend/link.hpp"
 #include "../settings.hpp"
 #include "../mission_pick.hpp"
 
 // Filled for one frame when the user presses Connect or Disconnect.
+//
+// Connect no longer implies replacing whatever link is already open: several
+// links can be live at once, each carrying its own vehicles. Disconnect
+// therefore has to say *which* one, which is what disconnect_link_id is for.
 struct ConnectionRequest {
     ConnType type    = ConnType::UDP;
     char     host[64]   = "0.0.0.0"; // UDP bind host / TCP remote host
@@ -35,6 +41,7 @@ struct ConnectionRequest {
     int      baud       = 57600;
     bool     requested   = false;     // true for one frame when Connect is pressed
     bool     disconnect  = false;     // true for one frame when Disconnect is pressed
+    uint32_t disconnect_link_id = 0;  // which link to drop; 0 means all of them
 };
 
 // Feed the RC panel's calibration the live receiver stream.
@@ -43,6 +50,15 @@ struct ConnectionRequest {
 // draw, because a calibration sweep has to keep recording while the operator is
 // looking at something else — switching to PARAMS mid-sweep must not silently
 // stop measuring, and in fullscreen video the sidebar is not drawn at all.
+// Both pumps run for EVERY vehicle in the fleet each frame, not only the one on
+// screen. That is the same reason they exist at all, one step up: a calibration
+// is a conversation the vehicle is driving, and it keeps asking whether or not
+// its panel — or now its aircraft — is the one being looked at. Miss the
+// messages and the exchange stalls with the vehicle waiting on an answer that
+// will never come.
+//
+// Bind the vehicle with ui_bind_vehicle() before drawing a panel or pumping it;
+// see widgets/vehicle_ui_state.hpp.
 void rc_tab_pump(const VehicleState* vs);
 
 // Feed the SENSORS panel's calibrations — accelerometer and gyroscope.
@@ -65,4 +81,5 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        uint64_t total_messages,
                        uint64_t total_bytes,
                        uint64_t parse_errors,
+                       const std::vector<LinkInfo>& links,
                        MissionPickState* pick = nullptr);
