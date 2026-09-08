@@ -63,6 +63,18 @@ static CenterMode s_mode = CenterMode::MapAndVideo;
 // from them that they did not just ask to hide.
 static bool s_video_full = false;
 
+// Fullscreen map: the second press of MAP, when MAP is already the mode.
+// Unlike the feed's, this one keeps the left sidebar — the tabs are how a
+// mission is planned, and the map is what a mission is planned on, so the two
+// are wanted at once. What it drops is the right sidebar and the plugin rail,
+// whose content comes back as the overlay in the map's top-right corner.
+static bool s_map_full = false;
+
+// The map's rectangle as it was last drawn. The overlay is submitted after the
+// centre view, by the render loop, and needs to know where the map ended up;
+// this is the one place that computes it.
+static float s_map_x = 0.0f, s_map_y = 0.0f, s_map_w = 0.0f, s_map_h = 0.0f;
+
 static constexpr float HEADER_H = 30.0f;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -274,21 +286,30 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
 
     // Escape is the way out that does not require finding the button again.
     // Skipped while a popup owns the key, or it would close both at once.
-    if (s_video_full &&
+    if ((s_video_full || s_map_full) &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
                                      ImGuiPopupFlags_AnyPopupLevel) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         s_video_full = false;
+        s_map_full   = false;
+    }
 
     // Windowed, the rail has a column of its own and the picture ends where
     // that column starts. Fullscreen, the band is the whole window below the
     // topbar and the rail floats over the picture's right edge — there are no
     // sidebars left to take the width from, and covering a strip of feed beats
     // shrinking all of it.
-    const bool  full   = center_view_video_fullscreen();
+    const bool  full     = center_view_video_fullscreen();
+    const bool  map_full = center_view_map_fullscreen();
+
+    // Map fullscreen takes the right sidebar's width and the rail's column and
+    // gives both to the map, leaving the left sidebar where it is. So the band
+    // starts where it always did and runs to the right edge of the screen.
     const float band_x = full ? 0.0f : l.center_x;
-    const float band_w = full ? ImGui::GetIO().DisplaySize.x : l.band_w;
-    const float vid_w  = full ? band_w : l.center_w;
+    const float band_w = full     ? ImGui::GetIO().DisplaySize.x
+                       : map_full ? ImGui::GetIO().DisplaySize.x - l.left_w
+                                  : l.band_w;
+    const float vid_w  = (full || map_full) ? band_w : l.center_w;
     const float rail_x = full ? band_x + band_w - l.plugin_w : l.plugin_x;
 
     // ── Poll GStreamer bus for errors / EOS ───────────────────────────────────
@@ -321,6 +342,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             const ImVec2 wp = ImGui::GetWindowPos();
             const char*  title =
                 full                              ? "SENSOR FEED \xe2\x80\x94 FULLSCREEN  [ESC]"
+              : map_full                          ? "CARTOGRAPH \xe2\x80\x94 FULLSCREEN  [ESC]"
               : (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED"
               : (s_mode == CenterMode::MapOnly)   ? "CARTOGRAPH \xe2\x80\x94 2D / NORTH-UP"
                                                   : "SENSOR FEED / CARTOGRAPH";
@@ -341,7 +363,11 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             full                              ? "EXIT FULL###m0"
           : (s_mode == CenterMode::VideoOnly) ? "VIDEO FULL###m0"
                                               : "VIDEO###m0";
-        const char*  btn_labels[] = { video_label, "MAP###m1", "MAP + VIDEO###m2" };
+        const char* map_label =
+            map_full                          ? "EXIT FULL###m1"
+          : (s_mode == CenterMode::MapOnly)   ? "MAP FULL###m1"
+                                              : "MAP###m1";
+        const char*  btn_labels[] = { video_label, map_label, "MAP + VIDEO###m2" };
         const CenterMode btn_modes[] = {
             CenterMode::VideoOnly, CenterMode::MapOnly, CenterMode::MapAndVideo };
         constexpr float BTN_W = 108.f, BTN_H = 22.f, BTN_GAP = 3.f;
@@ -353,13 +379,19 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             ImGui::SetCursorPos({ btns_x + i * (BTN_W + BTN_GAP),
                                   (HEADER_H - BTN_H) * 0.5f });
             if (ui_tab_button(btn_labels[i], { BTN_W, BTN_H }, s_mode == btn_modes[i])) {
-                // Pressing VIDEO while VIDEO is already the mode is the
-                // fullscreen toggle; any other mode button drops out of it.
-                if (btn_modes[i] == CenterMode::VideoOnly &&
-                    s_mode == CenterMode::VideoOnly)
+                // Pressing a mode button while that mode is already showing is
+                // its fullscreen toggle; any other button drops out of both.
+                const bool second_press = (s_mode == btn_modes[i]);
+                if (btn_modes[i] == CenterMode::VideoOnly && second_press) {
                     s_video_full = !s_video_full;
-                else
+                    s_map_full   = false;
+                } else if (btn_modes[i] == CenterMode::MapOnly && second_press) {
+                    s_map_full   = !s_map_full;
                     s_video_full = false;
+                } else {
+                    s_video_full = false;
+                    s_map_full   = false;
+                }
                 s_mode = btn_modes[i];
             }
         }
@@ -581,6 +613,11 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
         s_goto.guided        = vehicle_in_guided(vs);
         s_goto.current_alt_m = vs.alt_rel;
 
+        s_map_x = band_x;
+        s_map_y = content_top + vid_h;
+        s_map_w = vid_w;
+        s_map_h = map_h;
+
         draw_map_view(vs.lat, vs.lon, vs.has_global_pos,
                       (float)vs.heading, vs.has_vfr,
                       band_x, content_top + vid_h,
@@ -616,8 +653,10 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     // and fullscreen as an overlay over the feed — where being last is what
     // puts it on top, and what keeps the buttons reachable without dropping out
     // of fullscreen first.
-    draw_plugin_rail(vs, sender, rail_x, content_top, l.plugin_w, content_h,
-                     full);
+    // The rail is one of the things map-fullscreen trades away for map width.
+    if (!map_full)
+        draw_plugin_rail(vs, sender, rail_x, content_top, l.plugin_w, content_h,
+                         full);
 }
 
 // ── center_view_shutdown ──────────────────────────────────────────────────────
@@ -632,6 +671,16 @@ void center_view_shutdown()
 bool center_view_video_fullscreen()
 {
     return s_video_full && s_mode == CenterMode::VideoOnly;
+}
+
+bool center_view_map_fullscreen()
+{
+    return s_map_full && s_mode == CenterMode::MapOnly;
+}
+
+void center_view_map_rect(float& x, float& y, float& w, float& h)
+{
+    x = s_map_x; y = s_map_y; w = s_map_w; h = s_map_h;
 }
 
 // ── Plugin context ────────────────────────────────────────────────────────────

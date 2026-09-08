@@ -297,6 +297,12 @@ void Vehicle::loop()
             sender_.request_message_interval(tsys, tcomp,   1, 500000); // SYS_STATUS          @  2 Hz
             sender_.request_message_interval(tsys, tcomp,  24, 500000); // GPS_RAW_INT         @  2 Hz
             sender_.request_message_interval(tsys, tcomp, 193, 200000); // EKF_STATUS_REPORT   @  5 Hz
+            // HOME_POSITION at 0.5 Hz. A vehicle announces home when it sets or
+            // moves it, but home is usually already set by the time a GCS
+            // connects — and that announcement is long gone. Streaming it
+            // slowly costs nothing and means the map has home from the first
+            // couple of seconds, however late the operator joined.
+            sender_.request_message_interval(tsys, tcomp, 242, 2000000); // HOME_POSITION       @0.5 Hz
             // RC_CHANNELS at 10 Hz. Fast enough that a calibration sweep catches
             // a stick's true stop rather than wherever it happened to be
             // sampled, and that the RC panel's bars track the sticks instead of

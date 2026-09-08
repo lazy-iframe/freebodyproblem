@@ -527,6 +527,33 @@ void map_track_clear()
     g_tracks.by_vehicle[ui_bound_vehicle()].pts.clear();
 }
 
+// ── Home symbol ───────────────────────────────────────────────────────────────
+//
+// A helipad: the H inside its circle, which is what the marking on the ground
+// looks like from the air. Drawn as strokes rather than as the letter in a
+// font, so it keeps its weight and its proportions at any size and matches the
+// rest of the vector chrome on this map.
+
+static void draw_home(ImDrawList* dl, ImVec2 c, bool active)
+{
+    const float A = active ? 1.0f : 0.55f;
+
+    constexpr float R  = 11.0f;   // pad radius
+    constexpr float HW = 4.5f;    // half-width of the H
+    constexpr float HH = 5.5f;    // half-height of the H
+
+    // Green rather than the aircraft's red or the target's amber: home is the
+    // one mark on the map that is neither the vehicle nor an instruction to it.
+    const ImU32 col = ui_col(g_theme.col_ok, A);
+
+    dl->AddCircleFilled(c, R, ui_col(g_theme.bg_topbar, 0.60f * A));
+    dl->AddCircle      (c, R, col, 0, 2.0f);
+
+    dl->AddLine({ c.x - HW, c.y - HH }, { c.x - HW, c.y + HH }, col, 2.0f);
+    dl->AddLine({ c.x + HW, c.y - HH }, { c.x + HW, c.y + HH }, col, 2.0f);
+    dl->AddLine({ c.x - HW, c.y      }, { c.x + HW, c.y      }, col, 2.0f);
+}
+
 // ── Aircraft symbol ───────────────────────────────────────────────────────────
 //
 // One vehicle: the airframe, its heading line, and the label naming it. Drawn
@@ -1003,6 +1030,14 @@ void draw_map_view(double lat, double lon, bool has_pos,
             dl->AddPolyline(scr.data(), (int)scr.size(),
                             ui_col(g_theme.map_track, mv.active ? 1.0f : 0.40f),
                             ImDrawFlags_None, mv.active ? 3.0f : 2.0f);
+        });
+
+        // ── Home ──────────────────────────────────────────────────────────────
+        // Under the aircraft: a vehicle sitting on its own home must not be
+        // hidden by the pad it is standing on.
+        in_draw_order([&](const MapVehicle& mv) {
+            if (!mv.has_home) return;
+            draw_home(dl, project(mv.home_lat, mv.home_lon), mv.active);
         });
 
         // ── Aircraft ──────────────────────────────────────────────────────────

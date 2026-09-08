@@ -215,9 +215,21 @@ void draw_topbar(const VehicleState& vs,
             const float chip_h = 32.0f;
             const float chip_y = (TOPBAR_H - chip_h) * 0.5f;
 
-            char id_s[24];
-            if (vs.has_heartbeat)
-                snprintf(id_s, sizeof(id_s), "SYS%d\xc2\xb7%d", (int)vs.sysid, (int)vs.compid);
+            // Fleet's number for the vehicle on screen — the same "(2)" its
+            // symbol carries on the map and its row carries in the switcher.
+            // Looked up here rather than read off VehicleState: the number is
+            // the GCS's own bookkeeping, not something the aircraft reports.
+            uint32_t chip_num = 0;
+            for (const auto& v : vehicles)
+                if (v.id == active) { chip_num = v.number; break; }
+
+            char id_s[32];
+            if (vs.has_heartbeat && chip_num != 0)
+                snprintf(id_s, sizeof(id_s), "(%u) SYS%d\xc2\xb7%d",
+                         (unsigned)chip_num, (int)vs.sysid, (int)vs.compid);
+            else if (vs.has_heartbeat)
+                snprintf(id_s, sizeof(id_s), "SYS%d\xc2\xb7%d",
+                         (int)vs.sysid, (int)vs.compid);
             else
                 snprintf(id_s, sizeof(id_s), "NO A/C");
 
@@ -282,9 +294,13 @@ void draw_topbar(const VehicleState& vs,
 
                     const bool is_active = (v.id == active);
 
+                    // Led by the GCS's own number for this vehicle, the same
+                    // "(2)" its symbol carries on the map — which is what makes
+                    // the two rows reading SYS1 tellable apart at a glance,
+                    // rather than only by the link name on the line below.
                     char row[48];
-                    snprintf(row, sizeof(row), "SYS%d\xc2\xb7%d",
-                             (int)v.id.sysid, (int)v.compid);
+                    snprintf(row, sizeof(row), "(%u) SYS%d\xc2\xb7%d",
+                             (unsigned)v.number, (int)v.id.sysid, (int)v.compid);
 
                     // Two lines per row: who it is, and where it came from.
                     // Selectable spans both so the whole block is the target.

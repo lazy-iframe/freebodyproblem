@@ -170,6 +170,15 @@ struct VehicleState {
     float  alt_asl = 0, alt_rel = 0;
     bool   has_global_pos = false;
 
+    // HOME_POSITION (#242)
+    //
+    // Where the vehicle will return to, and the datum every "relative"
+    // altitude in this GCS is relative to. Sent when the vehicle sets or moves
+    // home, and streamed slowly on request — see the connect burst.
+    double home_lat = 0, home_lon = 0;
+    float  home_alt_asl = 0;          // metres above mean sea level
+    bool   has_home = false;
+
     // GPS_RAW_INT (#24)
     uint8_t gps_fix_type   = 0;
     uint8_t satellites_vis = 0;

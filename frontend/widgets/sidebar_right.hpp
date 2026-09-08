@@ -28,3 +28,10 @@ void draw_sidebar_right(const VehicleState& vs,
                         const std::vector<StatusText>& status_texts,
                         MavlinkSender* sender,
                         AppSettings* settings);
+
+// The corner block the fullscreen map shows in place of the right sidebar:
+// attitude and the event log, semi-transparent, in the map's top-right corner.
+// Call it after draw_center_view() — later submission is what puts it over the
+// map — and only while center_view_map_fullscreen() is true.
+void draw_map_overlay(const VehicleState& vs,
+                      const std::vector<StatusText>& status_texts);

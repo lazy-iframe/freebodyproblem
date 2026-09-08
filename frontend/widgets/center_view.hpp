@@ -39,6 +39,18 @@ void center_view_shutdown();   // stop video + delete GL texture — call before
 // button. The panels it displaces (both sidebars) skip drawing themselves.
 bool center_view_video_fullscreen();
 
+// True while the map is fullscreen — the second press of the MAP mode button.
+// It displaces the right sidebar and the plugin rail, and keeps the left one:
+// the tabs are how a mission is planned and the map is what it is planned on.
+// The render loop skips the right sidebar and draws draw_map_overlay() over the
+// map instead, which is where the attitude and the event log go.
+bool center_view_map_fullscreen();
+
+// The map's rectangle as the centre view last drew it. For the overlay, which
+// is submitted after this panel — later submission is what puts it on top —
+// and so has to be told where the map ended up.
+void center_view_map_rect(float& x, float& y, float& w, float& h);
+
 // The context handed to plugins — vehicle, link and live camera state. Built
 // here because this is where the camera state lives, and shared so the rail's
 // buttons and the feed's click handlers see exactly the same picture.

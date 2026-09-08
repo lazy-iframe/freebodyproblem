@@ -45,6 +45,11 @@ struct MapVehicle {
     float     heading = 0.0f;
     bool      has_hdg = false;
     bool      active  = false;    // the vehicle every other panel is showing
+
+    // HOME_POSITION. Where this aircraft returns to, drawn as a helipad.
+    double    home_lat = 0.0;
+    double    home_lon = 0.0;
+    bool      has_home = false;
 };
 
 // Record one position sample on the bound vehicle's trail.

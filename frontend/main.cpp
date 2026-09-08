@@ -269,6 +269,12 @@ static void render_ui()
     // submitted after the sidebars and simply covers them in the meantime.
     const bool video_full = center_view_video_fullscreen();
 
+    // Map fullscreen keeps the left sidebar and takes the right one's width,
+    // giving the attitude and the event log back as an overlay in the map's
+    // own corner. Read here for the same reason as the feed's above: a toggle
+    // takes effect on the next frame, not halfway through this one.
+    const bool map_full = center_view_map_fullscreen();
+
     // Before any panel draws: a calibration sweep records from the live stream,
     // not from whether its tab happens to be visible — and now, not from whether
     // its aircraft is the one on screen. Every vehicle is pumped, so a compass
@@ -296,7 +302,10 @@ static void render_ui()
             mv.has_pos = vsnap.state.has_global_pos;
             mv.heading = (float)vsnap.state.heading;
             mv.has_hdg = vsnap.state.has_vfr;
-            mv.active  = veh && (v->id() == veh->id());
+            mv.active   = veh && (v->id() == veh->id());
+            mv.home_lat = vsnap.state.home_lat;
+            mv.home_lon = vsnap.state.home_lon;
+            mv.has_home = vsnap.state.has_home;
             g_map_fleet.push_back(mv);
         }
 
@@ -343,8 +352,12 @@ static void render_ui()
                           &stats, total_msg, total_bytes, errors,
                           g_fleet.links(), &g_mission_pick);
     draw_center_view(vs, sender, &g_mission_pick, &g_map_fleet);
-    if (!video_full)
+    if (!video_full && !map_full)
         draw_sidebar_right(vs, status_texts, sender, &g_settings);
+
+    // After the centre view, which is what puts it over the map.
+    if (map_full)
+        draw_map_overlay(vs, status_texts);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────

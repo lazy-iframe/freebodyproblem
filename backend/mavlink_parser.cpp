@@ -120,6 +120,7 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         case MAVLINK_MSG_ID_GPS_RAW_INT:
         case MAVLINK_MSG_ID_ATTITUDE:
         case MAVLINK_MSG_ID_GLOBAL_POSITION_INT:
+        case MAVLINK_MSG_ID_HOME_POSITION:
         case MAVLINK_MSG_ID_VFR_HUD:
         case MAVLINK_MSG_ID_EKF_STATUS_REPORT:
         case MAVLINK_MSG_ID_RC_CHANNELS:
@@ -246,6 +247,16 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         state_.pitch       = att.pitch * RAD2DEG;
         state_.yaw         = att.yaw   * RAD2DEG;
         state_.has_attitude = true;
+        break;
+    }
+
+    case MAVLINK_MSG_ID_HOME_POSITION: {
+        mavlink_home_position_t hp;
+        mavlink_msg_home_position_decode(&msg, &hp);
+        state_.home_lat     = hp.latitude  / 1e7;
+        state_.home_lon     = hp.longitude / 1e7;
+        state_.home_alt_asl = hp.altitude  / 1000.0f;
+        state_.has_home     = true;
         break;
     }
 

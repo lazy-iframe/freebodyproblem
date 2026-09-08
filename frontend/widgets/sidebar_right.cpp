@@ -17,6 +17,7 @@
 
 
 #include "sidebar_right.hpp"
+#include "center_view.hpp"
 #include "vehicle_ui_state.hpp"
 #include "layout.hpp"
 #include "theme.hpp"
@@ -44,16 +45,32 @@ static constexpr float GRID_CELL_H = 66.0f;
 
 // ── Artificial horizon (local to this TU) ────────────────────────────────────
 
+// `text_size` overrides the size the labels are drawn at; 0 keeps the current
+// font's own. The ball scales with `size` but its lettering does not, so at the
+// diameter the fullscreen map's overlay asks for, sidebar-sized text fills the
+// instrument instead of labelling it. Everything is drawn through the draw
+// list anyway, so an arbitrary size costs nothing but the argument.
 static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_deg,
                                      float airspeed_ms, int throttle_pct, bool has_vfr,
-                                     float size)
+                                     float size, float text_size = 0.0f)
 {
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     const ImVec2 p0  = ImGui::GetCursorScreenPos();
     const float  cx  = p0.x + size * 0.5f;
     const float  cy  = p0.y + size * 0.5f;
     const float  r   = size * 0.45f;
-    const float  fh  = ImGui::GetTextLineHeight();
+
+    // The mono micro font when a size is asked for: digits of one width are
+    // what the label-width estimates below assume, and it stays crisp small.
+    ImFont* const fnt = (text_size > 0.0f && g_font_micro) ? g_font_micro
+                                                           : ImGui::GetFont();
+    const float  ts  = (text_size > 0.0f) ? text_size : ImGui::GetFontSize();
+    const float  fh  = ts;
+
+    // Per-character advance. The constants below were measured against the
+    // default font at its own size, so they scale with the ratio — at
+    // text_size 0 this is exactly 1 and nothing about the old sizing moves.
+    const float  k   = ts / ImGui::GetFontSize();
 
     const float roll_rad = roll_deg  * (float)M_PI / 180.0f;
     const float pitch_px = pitch_deg * (r / 45.0f);
@@ -123,12 +140,12 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
         if (deg != 5 && deg != -5) {
             char buf[8];
             snprintf(buf, sizeof(buf), "%d", deg);
-            const float tw  = (float)strlen(buf) * 6.0f;
+            const float tw  = (float)strlen(buf) * 6.0f * k;
             const float lx  = mx + ldx * (hl + r * 0.04f);
             const float ly  = my + ldy * (hl + r * 0.04f);
             dl->AddRectFilled({ lx - 1, ly - 1 }, { lx + tw + 1, ly + fh + 1 },
                               ah_pitch_label_bg());
-            dl->AddText({ lx, ly - fh * 0.5f + 1 }, ah_pitch_label(), buf);
+            dl->AddText(fnt, ts, { lx, ly - fh * 0.5f + 1 }, ah_pitch_label(), buf);
         }
     }
 
@@ -140,32 +157,32 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
     if (has_vfr) {
         char as_buf[16];
         snprintf(as_buf, sizeof(as_buf), "%.1f m/s", (double)airspeed_ms);
-        const float tw = (float)strlen(as_buf) * 6.0f + 6.0f;
+        const float tw = (float)strlen(as_buf) * 6.0f * k + 6.0f * k;
         const float bx = cx - r * 0.60f - tw * 0.5f;
         const float by = cy - r * 0.62f;
         dl->AddRectFilled({ bx - 2, by - 2 }, { bx + tw, by + fh + 2 },
                           ah_overlay_bg(), 2.0f);
-        dl->AddText({ bx, by }, ah_airspeed_text(), as_buf);
+        dl->AddText(fnt, ts, { bx, by }, ah_airspeed_text(), as_buf);
 
         char thr_buf[8];
         snprintf(thr_buf, sizeof(thr_buf), "%d%%", throttle_pct);
-        const float tw2 = (float)strlen(thr_buf) * 6.0f + 6.0f;
+        const float tw2 = (float)strlen(thr_buf) * 6.0f * k + 6.0f * k;
         const float bx2 = cx + r * 0.35f;
         const float by2 = cy - r * 0.62f;
         dl->AddRectFilled({ bx2 - 2, by2 - 2 }, { bx2 + tw2, by2 + fh + 2 },
                           ah_overlay_bg(), 2.0f);
-        dl->AddText({ bx2, by2 }, ah_throttle_text(), thr_buf);
+        dl->AddText(fnt, ts, { bx2, by2 }, ah_throttle_text(), thr_buf);
     }
 
     {
         char hdg_buf[12];
         snprintf(hdg_buf, sizeof(hdg_buf), "%.0f\xc2\xb0", (double)yaw_deg);
-        const float tw  = (float)strlen(hdg_buf) * 6.0f + 6.0f;
+        const float tw  = (float)strlen(hdg_buf) * 6.0f * k + 6.0f * k;
         const float bx  = cx - tw * 0.5f;
         const float by  = cy + r * 0.65f;
         dl->AddRectFilled({ bx - 2, by - 2 }, { bx + tw, by + fh + 2 },
                           ah_overlay_bg(), 2.0f);
-        dl->AddText({ bx, by }, ah_heading_text(), hdg_buf);
+        dl->AddText(fnt, ts, { bx, by }, ah_heading_text(), hdg_buf);
     }
 
     dl->PopClipRect();
@@ -190,10 +207,10 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
                 const float label_r = arc_r + r * 0.14f;
                 char buf[8];
                 snprintf(buf, sizeof(buf), "%d", (int)fabsf(t));
-                const float tw = (float)strlen(buf) * 5.5f;
+                const float tw = (float)strlen(buf) * 5.5f * k;
                 const float tx = cx + cosf(a) * label_r - tw * 0.5f;
                 const float ty = cy + sinf(a) * label_r - fh * 0.5f;
-                dl->AddText({ tx, ty }, ah_roll_label(), buf);
+                dl->AddText(fnt, ts, { tx, ty }, ah_roll_label(), buf);
             }
         }
 
@@ -212,6 +229,105 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
     dl->AddCircle({ cx, cy }, r, ah_border(), 64, AH_THICK_BORDER);
 
     ImGui::Dummy({ size, size });
+}
+
+// ── Shared HUD / log pieces ───────────────────────────────────────────────────
+//
+// The sidebar and the fullscreen-map overlay show the same two things in
+// different sizes. These are the parts they share, so the pair cannot drift.
+
+// Ground speed, heading and climb rate as three readouts on one row, drawn at
+// the cursor and consuming `strip_h` of vertical space.
+static void draw_vfr_strip(const VehicleState& vs, float strip_h)
+{
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 s0 = ImGui::GetCursorScreenPos();
+    const float  w  = ImGui::GetContentRegionAvail().x;
+    const float  cw = w / 3.0f;
+
+    struct Item { const char* label; char value[16]; };
+    Item items[3] = { { "GND m/s", "--" }, { "HDG", "--" }, { "CLB m/s", "--" } };
+    if (vs.has_vfr) {
+        snprintf(items[0].value, sizeof(items[0].value), "%.1f", (double)vs.groundspeed);
+        snprintf(items[1].value, sizeof(items[1].value), "%03d\xc2\xb0", (int)vs.heading);
+        snprintf(items[2].value, sizeof(items[2].value), "%+.1f", (double)vs.climb);
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        const ImVec2 p0 = { s0.x + i * cw, s0.y };
+        const ImVec2 p1 = { p0.x + cw,     s0.y + strip_h };
+        ui_readout(dl, p0, p1, items[i].label, items[i].value,
+                   vs.has_vfr ? ui_col_value() : ui_col(g_theme.col_no_link_muted),
+                   UI_SZ_BODY + 2.0f);
+        if (i > 0)
+            dl->AddLine({ p0.x, p0.y + 4.0f }, { p0.x, p1.y - 4.0f },
+                        ui_col(g_theme.separator, 0.6f), 1.0f);
+    }
+    ImGui::Dummy({ w, strip_h });
+}
+
+// The scrolling body of the event log: a wall-clock stamp per vehicle message,
+// severity-coloured, pinned to the bottom while the view is already there.
+// `bg_alpha` scales the well behind it, so the overlay can let the map through.
+static void draw_event_log_body(const std::vector<StatusText>& status_texts,
+                                float bg_alpha, bool small_text = false)
+{
+    // Wall-clock stamps, captured as each message arrives.
+    //
+    // Per vehicle: these line up positionally with that vehicle's status_texts,
+    // so a shared list would stamp one aircraft's messages with the times
+    // another's arrived. Shared between the two log views deliberately — the
+    // stamp on a message is when it arrived, not which panel is showing it.
+    static VehicleUiState<std::vector<std::string>> s_stamps_by_vehicle;
+    std::vector<std::string>& stamps = *s_stamps_by_vehicle;
+    if (status_texts.size() < stamps.size()) stamps.clear();
+    while (stamps.size() < status_texts.size()) {
+        const std::time_t t  = std::time(nullptr);
+        std::tm            lt{};
+#ifdef _WIN32
+        localtime_s(&lt, &t);
+#else
+        localtime_r(&t, &lt);
+#endif
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                 lt.tm_hour, lt.tm_min, lt.tm_sec);
+        stamps.emplace_back(buf);
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                          ui_col(g_theme.bg_child_darker, bg_alpha));
+    const ImVec2 inner_sz = { 0.0f, ImGui::GetContentRegionAvail().y };
+    if (ImGui::BeginChild("##sysmsg_scroll", inner_sz, false,
+                          ImGuiWindowFlags_HorizontalScrollbar)) {
+        // The 13 px mono rather than a scaled body font: these lines are a
+        // stamp and a message, and a mono face is what keeps the stamps in a
+        // column when the block is small enough that they nearly touch.
+        const bool pushed_font = small_text && g_font_micro;
+        if (pushed_font) ImGui::PushFont(g_font_micro);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6.0f, 3.0f });
+        if (status_texts.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col_no_link_muted());
+            ImGui::TextUnformatted("AWAITING VEHICLE MESSAGES");
+            ImGui::PopStyleColor();
+        } else {
+            for (size_t i = 0; i < status_texts.size(); ++i) {
+                ImGui::PushStyleColor(ImGuiCol_Text, col_log());
+                ImGui::TextUnformatted(i < stamps.size() ? stamps[i].c_str()
+                                                         : "--:--:--");
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 8);
+                ImGui::TextColored(col_status_severity(status_texts[i].severity),
+                                   "%s", status_texts[i].text);
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::PopStyleVar();
+        if (pushed_font) ImGui::PopFont();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 // ── Data grid state ───────────────────────────────────────────────────────────
@@ -752,32 +868,7 @@ void draw_sidebar_right(const VehicleState& vs,
             }
 
             // ── GND / HDG / CLB strip ────────────────────────────────────
-            {
-                ImDrawList*  dl = ImGui::GetWindowDrawList();
-                const ImVec2 s0 = ImGui::GetCursorScreenPos();
-                const float  w  = ImGui::GetContentRegionAvail().x;
-                const float  cw = w / 3.0f;
-
-                struct Item { const char* label; char value[16]; };
-                Item items[3] = { { "GND m/s", "--" }, { "HDG", "--" }, { "CLB m/s", "--" } };
-                if (vs.has_vfr) {
-                    snprintf(items[0].value, sizeof(items[0].value), "%.1f", (double)vs.groundspeed);
-                    snprintf(items[1].value, sizeof(items[1].value), "%03d\xc2\xb0", (int)vs.heading);
-                    snprintf(items[2].value, sizeof(items[2].value), "%+.1f", (double)vs.climb);
-                }
-
-                for (int i = 0; i < 3; ++i) {
-                    const ImVec2 p0 = { s0.x + i * cw, s0.y };
-                    const ImVec2 p1 = { p0.x + cw,     s0.y + strip_h };
-                    ui_readout(dl, p0, p1, items[i].label, items[i].value,
-                               vs.has_vfr ? ui_col_value() : ui_col(g_theme.col_no_link_muted),
-                               UI_SZ_BODY + 2.0f);
-                    if (i > 0)
-                        dl->AddLine({ p0.x, p0.y + 4.0f }, { p0.x, p1.y - 4.0f },
-                                    ui_col(g_theme.separator, 0.6f), 1.0f);
-                }
-                ImGui::Dummy({ w, strip_h });
-            }
+            draw_vfr_strip(vs, strip_h);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -799,55 +890,7 @@ void draw_sidebar_right(const VehicleState& vs,
             char log_meta[24];
             snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)status_texts.size());
             ui_panel_header("EVENT LOG", log_meta);
-
-            // Wall-clock stamps, captured as each message arrives.
-            //
-            // Per vehicle: these line up positionally with that vehicle's
-            // status_texts, so a shared list would stamp one aircraft's
-            // messages with the times another's arrived.
-            static VehicleUiState<std::vector<std::string>> s_stamps_by_vehicle;
-            std::vector<std::string>& s_stamps = *s_stamps_by_vehicle;
-            if (status_texts.size() < s_stamps.size()) s_stamps.clear();
-            while (s_stamps.size() < status_texts.size()) {
-                const std::time_t t  = std::time(nullptr);
-                std::tm            lt{};
-#ifdef _WIN32
-                localtime_s(&lt, &t);
-#else
-                localtime_r(&t, &lt);
-#endif
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
-                         lt.tm_hour, lt.tm_min, lt.tm_sec);
-                s_stamps.emplace_back(buf);
-            }
-
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
-            const ImVec2 inner_sz = { 0.0f, ImGui::GetContentRegionAvail().y };
-            if (ImGui::BeginChild("##sysmsg_scroll", inner_sz, false,
-                                  ImGuiWindowFlags_HorizontalScrollbar)) {
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6.0f, 3.0f });
-                if (status_texts.empty()) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, col_no_link_muted());
-                    ImGui::TextUnformatted("AWAITING VEHICLE MESSAGES");
-                    ImGui::PopStyleColor();
-                } else {
-                    for (size_t i = 0; i < status_texts.size(); ++i) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, col_log());
-                        ImGui::TextUnformatted(i < s_stamps.size() ? s_stamps[i].c_str()
-                                                                   : "--:--:--");
-                        ImGui::PopStyleColor();
-                        ImGui::SameLine(0, 8);
-                        ImGui::TextColored(col_status_severity(status_texts[i].severity),
-                                           "%s", status_texts[i].text);
-                    }
-                    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-                        ImGui::SetScrollHereY(1.0f);
-                }
-                ImGui::PopStyleVar();
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
+            draw_event_log_body(status_texts, 1.0f);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -856,4 +899,178 @@ void draw_sidebar_right(const VehicleState& vs,
 
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
+}
+
+// Which half of the fullscreen-map overlay is expanded to its sidebar size.
+enum class OverlayFocus { None, Hud, Log };
+
+// ── Fullscreen-map overlay ────────────────────────────────────────────────────
+//
+// What the right sidebar was showing, condensed into the map's top-right
+// corner and made semi-transparent, for when the map has taken the sidebar's
+// width. Attitude and the event log only: the telemetry tiles are a
+// configuration surface as much as a readout, and clicking through them over a
+// map the operator is flying on is not what the corner is for.
+//
+// Submitted after the centre view by the render loop, which is what puts it
+// over the map. The map window is NoBringToFrontOnFocus, so clicking the map
+// cannot raise it above this.
+
+void draw_map_overlay(const VehicleState& vs,
+                      const std::vector<StatusText>& status_texts)
+{
+    float mx, my, mw, mh;
+    center_view_map_rect(mx, my, mw, mh);
+    if (mw < 240.0f || mh < 200.0f) return;   // no room to float anything
+
+    constexpr float MARGIN = 10.0f;
+    constexpr float PAD    = 8.0f;
+
+    // Which half the operator last clicked, if either. Small is the resting
+    // state — the corner is a glance, not a panel — and a click on one half
+    // brings that half back to the size it had in the sidebar, until a click
+    // lands somewhere else. Only one at a time: the whole point of the small
+    // state is the map behind it, and expanding both would be the sidebar again.
+    static OverlayFocus s_focus = OverlayFocus::None;
+
+    // Small is what it comes back as. This function only runs while the map is
+    // fullscreen, so a break in the frames it drew on is exactly "the operator
+    // left and came back" — and coming back to an expanded block over a map
+    // they have not looked at yet is not what the corner is for.
+    static int s_last_frame = -2;
+    const int  frame = ImGui::GetFrameCount();
+    if (frame != s_last_frame + 1) s_focus = OverlayFocus::None;
+    s_last_frame = frame;
+
+    const bool hud_big = (s_focus == OverlayFocus::Hud);
+    const bool log_big = (s_focus == OverlayFocus::Log);
+
+    // "Normal size" is the size these had before the map went fullscreen, which
+    // is the right sidebar's width — the width the map took in the first place.
+    const GcsLayout l      = GcsLayout::compute();
+    const float     full_w = std::min(l.right_w, mw * 0.5f);
+
+    // Resting width: the attitude ball sets it, rather than being fitted into a
+    // box sized for something else — it is the widest thing in here, and a
+    // wider box would only put dead space either side of it.
+    //
+    // 0.55 of the width a full-width ball would have had: half, and a tenth
+    // back on top. Over a map, roll and pitch are a glance rather than
+    // something to fly on, and the room it gives up is map the operator gets
+    // back. The clamp against the map's own width is what keeps the block sane
+    // on a small window.
+    const float ball_small = std::min(167.0f, (mw * 0.34f - PAD * 2.0f) * 0.55f);
+
+    const float w      = (hud_big || log_big) ? full_w : ball_small + PAD * 2.0f;
+    const float ball_h = hud_big ? std::min(w - PAD * 2.0f, mh * 0.45f)
+                                 : ball_small;
+
+    // Lettering for the ball. The instrument is a bit over half the sidebar's
+    // diameter but its labels do not shrink with it, so at the sidebar's size
+    // the pitch ladder, the roll arc and the three readouts run into each
+    // other. 10 px against the body font's 16 is what pulls them apart; the
+    // expanded ball is the sidebar's size again and wants the sidebar's text,
+    // which is what 0 asks for.
+    const float hud_text_sz = hud_big ? 0.0f : 10.0f;
+
+    // Attitude is that square plus its header and the readout strip.
+    const float hud_h  = ball_h + UI_HEADER_H + 40.0f + PAD;
+
+    // The log comes down with the ball, so the corner stays a corner block
+    // rather than becoming a log with an instrument on top.
+    const float log_h   = log_big ? std::min(360.0f, mh * 0.50f)
+                                  : std::min(150.0f, mh * 0.25f);
+    const float h       = std::min(mh - MARGIN * 2.0f, hud_h + log_h + PAD * 2.0f);
+
+    const ImVec2 ov_p0 = { mx + mw - w - MARGIN, my + MARGIN };
+    ImGui::SetNextWindowPos (ov_p0, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({ w, h }, ImGuiCond_Always);
+
+    // Semi-transparent throughout: the point of the fullscreen map is the map,
+    // and a solid panel in the corner would just be the sidebar again in a
+    // different place. The seam is kept at full strength so the block still has
+    // an edge against whatever imagery is under it.
+    const auto fade = [](ImVec4 c, float a) { c.w *= a; return c; };
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, fade(g_theme.bg_panel, 0.62f));
+    ImGui::PushStyleColor(ImGuiCol_Border,   fade(g_theme.separator, 0.9f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,   { PAD, PAD });
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,     { 6.0f, 4.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar   | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove       | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavFocus;
+
+    if (ImGui::Begin("##map_overlay", nullptr, flags)) {
+        // ── Attitude ─────────────────────────────────────────────────────────
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32_BLACK_TRANS);
+        if (ImGui::BeginChild("##ov_hud", { 0.0f, hud_h }, false,
+                              ImGuiWindowFlags_NoScrollbar)) {
+            char meta[32];
+            if (vs.has_attitude)
+                snprintf(meta, sizeof(meta), "R %+.0f\xc2\xb0  P %+.0f\xc2\xb0",
+                         (double)vs.roll, (double)vs.pitch);
+            else
+                snprintf(meta, sizeof(meta), "NO DATA");
+            ui_panel_header("ATTITUDE", meta);
+
+            constexpr float STRIP_H = 40.0f;
+            if (vs.has_attitude) {
+                const ImVec2 avail = ImGui::GetContentRegionAvail();
+                const float  hs    = std::min(avail.x, avail.y - STRIP_H);
+                if (hs > 30.0f) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - hs) * 0.5f);
+                    draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
+                                            vs.has_vfr ? (int)vs.throttle : -1,
+                                            vs.has_vfr, hs, hud_text_sz);
+                }
+            } else {
+                const ImVec2 avail = ImGui::GetContentRegionAvail();
+                ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - STRIP_H) });
+            }
+            draw_vfr_strip(vs, STRIP_H);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // ── Event log ────────────────────────────────────────────────────────
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32_BLACK_TRANS);
+        if (ImGui::BeginChild("##ov_log", { 0.0f, 0.0f }, false,
+                              ImGuiWindowFlags_NoScrollbar)) {
+            char log_meta[24];
+            snprintf(log_meta, sizeof(log_meta), "%d", (int)status_texts.size());
+            ui_panel_header("EVENT LOG", log_meta);
+            draw_event_log_body(status_texts, 0.45f, /*small_text=*/!log_big);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
+
+    // ── Which half is expanded ───────────────────────────────────────────────
+    //
+    // Tested against the rectangle just drawn rather than through an ImGui
+    // item: the log is a scrolling child with a scrollbar of its own, and an
+    // invisible button over it would have to win the click that scrolls it.
+    // Reading the mouse position instead leaves both halves fully usable while
+    // expanded, and costs a frame of latency nobody can see.
+    //
+    // Clicking the half that is already expanded is deliberately not a
+    // collapse: dragging that log's scrollbar is a click inside it, and it must
+    // not shut the thing being read. Anywhere outside the block collapses.
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const ImVec2 m = ImGui::GetMousePos();
+        if (m.x < ov_p0.x || m.x > ov_p0.x + w ||
+            m.y < ov_p0.y || m.y > ov_p0.y + h)
+            s_focus = OverlayFocus::None;
+        else if (m.y < ov_p0.y + PAD + hud_h)
+            s_focus = OverlayFocus::Hud;
+        else
+            s_focus = OverlayFocus::Log;
+    }
 }
