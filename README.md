@@ -65,6 +65,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Vehicle switcher on the callsign chip**: the topbar chip already names the system on screen, so clicking it lists the fleet — sysid, armed state, and the link each was heard on. Every tab and panel follows the selection
 - **Per-vehicle panel state**: a compass calibration, a half-planned mission or a staged parameter edit belongs to the aircraft it was started on and is still there when you switch back. Nothing is carried across to a different vehicle
 - **Identified by link and sysid**: two airframes that both shipped as the factory default `SYSID_THISMAV` of 1 stay distinct instead of merging into one nonsensical vehicle; the switcher names the link so they can be told apart
+- **A number per vehicle**: the GCS hands each aircraft a short number on discovery, lowest free one first, and that number leads the callsign chip, the switcher rows and the label on every symbol on the map. It is the name a sysid cannot be, and it stays small — numbers are freed when a vehicle goes, so a fleet of three reads 1, 2, 3 rather than climbing all session
+- **The fleet on the map**: every vehicle with a position is drawn, each with its own trail and home pad. The panels still follow one aircraft, and the map says which by keeping it at full strength while the others are dimmed
 
 ### Connection
 - **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
@@ -353,16 +355,41 @@ drop that one link.
 
 ### Switching Vehicles
 Every vehicle discovered on every link shows up in the switcher. Click the
-**callsign chip** in the topbar — the one reading `SYS1·1` — and pick from the
-list; it names each vehicle's sysid and the link it arrived on, so two aircraft
-that both report sysid 1 can still be told apart. The chip only grows a caret
-when there is more than one vehicle, so nothing changes when flying one.
+**callsign chip** in the topbar — the one reading `(1) SYS1·1` — and pick from
+the list; it names each vehicle's sysid and the link it arrived on, so two
+aircraft that both report sysid 1 can still be told apart. The chip only grows
+a caret when there is more than one vehicle, so nothing changes when flying one.
+
+The `(1)` is the GCS's own number for that vehicle, handed out on discovery,
+lowest free number first. A sysid is what an aircraft calls itself and is not
+usable as a name — two airframes fresh off the bench both answer to 1 — so the
+number is what the chip, the switcher rows and the symbols on the map all agree
+on. Numbers are freed when a vehicle goes, so a fleet of three reads 1, 2, 3
+rather than climbing all session.
 
 Everything follows the selection: telemetry, parameters, mission, radio,
 sensors, the inspector and the map. Panel state does not — a calibration or a
 mission you were editing stays with the aircraft it belongs to and is waiting
 when you switch back. Calibrations keep running on vehicles you are not looking
 at, and only the selected vehicle makes sound.
+
+### Flight Controls
+1. Navigate to the **FLIGHT** tab. Everything on it is disabled until a vehicle
+   is heard from, and says `(no link)` beside the header while it is
+2. **TAKEOFF** climbs to the altitude in the field beside it — metres above
+   home, the same datum GO HERE uses
+3. **RTL** returns to launch, and stays lit while RTL is the mode
+4. The mode grid is built from the vehicle's own **AVAILABLE_MODES** list where
+   it publishes one, since `custom_mode` numbering is per airframe — a Plane's
+   mode 4 is not a Copter's. Flight stacks that never answer fall back to the
+   ArduCopter table. The current mode is lit, and hovering a button gives the
+   full name the vehicle reported
+5. **EKF STATUS** below it shows variance bars for velocity, horizontal and
+   vertical position, compass, terrain and airspeed
+6. **SERVO** drives a servo output directly by PWM; **AUX** triggers any
+   auxiliary function the connected firmware implements
+
+![Flight tab](screens/flight.png)
 
 ### Parameter Workflow
 1. Navigate to **PARAMETERS** tab
@@ -386,6 +413,8 @@ can never offer to write a stale value back over a newer one.
 **DISCARD** asks for confirmation because a loaded parameter file can put
 hundreds of edits behind it and there is no undo. The per-row **×** does not:
 it can only lose one value, and the value it restores is on the vehicle.
+
+![Parameters tab](screens/params.png)
 
 #### Parameter files
 
@@ -435,6 +464,43 @@ precision so a saved value reloads as the same float rather than as an edit.
 7. Click **UPLOAD** to send mission to vehicle
 8. Click **CLEAR** to erase vehicle mission (zero waypoints)
 
+### The Map
+The map draws every vehicle that has a position, not only the one the panels
+are following. Each aircraft carries a label — `(2) SYS 1`, the GCS's number
+then the sysid it reports — and the selected one keeps full colour and a heading
+line run out to the edge of the panel, while the rest are dimmed with a short
+stub so three aircraft do not lay three dotted lines across the imagery.
+
+Behind each aircraft is its **trail**, recorded off the live stream rather than
+off what is on screen: an aircraft that flew while you were watching another one
+still has its track when you switch back. Points are thinned to one every 3 m,
+so a vehicle standing still does not smudge, and capped at 6000 — about 18 km of
+ground track. Each vehicle's **home**, from `HOME_POSITION`, is drawn as a
+helipad: an H inside its circle, in green so it reads as neither the aircraft
+nor an instruction to it.
+
+**GO HERE** — right-click anywhere on the map for a guided position target. The
+menu shows the coordinates under the cursor and an altitude, which starts at the
+height the vehicle is already holding, and **GO** sends it as
+`SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
+which is the only mode that acts on one; out of GUIDED the button is disabled
+and says why, rather than sending into silence. The target stays drawn as a
+ringed crosshair joined to the aircraft by a line until **CLEAR TARGET**. The
+same menu carries **CLEAR TRACK** for the trail.
+
+**MAP FULL** — with the map alone in the centre view, the map button relabels
+itself. Press it and the map takes the right sidebar's width and the plugin
+rail's column; the left sidebar stays, because the tabs are how a mission is
+planned and the map is what it is planned on. Attitude and the event log come
+back as a semi-transparent block in the map's top-right corner, small enough to
+read the map past. Click either half and it grows to the size it had in the
+sidebar, text and all, until you click somewhere else; it always comes back
+small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
+
+![Map Full](screens/cap2.png)
+
+
+
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
    disabled until the vehicle's current values are known, and a red banner says so
@@ -460,6 +526,8 @@ Below the calibration: **BINDING** binds each axis to a channel (press
 **DETECT**, move that stick), sets ArduPilot's six flight-mode slots from the
 mode list the vehicle published, and binds an aux function to a channel. Each
 row writes on its own.
+
+![Radio tab](screens/radio.png)
 
 ### Sensor Calibration
 1. Fetch parameters first, as above — the device lists are read from them
@@ -487,6 +555,8 @@ busy. A run survives a tab switch and a vehicle switch — it belongs to the
 aircraft it was started on and keeps advancing while you look elsewhere — and is
 abandoned with a log line if the link drops.
 
+![Sensors tab](screens/sensor_calibration.png)
+
 ### MAVLink Inspector
 1. Navigate to **MAVLINK** tab
 2. View message ID, name, and receive rate in scrollable table
@@ -495,6 +565,8 @@ abandoned with a log line if the link drops.
    - Enter message ID (e.g., `33` for GLOBAL_POSITION_INT)
    - Set rate in Hz (e.g., `10`)
    - Click **SEND** to apply
+
+![MAVLink tab](screens/mavlink.png)
 
 ### Video Streaming
 1. Navigate to the **VIDEO** area
@@ -598,9 +670,10 @@ the serial handle, drains them.
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
 - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
+  - **goto_target.hpp** / **mission_pick.hpp**: The two-way state the map is driven through — a right-clicked position target and a waypoint being picked. The map never holds a sender; it reports what the operator asked for and the panel that owns the vehicle sends it
   - **vehicle_ui_state.hpp**: Panel state that belongs to a vehicle rather than a panel — a calibration in progress, staged parameter edits, the mission being planned — keyed by vehicle instead of held in a file-scope static, and dropped when that vehicle goes
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink, radio, sensors)
-  - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload
+  - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload, and everything drawn over it — the fleet's aircraft symbols and labels, per-vehicle trails, home pads, the mission overlay and the GO HERE menu
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
   - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
   - **mavlink_display_generated.cpp**: Auto-generated message field decoders (from MAVLink XML)
@@ -690,14 +763,14 @@ Example `settings.json`:
 - **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No geofence editor**: Geofence/rally point management not implemented yet
-- **One vehicle on screen at a time**: the backend carries the whole fleet, but the panels and the map draw the selected vehicle only — no side-by-side view, and no other aircraft shown on the map yet
+- **One vehicle in the panels at a time**: the map draws the whole fleet, but every other panel — telemetry, parameters, mission, radio, sensors, the inspector — follows the selected vehicle only. No side-by-side view
 - **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
 - **Fifteen vehicles**: each needs a MAVLink TX channel of its own so their sequence counters stay independent, and one of the sixteen is spent on the fallback used when nothing is connected. Past the cap a vehicle is logged and ignored rather than displacing one already there
 
 ## Future Plans
 
 - Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
-- Multi-vehicle UI: every aircraft on the map at once, and a way to watch more than one without switching
+- Multi-vehicle UI: a way to watch more than one aircraft's telemetry without switching between them
 - PX4 Support
 - macOS Support
 - Video AI features
