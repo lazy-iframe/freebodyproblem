@@ -11,7 +11,7 @@
   <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a><br><br><br>
 </p>
 
-A modern, fast ground control station for ArduPilot and PX4 autopilots. Built for operators who know what they're doing. The development is in its early stages.
+A modern, fast ground control station for ArduPilot and PX4 autopilots. Several links and several vehicles at once, each parsed on its own thread. Built for operators who know what they're doing. The development is in its early stages.
 
 ## Philosophy
 
@@ -53,12 +53,20 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Coverage sphere**: the 80-section geodesic grid ArduPilot tracks coverage with, drawn in body frame — lit where the compass has been turned, dim where it has not, far side visible through the near one, drag to turn. It says *which* rotations are still missing, which a percentage cannot
 - **One at a time**: the three sections disable each other while any is running, since the vehicle takes one calibration at a time and a second would silently withdraw the first
 
+### Multi-Vehicle
+- **Several links at once**: CONNECT adds a link rather than replacing the one already open — a radio on serial and a SITL on UDP side by side. The **LINKS** list shows each one with its status, the number of vehicles heard on it, and a button to drop just that link
+- **Several vehicles per link**: one telemetry port carrying three aircraft is three vehicles. Traffic is demultiplexed by MAVLink sysid, so a shared link or a swarm forwarded through one port no longer collapses into a single vehicle
+- **A thread per vehicle**: each link reads and frames its own bytes; each vehicle then interprets them on its own thread, so a thousand-parameter fetch on one aircraft does not stall telemetry from another
+- **Vehicle switcher on the callsign chip**: the topbar chip already names the system on screen, so clicking it lists the fleet — sysid, armed state, and the link each was heard on. Every tab and panel follows the selection
+- **Per-vehicle panel state**: a compass calibration, a half-planned mission or a staged parameter edit belongs to the aircraft it was started on and is still there when you switch back. Nothing is carried across to a different vehicle
+- **Identified by link and sysid**: two airframes that both shipped as the factory default `SYSID_THISMAV` of 1 stay distinct instead of merging into one nonsensical vehicle; the switcher names the link so they can be told apart
+
 ### Connection
 - **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
 - **Auto-discovery**: serial port enumeration with device descriptions
 - **Configurable baud rates**: 9600 to 921600
-- **Automatic telemetry rate configuration**: requests optimal message rates on connect
-- **Connection timeout handling**: 10-second timeout with clear status indicators
+- **Automatic telemetry rate configuration**: requests optimal message rates on connect, addressed to each vehicle as it is discovered
+- **Connection timeout handling**: 10-second connect timeout and a 15-second silence timeout, per link, with clear status indicators
 
 ### Video Streaming
 - **GStreamer integration**: RTSP and UDP video streams
@@ -333,6 +341,24 @@ publishing a headline version.
 5. Click **CONNECT**
 6. Telemetry will auto-configure and display within seconds
 
+Connecting again does not replace the link you already have — it adds another.
+Open as many as you need; each appears in the **LINKS** list below the connect
+form with its status, how many vehicles have been heard on it, and a button to
+drop that one link.
+
+### Switching Vehicles
+Every vehicle discovered on every link shows up in the switcher. Click the
+**callsign chip** in the topbar — the one reading `SYS1·1` — and pick from the
+list; it names each vehicle's sysid and the link it arrived on, so two aircraft
+that both report sysid 1 can still be told apart. The chip only grows a caret
+when there is more than one vehicle, so nothing changes when flying one.
+
+Everything follows the selection: telemetry, parameters, mission, radio,
+sensors, the inspector and the map. Panel state does not — a calibration or a
+mission you were editing stays with the aircraft it belongs to and is waiting
+when you switch back. Calibrations keep running on vehicles you are not looking
+at, and only the selected vehicle makes sound.
+
 ### Parameter Workflow
 1. Navigate to **PARAMETERS** tab
 2. Click **FETCH ALL** to download full parameter set
@@ -422,8 +448,8 @@ precision so a saved value reloads as the same float rather than as an edit.
 7. **COMMIT** writes the lot after a confirmation naming the parameter count.
    **DISCARD** leaves the vehicle untouched
 
-The calibration keeps recording while you look at another tab — it is the
-vehicle and the radio doing the work, not the panel.
+The calibration keeps recording while you look at another tab, or at another
+aircraft — it is the vehicle and the radio doing the work, not the panel.
 
 Below the calibration: **BINDING** binds each axis to a channel (press
 **DETECT**, move that stick), sets ArduPilot's six flight-mode slots from the
@@ -450,9 +476,11 @@ row writes on its own.
 7. Reboot when it is done — new offsets take effect at boot, and there is a
    **REBOOT VEHICLE** button on the panel
 
-Only one calibration runs at a time: starting a second would silently withdraw
-the first, so each section greys out the others while it is busy. A run also
-survives a tab switch, and is abandoned with a log line if the link drops.
+Only one calibration runs at a time *per vehicle*: starting a second would
+silently withdraw the first, so each section greys out the others while it is
+busy. A run survives a tab switch and a vehicle switch — it belongs to the
+aircraft it was started on and keeps advancing while you look elsewhere — and is
+abandoned with a log line if the link drops.
 
 ### MAVLink Inspector
 1. Navigate to **MAVLINK** tab
@@ -526,21 +554,46 @@ vehicle disarmed.**
 
 ## Architecture
 
+The process runs one thread per link and one thread per vehicle. A link reads
+bytes and frames them; framing has to happen there because a message's sysid is
+not knowable until it is framed. Everything after that — the message dispatch,
+the parameter table, the mission state and the protocol timers — belongs to one
+vehicle and runs on that vehicle's own thread. Sending goes the other way: a
+vehicle queues frames in its own sender, and the link, which owns the socket or
+the serial handle, drains them.
+
+```
+  socket / serial ──▶ link thread          one per connection
+                       read, frame, demux on sysid
+                              │
+                              ▼  inbox
+                     vehicle thread        one per vehicle
+                       dispatch, protocol timers, snapshot
+                              │
+                              ▼  snapshot
+                        UI thread          draws the selected vehicle
+```
+
 ### Backend (`backend/`)
 - **connection.cpp**: Serial port enumeration (Linux/Windows)
-- **mavlink_parser.cpp**: Stateless MAVLink message decoder with per-ID stats tracking
-- **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic
+- **link.cpp**: One transport — UDP socket, TCP connection or serial port — and the platform detail behind opening, reading and writing it
+- **fleet.cpp**: Every link and vehicle, the link read threads, and the sysid demultiplexing that decides which vehicle a message belongs to
+- **vehicle.cpp**: One vehicle and the thread that talks to it — stream rates, the mode list, clock sync, the parameter fetch and its retransmits, and the snapshot the UI reads
+- **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
+- **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
+- **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each on its own MAVLink TX channel so their sequence counters stay independent
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
 - **accel_calibration.cpp** / **gyro_calibration.cpp** / **mag_calibration.cpp**: the GCS half of each calibration — link-free state machines fed messages and a clock
 - **sensor_inventory.cpp**: compass/accel/gyro devices decoded out of the parameter table (device-ID packing, chip names)
 - **geodesic_grid.cpp**: ArduPilot's 80-section coverage grid, for drawing what a compass calibration has and has not seen
 
 ### Frontend (`frontend/`)
-- **main.cpp**: GLFW/OpenGL event loop, link thread management, MAVLink I/O
+- **main.cpp**: GLFW/OpenGL event loop, the app log, and the per-frame snapshot of whichever vehicle is selected
 - **settings.cpp**: JSON-based persistent configuration (tile server, themes, window state)
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
 - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
+  - **vehicle_ui_state.hpp**: Panel state that belongs to a vehicle rather than a panel — a calibration in progress, staged parameter edits, the mission being planned — keyed by vehicle instead of held in a file-scope static, and dropped when that vehicle goes
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink, radio, sensors)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
@@ -566,7 +619,7 @@ vehicle disarmed.**
 ## Project Structure
 ```
 freebodyproblem/
-├── backend/              # MAVLink I/O, parsing, command queue
+├── backend/              # Links, vehicles, MAVLink parsing, command queue
 ├── frontend/             # ImGui UI, widgets, rendering
 │   └── widgets/          # Reusable UI components
 │       └── sidebar_left/ # Per-tab left sidebar modules
@@ -618,10 +671,11 @@ Example `settings.json`:
 
 ## Performance Notes
 
-- **Zero-copy MAVLink parsing**: Messages are decoded in-place from UDP datagrams
+- **Parallel per-vehicle work**: framing is cheap and stays on the link thread; the message dispatch, parameter table, mission state and protocol timers run per vehicle and overlap, so a slow conversation with one aircraft does not hold up another
+- **One message copy at the hand-off**: a framed message is copied once into the owning vehicle's inbox. The inbox is bounded, and a vehicle that falls far enough behind to drop from it says so in the log rather than losing telemetry silently
+- **Rate-capped snapshots**: each vehicle publishes its state at ~20 Hz rather than on every datagram, and the UI copies only the vehicle on screen
 - **Threaded tile fetching**: Map tiles load asynchronously without blocking the render loop
 - **Exponential moving average rates**: Message rate display decays gracefully when telemetry stops
-- **Minimal allocations**: Telemetry state is copied once per frame; no per-message heap allocations
 - **Parameter retransmit logic**: Automatically re-requests dropped PARAM_VALUE packets after 2s stall
 
 ## Limitations
@@ -631,11 +685,14 @@ Example `settings.json`:
 - **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No geofence editor**: Geofence/rally point management not implemented yet
+- **One vehicle on screen at a time**: the backend carries the whole fleet, but the panels and the map draw the selected vehicle only — no side-by-side view, and no other aircraft shown on the map yet
+- **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
+- **Fifteen vehicles**: each needs a MAVLink TX channel of its own so their sequence counters stay independent, and one of the sixteen is spent on the fallback used when nothing is connected. Past the cap a vehicle is logged and ignored rather than displacing one already there
 
 ## Future Plans
 
 - Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
-- Multi-Vehicle Support
+- Multi-vehicle UI: every aircraft on the map at once, and a way to watch more than one without switching
 - PX4 Support
 - macOS Support
 - Video AI features
