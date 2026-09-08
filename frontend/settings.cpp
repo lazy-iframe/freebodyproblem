@@ -101,6 +101,7 @@ static json theme_to_json(const ThemeVars& t)
     TV_TO_J(ah_roll_pointer);   TV_TO_J(ah_border);
     // Map
     TV_TO_J(map_tile_placeholder); TV_TO_J(map_vehicle_fill);  TV_TO_J(map_vehicle_ring);
+    TV_TO_J(map_track);
     TV_TO_J(map_attr_bg);          TV_TO_J(map_attr_text);
     // EKF
     TV_TO_J(ekf_bg);  TV_TO_J(ekf_outline);  TV_TO_J(ekf_label);
@@ -150,6 +151,7 @@ static ThemeVars theme_from_json(const json& j)
     TV_FROM_J(ah_roll_pointer);   TV_FROM_J(ah_border);
     // Map
     TV_FROM_J(map_tile_placeholder); TV_FROM_J(map_vehicle_fill);  TV_FROM_J(map_vehicle_ring);
+    TV_FROM_J(map_track);
     TV_FROM_J(map_attr_bg);          TV_FROM_J(map_attr_text);
     // EKF
     TV_FROM_J(ekf_bg);  TV_FROM_J(ekf_outline);  TV_FROM_J(ekf_label);

@@ -194,13 +194,25 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
             }
         }
 
-        created = std::make_shared<Vehicle>(vid, msg.compid);
+        // Lowest free number. A number is free exactly when no live vehicle
+        // holds it, so a scan of the fleet is the whole bookkeeping — no free
+        // list to fall out of step with the map it describes. MAX_VEHICLES is
+        // 15, and this runs once per discovery.
+        uint32_t number = 1;
+        while (std::any_of(vehicles_.begin(), vehicles_.end(),
+                           [number](const auto& kv) {
+                               return kv.second->number() == number;
+                           }))
+            ++number;
+
+        created = std::make_shared<Vehicle>(vid, msg.compid, number);
         vehicles_[vid] = created;
         first = (vehicles_.size() == 1);
     }
 
     created->start();
-    gcs_log("vehicle discovered: sys%u comp%u", (unsigned)msg.sysid,
+    gcs_log("vehicle discovered: (%u) sys%u comp%u",
+            (unsigned)created->number(), (unsigned)msg.sysid,
             (unsigned)msg.compid);
 
     if (first) set_active(vid);

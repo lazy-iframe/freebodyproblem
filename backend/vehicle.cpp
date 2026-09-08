@@ -55,8 +55,9 @@ int64_t now_ns()
 } // namespace
 
 
-Vehicle::Vehicle(VehicleId id, uint8_t autopilot_compid)
+Vehicle::Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number)
     : id_(id)
+    , number_(number)
     , autopilot_compid_(autopilot_compid)
     , parser_(id.sysid, autopilot_compid)
 {}
@@ -141,6 +142,7 @@ VehicleChip Vehicle::chip() const
 {
     VehicleChip c;
     c.id     = id_;
+    c.number = number_;
     c.compid = autopilot_compid_;
     c.stale  = stale();
     {

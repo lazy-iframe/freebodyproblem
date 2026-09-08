@@ -36,6 +36,7 @@
 #include "map_view.hpp"
 #include "layout.hpp"
 #include "ui_kit.hpp"
+#include "vehicle_ui_state.hpp"
 #include "imgui.h"
 
 // The httplib CMake target already defines this; guard so the two definitions
@@ -70,7 +71,9 @@
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
+#include <deque>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -447,6 +450,204 @@ static bool draw_fallback_tile(ImDrawList* dl,
     return false;
 }
 
+// ── Position trail ────────────────────────────────────────────────────────────
+//
+// Where each vehicle has been, kept per vehicle so switching the callsign chip
+// shows that aircraft's track and not a line drawn between the two.
+
+namespace {
+
+struct TrackPoint { double lat, lon; };
+
+struct VehicleTrack {
+    std::deque<TrackPoint> pts;
+};
+
+// Thinning distance. Below this the aircraft has not moved enough to be worth a
+// point — GPS noise on a vehicle standing still would otherwise fill the trail
+// with a smudge the size of its own position error.
+constexpr double TRACK_MIN_STEP_M = 3.0;
+
+// Trail length. At 3 m spacing this is 18 km of ground track, past which the
+// oldest point is dropped for each new one. 6000 points is ~96 KB per vehicle
+// and one polyline call, so the cap is about the trail staying readable rather
+// than about the memory.
+constexpr size_t TRACK_MAX_POINTS = 6000;
+
+// Metres between two nearby positions. Equirectangular rather than haversine:
+// over the tens of metres this is asked about the two agree to well under the
+// thinning distance, and this is run once per vehicle per frame.
+double rough_metres(double lat_a, double lon_a, double lat_b, double lon_b)
+{
+    constexpr double M_PER_DEG = 111320.0;
+    const double dlat = (lat_b - lat_a) * M_PER_DEG;
+    const double dlon = (lon_b - lon_a) * M_PER_DEG *
+                        std::cos(lat_a * M_PI / 180.0);
+    return std::sqrt(dlat * dlat + dlon * dlon);
+}
+
+// Every vehicle's trail, not just the bound one's — the map draws the whole
+// fleet, so it has to be able to reach a track it is not currently bound to.
+// VehicleUiState would give only the bound vehicle, so this keeps its own map
+// and registers the same forgetter it would have; the registry it registers
+// into is function-local, so this file-scope constructor is safe.
+struct TrackRegistry {
+    std::unordered_map<VehicleId, VehicleTrack, VehicleIdHash> by_vehicle;
+
+    TrackRegistry()
+    {
+        detail::ui_register_forgetter(
+            [this](VehicleId id) { by_vehicle.erase(id); });
+    }
+};
+
+TrackRegistry g_tracks;
+
+} // namespace
+
+void map_track_pump(const VehicleState& vs)
+{
+    if (!vs.has_global_pos)              return;
+    // A fix the vehicle has not got yet reads as the origin, and a trail
+    // through Null Island is worse than no trail.
+    if (vs.lat == 0.0 && vs.lon == 0.0)  return;
+
+    auto& pts = g_tracks.by_vehicle[ui_bound_vehicle()].pts;
+    if (!pts.empty() &&
+        rough_metres(pts.back().lat, pts.back().lon, vs.lat, vs.lon)
+            < TRACK_MIN_STEP_M)
+        return;
+
+    pts.push_back({ vs.lat, vs.lon });
+    if (pts.size() > TRACK_MAX_POINTS) pts.pop_front();
+}
+
+void map_track_clear()
+{
+    g_tracks.by_vehicle[ui_bound_vehicle()].pts.clear();
+}
+
+// ── Aircraft symbol ───────────────────────────────────────────────────────────
+//
+// One vehicle: the airframe, its heading line, and the label naming it. Drawn
+// for every vehicle on the map, so everything that distinguishes the one the
+// panels are bound to from the rest is the `active` flag rather than a second
+// copy of this code.
+
+static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
+                          ImVec2 wp, float win_w, float win_h)
+{
+    // Inactive aircraft are drawn down, not out: they stay legible, but the
+    // vehicle every other panel is showing is the one the eye lands on.
+    const float A = mv.active ? 1.0f : 0.55f;
+
+    if (mv.has_hdg) {
+        // Convert heading (degrees CW from north) to screen angle.
+        // Screen Y grows downward, so north = -Y → angle = hdg - 90° in
+        // standard math terms, but we use (sin, -cos) directly.
+        const float rad = mv.heading * (float)(M_PI / 180.0);
+        const float dx  = std::sin(rad);   // east component  (+x on screen)
+        const float dy  = -std::cos(rad);  // north component (-y on screen)
+
+        // Arrow dimensions
+        constexpr float BODY   = 27.0f; // distance from center to tip
+        constexpr float TAIL   = 15.0f; // distance from center to tail
+        constexpr float WING   = 10.5f; // half-width at wing base
+        constexpr float NOTCH  = 6.0f;  // tail notch depth
+
+        // Key points (all relative to marker center)
+        const ImVec2 tip   = { c.x + dx * BODY,  c.y + dy * BODY  };
+        const ImVec2 tail_c= { c.x - dx * TAIL,  c.y - dy * TAIL  }; // center tail
+        // Wing points perpendicular to heading
+        const ImVec2 wL    = { c.x - dy * WING,  c.y + dx * WING  };
+        const ImVec2 wR    = { c.x + dy * WING,  c.y - dx * WING  };
+        // Tail notch pulls tail center slightly toward tip
+        const ImVec2 notch = { c.x - dx * (TAIL - NOTCH), c.y - dy * (TAIL - NOTCH) };
+
+        // Body, split down the long diagonal into port and starboard halves.
+        // Two shades of the same red rather than two colours: the seam is what
+        // says which way up the airframe is at a glance, and it has to read
+        // without becoming a second marker. Fixed rather than themed, since the
+        // pair only works as a pair.
+        const ImU32 half_port = IM_COL32(150, 26, 26, (int)(235 * A));
+        const ImU32 half_stbd = IM_COL32(206, 48, 48, (int)(235 * A));
+        dl->AddTriangleFilled(tip, wL, notch, half_port);
+        dl->AddTriangleFilled(tip, wR, notch, half_stbd);
+        // Outline
+        dl->AddQuad(tip, wL, notch, wR, ui_col(g_theme.map_vehicle_ring, A), 1.5f);
+        // Tail segment centre → notch
+        dl->AddLine(tail_c, notch, ui_col(g_theme.map_vehicle_ring, A), 1.5f);
+
+        // Dotted heading line. For the active aircraft it runs to the edge of
+        // the panel, which is what says where the vehicle is pointed against
+        // everything else on the map. The others get a stub: three lines across
+        // the whole map is not three times as much information, it is a grid
+        // over the imagery.
+        constexpr float DOT_LEN  = 5.0f;
+        constexpr float DOT_GAP  = 5.0f;
+        constexpr float STUB_LEN = 40.0f;
+
+        float line_dist = STUB_LEN;
+        if (mv.active) {
+            // Distance along (dx, dy) to the panel edge. One axis at a time,
+            // nearest crossing wins; an axis the ray runs parallel to is never
+            // crossed and the other is what bounds it — both cannot be
+            // parallel, the direction being a unit vector.
+            const auto axis_exit = [](float from, float dir,
+                                      float lo, float hi) -> float {
+                if (dir >  1e-6f) return (hi - from) / dir;
+                if (dir < -1e-6f) return (lo - from) / dir;
+                return std::numeric_limits<float>::max();
+            };
+            line_dist = std::max(0.0f, std::min(
+                axis_exit(tip.x, dx, wp.x, wp.x + win_w),
+                axis_exit(tip.y, dy, wp.y, wp.y + win_h)));
+        }
+
+        for (float t = 0.0f; t < line_dist; t += DOT_LEN + DOT_GAP) {
+            const float t1 = std::min(t + DOT_LEN, line_dist);
+            dl->AddLine({ tip.x + dx * t,  tip.y + dy * t  },
+                        { tip.x + dx * t1, tip.y + dy * t1 },
+                        ui_col(g_theme.map_vehicle_ring, A), 1.5f);
+        }
+    } else {
+        // No heading — plain dot marker
+        dl->AddCircleFilled(c, 13.5f, ui_col(g_theme.map_vehicle_fill, A));
+        dl->AddCircle      (c, 13.5f, ui_col(g_theme.map_vehicle_ring, A), 0, 2.0f);
+    }
+
+    // ── Label ────────────────────────────────────────────────────────────────
+    // "(2) SYS 1" — Fleet's number, then what the aircraft calls itself. The
+    // number is there because the sysid is not a name: two airframes fresh off
+    // the bench both answer to 1, and the map would show two identical labels.
+    //
+    // Held below the symbol at a fixed offset rather than swung around with the
+    // heading, so a turning aircraft does not drag its own label round with it.
+    // A backing plate, because white-on-satellite is unreadable over anything
+    // pale and this sits on imagery.
+    if (mv.number != 0 || mv.sysid != 0) {
+        char lbl[32];
+        snprintf(lbl, sizeof(lbl), "(%u) SYS %u",
+                 (unsigned)mv.number, (unsigned)mv.sysid);
+
+        ImFont*     fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+        const float tw = ui_tracked_width(fm, UI_SZ_MICRO, lbl);
+        const ImVec2 p0 = { c.x - tw * 0.5f - 5.0f, c.y + 30.0f };
+        const ImVec2 p1 = { p0.x + tw + 10.0f, p0.y + UI_SZ_MICRO + 6.0f };
+
+        // The plate is there for legibility over imagery, not as chrome. The
+        // active aircraft's label is amber and carries itself, so it wants less
+        // plate behind it and less of the map hidden under it; the dim ones
+        // need the backing to stay readable at all.
+        const float plate_a = mv.active ? 0.40f : 0.78f * A;
+        dl->AddRectFilled(p0, p1, ui_col(g_theme.bg_topbar, plate_a));
+        ui_frame(dl, p0, p1, ui_col(g_theme.separator, 0.7f * A));
+        ui_tracked_text(dl, fm, UI_SZ_MICRO, { p0.x + 5.0f, p0.y + 3.0f },
+                        mv.active ? ui_col(g_theme.accent, A)
+                                  : ui_col(g_theme.col_log, A), lbl);
+    }
+}
+
 // ── GO HERE context menu ──────────────────────────────────────────────────────
 //
 // A right-click on the map names a point; this is what the operator does with
@@ -530,13 +731,22 @@ static void draw_goto_menu(GotoTargetState& go)
                            ui_col(g_theme.col_error));
         }
 
-        // Dropping the marker is not a command — it only stops the map drawing
-        // a target the operator has finished with.
+        // Neither of these is a command — they only stop the map drawing
+        // something the operator has finished with.
         if (go.has_target) {
             ImGui::Spacing();
             ui_dialog_row(BW);
             if (ui_grid_button("CLEAR TARGET", { BW, UI_DIALOG_BH })) {
                 go.has_target = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        if (!g_tracks.by_vehicle[ui_bound_vehicle()].pts.empty()) {
+            ImGui::Spacing();
+            ui_dialog_row(BW);
+            if (ui_grid_button("CLEAR TRACK", { BW, UI_DIALOG_BH })) {
+                map_track_clear();
                 ImGui::CloseCurrentPopup();
             }
         }
@@ -578,7 +788,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                    const std::vector<MissionItem>* mission,
                    MissionPickState* pick,
                    float alt_rel, float gs,
-                   GotoTargetState* go)
+                   GotoTargetState* go,
+                   const std::vector<MapVehicle>* fleet)
 {
     ensure_started();
     drain_upload_queue();
@@ -722,60 +933,84 @@ void draw_map_view(double lat, double lon, bool has_pos,
             }
         }
 
-        // ── Vehicle marker ────────────────────────────────────────────────────
-        if (has_pos) {
-            double vx, vy;
-            lat_lon_to_tile_frac(lat, lon, g_map.zoom, vx, vy);
-            const float sx = wp.x + (float)(vx * TILE_PX - tl_px);
-            const float sy = wp.y + (float)(vy * TILE_PX - tl_py);
-
-            if (has_hdg) {
-                // Convert heading (degrees CW from north) to screen angle.
-                // Screen Y grows downward, so north = -Y → angle = hdg - 90° in
-                // standard math terms, but we use (sin, -cos) directly.
-                const float rad   = heading * (float)(M_PI / 180.0);
-                const float dx    = std::sin(rad);   // east component  (+x on screen)
-                const float dy    = -std::cos(rad);  // north component (-y on screen)
-
-                // Arrow dimensions
-                constexpr float BODY   = 18.0f; // distance from center to tip
-                constexpr float TAIL   = 10.0f; // distance from center to tail
-                constexpr float WING   = 7.0f;  // half-width at wing base
-                constexpr float NOTCH  = 4.0f;  // tail notch depth
-
-                // Key points (all relative to marker center)
-                const ImVec2 tip   = { sx + dx * BODY,  sy + dy * BODY  };
-                const ImVec2 tail_c= { sx - dx * TAIL,  sy - dy * TAIL  }; // center tail
-                // Wing points perpendicular to heading
-                const ImVec2 wL    = { sx - dy * WING,  sy + dx * WING  };
-                const ImVec2 wR    = { sx + dy * WING,  sy - dx * WING  };
-                // Tail notch pulls tail center slightly toward tip
-                const ImVec2 notch = { sx - dx * (TAIL - NOTCH), sy - dy * (TAIL - NOTCH) };
-
-                // Filled arrow body: tip → wingL → notch → wingR
-                dl->AddQuadFilled(tip, wL, notch, wR, map_vehicle_fill());
-                // Outline
-                dl->AddQuad(tip, wL, notch, wR, map_vehicle_ring(), 1.5f);
-                // Tail segment centre → notch
-                dl->AddLine(tail_c, notch, map_vehicle_ring(), 1.5f);
-
-                // Dotted heading line from tip outward
-                constexpr float DOT_LEN   = 5.0f;
-                constexpr float DOT_GAP   = 5.0f;
-                constexpr float LINE_DIST = 80.0f; // total extent from tip
-                for (float t = 0.0f; t < LINE_DIST; t += DOT_LEN + DOT_GAP) {
-                    const ImVec2 p0 = { tip.x + dx * t,
-                                        tip.y + dy * t };
-                    const ImVec2 p1 = { tip.x + dx * std::min(t + DOT_LEN, LINE_DIST),
-                                        tip.y + dy * std::min(t + DOT_LEN, LINE_DIST) };
-                    dl->AddLine(p0, p1, map_vehicle_ring(), 1.5f);
-                }
-            } else {
-                // No heading — plain dot marker
-                dl->AddCircleFilled({sx, sy}, 9.0f, map_vehicle_fill());
-                dl->AddCircle      ({sx, sy}, 9.0f, map_vehicle_ring(), 0, 2.0f);
-            }
+        // ── Fleet ─────────────────────────────────────────────────────────────
+        //
+        // Every vehicle the caller handed over. A caller with no fleet becomes a
+        // fleet of one built from the scalar arguments, so there is one drawing
+        // path rather than two that have to be kept in agreement.
+        std::vector<MapVehicle> solo;
+        const std::vector<MapVehicle>* draw_list = fleet;
+        if (!draw_list || draw_list->empty()) {
+            MapVehicle one;
+            one.id      = ui_bound_vehicle();   // so it finds its own trail
+            one.lat     = lat;
+            one.lon     = lon;
+            one.has_pos = has_pos;
+            one.heading = heading;
+            one.has_hdg = has_hdg;
+            one.active  = true;
+            solo.push_back(one);
+            draw_list = &solo;
         }
+
+        const auto project = [&](double plat, double plon) -> ImVec2 {
+            double px, py;
+            lat_lon_to_tile_frac(plat, plon, g_map.zoom, px, py);
+            return { wp.x + (float)(px * TILE_PX - tl_px),
+                     wp.y + (float)(py * TILE_PX - tl_py) };
+        };
+
+        // Inactive vehicles first, the active one last, so the aircraft every
+        // other panel is showing is never buried under another's trail or
+        // symbol. Both passes run over the same list, so a vehicle's trail and
+        // its symbol keep the same relative order.
+        const auto in_draw_order = [&](auto&& fn) {
+            for (const MapVehicle& mv : *draw_list) if (!mv.active) fn(mv);
+            for (const MapVehicle& mv : *draw_list) if ( mv.active) fn(mv);
+        };
+
+        // ── Position trails ───────────────────────────────────────────────────
+        // Under the aircraft and under the mission, so neither is obscured by
+        // where something has already been.
+        in_draw_order([&](const MapVehicle& mv) {
+            const auto it = g_tracks.by_vehicle.find(mv.id);
+            if (it == g_tracks.by_vehicle.end()) return;
+            const std::deque<TrackPoint>& pts = it->second.pts;
+            if (pts.size() < 2) return;
+
+            // Projected and thinned again, this time in pixels: at low zoom a
+            // kilometre of track collapses into a few pixels, and handing ImGui
+            // six thousand points to draw inside one of them costs the whole
+            // frame for nothing. Points outside the panel are kept — dropping
+            // them would break the segments that cross it.
+            static std::vector<ImVec2> scr;   // reused; UI thread only
+            scr.clear();
+            scr.reserve(pts.size());
+            for (const TrackPoint& tp : pts) {
+                const ImVec2 p = project(tp.lat, tp.lon);
+                if (!scr.empty()) {
+                    const ImVec2& q = scr.back();
+                    if (std::fabs(p.x - q.x) < 2.0f &&
+                        std::fabs(p.y - q.y) < 2.0f) continue;
+                }
+                scr.push_back(p);
+            }
+            // The aircraft's own position closes its trail, so the line reaches
+            // the symbol instead of stopping a sample short of it.
+            if (mv.has_pos) scr.push_back(project(mv.lat, mv.lon));
+            if (scr.size() < 2) return;
+
+            dl->AddPolyline(scr.data(), (int)scr.size(),
+                            ui_col(g_theme.map_track, mv.active ? 1.0f : 0.40f),
+                            ImDrawFlags_None, mv.active ? 3.0f : 2.0f);
+        });
+
+        // ── Aircraft ──────────────────────────────────────────────────────────
+        in_draw_order([&](const MapVehicle& mv) {
+            if (!mv.has_pos) return;
+            draw_aircraft(dl, project(mv.lat, mv.lon), mv,
+                          wp, win_w, win_h);
+        });
 
         // ── Mission waypoint overlay ──────────────────────────────────────────
         // Prefer the live edit vector so the map reflects unsaved edits.

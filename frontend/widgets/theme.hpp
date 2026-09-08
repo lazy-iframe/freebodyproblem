@@ -159,6 +159,7 @@ struct ThemeVars {
     ImVec4 map_tile_placeholder = { 0.047f, 0.059f, 0.031f, 1.000f };
     ImVec4 map_vehicle_fill     = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 map_vehicle_ring     = { 0.925f, 0.725f, 0.306f, 0.850f };
+    ImVec4 map_track            = { 1.000f, 0.282f, 0.282f, 0.850f }; // red #FF4848 — breadcrumb trail, matches the airframe symbol
     ImVec4 map_attr_bg          = { 0.047f, 0.059f, 0.031f, 0.800f };
     ImVec4 map_attr_text        = { 0.706f, 0.776f, 0.561f, 0.850f }; // olive, see col_log
 
@@ -419,6 +420,7 @@ inline ThemeVars retro_amber_theme_vars()
     t.map_tile_placeholder   = { 0.047f, 0.027f, 0.004f, 1.000f };
     t.map_vehicle_fill       = { 1.000f, 0.690f, 0.000f, 1.000f };
     t.map_vehicle_ring       = { 1.000f, 0.824f, 0.235f, 0.824f };
+    t.map_track              = { 1.000f, 0.690f, 0.000f, 0.550f };
     t.map_attr_bg            = { 0.047f, 0.027f, 0.004f, 0.784f };
     t.map_attr_text          = { 0.824f, 0.529f, 0.000f, 0.784f };
 
@@ -522,6 +524,7 @@ inline ThemeVars matrix_theme_vars()
     t.map_tile_placeholder = { 0.008f, 0.039f, 0.012f, 1.000f };
     t.map_vehicle_fill     = { 0.000f, 1.000f, 0.255f, 1.000f }; // phosphor green
     t.map_vehicle_ring     = { 0.667f, 1.000f, 0.000f, 0.824f }; // yellow-green ring
+    t.map_track            = { 0.000f, 1.000f, 0.255f, 0.550f };
     t.map_attr_bg          = { 0.008f, 0.039f, 0.012f, 0.784f };
     t.map_attr_text        = { 0.000f, 0.533f, 0.133f, 0.784f };
 
@@ -664,6 +667,7 @@ inline ImU32 ah_border()         { return ImGui::ColorConvertFloat4ToU32(g_theme
 inline ImU32 map_tile_placeholder() { return ImGui::ColorConvertFloat4ToU32(g_theme.map_tile_placeholder); }
 inline ImU32 map_vehicle_fill()     { return ImGui::ColorConvertFloat4ToU32(g_theme.map_vehicle_fill); }
 inline ImU32 map_vehicle_ring()     { return ImGui::ColorConvertFloat4ToU32(g_theme.map_vehicle_ring); }
+inline ImU32 map_track()            { return ImGui::ColorConvertFloat4ToU32(g_theme.map_track); }
 inline ImU32 map_attr_bg()          { return ImGui::ColorConvertFloat4ToU32(g_theme.map_attr_bg); }
 inline ImU32 map_attr_text()        { return ImGui::ColorConvertFloat4ToU32(g_theme.map_attr_text); }
 

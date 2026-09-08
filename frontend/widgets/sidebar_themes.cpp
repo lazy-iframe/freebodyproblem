@@ -357,6 +357,7 @@ void draw_themes_panel(AppSettings& settings)
         c4("Tile Placeholder", g_theme.map_tile_placeholder);
         c4("Vehicle Fill",     g_theme.map_vehicle_fill);
         c4("Vehicle Ring",     g_theme.map_vehicle_ring);
+        c4("Track",            g_theme.map_track);
         c4("Attr BG",          g_theme.map_attr_bg);
         c4("Attr Text",        g_theme.map_attr_text);
     }

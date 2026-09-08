@@ -37,7 +37,9 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click waypoint editing**: click map to place waypoints during mission planning
 - **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
-- **Real-time vehicle tracking**: aircraft position and heading overlay on map
+- **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel
+- **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
+- **Position trail**: where each aircraft has been, thinned to a point every 3 m so a vehicle standing still does not smudge, and recorded per vehicle off the live stream — an aircraft that flew while you were watching another one still has its track when you switch back. Cleared from the map's right-click menu
 
 ### Radio
 - **Live channel monitor**: a bar per channel with its PWM, marked with the stick or switch it is bound to, listing only the channels the receiver is actually sending

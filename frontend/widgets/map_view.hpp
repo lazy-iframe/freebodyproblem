@@ -17,7 +17,7 @@
 
 
 #pragma once
-#include "../../backend/mavlink_parser.hpp"
+#include "../../backend/vehicle.hpp"
 #include "../goto_target.hpp"
 #include "../mission_pick.hpp"
 #include <string>
@@ -28,6 +28,40 @@
 // URL format: "https://host/path/{z}/{x}/{y}" — {z}/{x}/{y} are substituted per tile.
 // Some providers use {z}/{y}/{x} ordering (e.g. Esri) — match your provider.
 void map_view_set_tile_source(const std::string& url, const std::string& attribution);
+
+// One aircraft as the map draws it. Built by the render loop, which is already
+// snapshotting every vehicle each frame, so this costs no extra locking.
+//
+// The whole fleet is drawn, not only the vehicle the panels are bound to: an
+// operator flying three aircraft needs to see where the other two are, and a
+// map that hides them is the one thing a moving map must not do.
+struct MapVehicle {
+    VehicleId id;                 // keys this vehicle's trail
+    uint32_t  number  = 0;        // Fleet's display number — the "(2)" in the label
+    uint8_t   sysid   = 0;
+    double    lat     = 0.0;
+    double    lon     = 0.0;
+    bool      has_pos = false;
+    float     heading = 0.0f;
+    bool      has_hdg = false;
+    bool      active  = false;    // the vehicle every other panel is showing
+};
+
+// Record one position sample on the bound vehicle's trail.
+//
+// Called once per vehicle per frame by the render loop, not from the draw
+// below: the trail is a record of where the aircraft went, and an aircraft
+// that flew while the operator was watching another one still went there. A
+// trail that only grew while its vehicle was on screen would draw a straight
+// line across every switch.
+//
+// Samples are thinned by distance, so a vehicle sitting still costs nothing
+// and the point count follows ground track rather than frame rate.
+void map_track_pump(const VehicleState& vs);
+
+// Drop the bound vehicle's trail. The map's own right-click menu offers this;
+// declared here because the trail is public state, not the menu's.
+void map_track_clear();
 
 // Starts the tile-fetch thread on first call; must be paired with a single
 // call to map_view_shutdown() before the OpenGL context is destroyed.
@@ -47,10 +81,15 @@ void map_view_shutdown();
 //   go        – optional GO HERE state; when present a right-click opens the
 //               map's context menu and a confirmed target is written back for
 //               the caller to send
+//   fleet     – every vehicle to draw, the active one among them. nullptr or
+//               empty falls back to drawing the lat/lon above on its own, which
+//               is what the scalar arguments are still for: the overlay, the
+//               follow-the-vehicle centring, and callers with one aircraft
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
                    const std::vector<MissionItem>* mission = nullptr,
                    MissionPickState* pick = nullptr,
                    float alt_rel = 0.0f, float gs = 0.0f,
-                   GotoTargetState* go = nullptr);
+                   GotoTargetState* go = nullptr,
+                   const std::vector<MapVehicle>* fleet = nullptr);

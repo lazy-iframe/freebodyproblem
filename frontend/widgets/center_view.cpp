@@ -20,6 +20,7 @@
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "map_view.hpp"
+#include "vehicle_ui_state.hpp"
 #include "plugin_rail.hpp"
 #include "video_player.hpp"
 #include "../app_log.hpp"
@@ -213,19 +214,16 @@ static void draw_video_picker(const VehicleState& vs, MavlinkSender* sender,
     }
 }
 
-// ── draw_center_view ──────────────────────────────────────────────────────────
-
-
 // ── GO HERE ───────────────────────────────────────────────────────────────────
 //
 // The map draws the right-click menu and hands back a point; the send happens
 // here, where the sender is.
 
-static GotoTargetState s_goto;
-
-// The target belongs to the vehicle it was sent to, so a switch of vehicle
-// drops the marker rather than showing one aircraft the other's destination.
-static uint8_t s_goto_sysid = 0;
+// Keyed by vehicle rather than held flat: a target belongs to the aircraft it
+// was sent to, and two airframes that both shipped as sysid 1 on separate links
+// are exactly the case a bare sysid would merge. See vehicle_ui_state.hpp.
+static VehicleUiState<GotoTargetState> s_goto_state;
+static GotoTargetState& goto_state() { return *s_goto_state; }
 
 // Does the vehicle accept a position target right now?
 //
@@ -266,8 +264,11 @@ static bool vehicle_in_guided(const VehicleState& vs)
     }
 }
 
+// ── draw_center_view ──────────────────────────────────────────────────────────
+
 void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
-                      MissionPickState* pick)
+                      MissionPickState* pick,
+                      const std::vector<MapVehicle>* fleet)
 {
     const GcsLayout l = GcsLayout::compute();
 
@@ -575,10 +576,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             (pick && pick->edit_mission) ? pick->edit_mission
             : (vs.has_mission           ? &vs.mission : nullptr);
 
-        if (vs.sysid != s_goto_sysid) {
-            s_goto_sysid      = vs.sysid;
-            s_goto.has_target = false;
-        }
+        GotoTargetState& s_goto = goto_state();
         s_goto.connected     = vs.has_heartbeat;
         s_goto.guided        = vehicle_in_guided(vs);
         s_goto.current_alt_m = vs.alt_rel;
@@ -588,7 +586,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                       band_x, content_top + vid_h,
                       vid_w, map_h,
                       map_mission, pick,
-                      vs.alt_rel, vs.groundspeed, &s_goto);
+                      vs.alt_rel, vs.groundspeed, &s_goto, fleet);
 
         // Consume the map's request. Guarded again rather than trusting the
         // menu's own check: the flags it read were a frame old, and a mode

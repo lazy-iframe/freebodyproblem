@@ -179,6 +179,10 @@ static AppSettings       g_settings{};
 static bool              g_close_req = false;
 static MissionPickState  g_mission_pick{};
 
+// Every vehicle the map draws, rebuilt each frame from the per-vehicle pump
+// loop below. File scope only so the vector keeps its capacity across frames.
+static std::vector<MapVehicle> g_map_fleet;
+
 // ── Splash screen ─────────────────────────────────────────────────────────────
 static ImFont* g_font_splash_title = nullptr;
 static bool    g_splash_done       = false;
@@ -271,13 +275,38 @@ static void render_ui()
     // calibration on one keeps advancing while the operator watches another.
     {
         const double now_s = ImGui::GetTime();
+        g_map_fleet.clear();
         for (const auto& v : g_fleet.vehicles()) {
             VehicleSnapshot vsnap;
             v->snapshot(vsnap);
             ui_bind_vehicle(v->id());
             rc_tab_pump(&vsnap.state);
             sensors_tab_pump(&vsnap.state, vsnap.status_texts, now_s);
+            map_track_pump(vsnap.state);
+
+            // The map draws the whole fleet, and this loop is already holding
+            // every vehicle's snapshot — so its list is built here rather than
+            // by snapshotting all of them a second time further down.
+            MapVehicle mv;
+            mv.id      = v->id();
+            mv.number  = v->number();
+            mv.sysid   = v->sysid();   // from the id, so it is set before the first snapshot
+            mv.lat     = vsnap.state.lat;
+            mv.lon     = vsnap.state.lon;
+            mv.has_pos = vsnap.state.has_global_pos;
+            mv.heading = (float)vsnap.state.heading;
+            mv.has_hdg = vsnap.state.has_vfr;
+            mv.active  = veh && (v->id() == veh->id());
+            g_map_fleet.push_back(mv);
         }
+
+        // Fleet::vehicles() comes out of a hash map, so the order changes as
+        // vehicles come and go. Sorting by the display number keeps overlapping
+        // labels stacked the same way from frame to frame.
+        std::sort(g_map_fleet.begin(), g_map_fleet.end(),
+                  [](const MapVehicle& a, const MapVehicle& b) {
+                      return a.number < b.number;
+                  });
     }
 
     // Forget the panel state of vehicles that have gone, so a link that is
@@ -313,7 +342,7 @@ static void render_ui()
         draw_sidebar_left(sender, &vs, &g_conn_req, link_status, &params, &g_settings,
                           &stats, total_msg, total_bytes, errors,
                           g_fleet.links(), &g_mission_pick);
-    draw_center_view(vs, sender, &g_mission_pick);
+    draw_center_view(vs, sender, &g_mission_pick, &g_map_fleet);
     if (!video_full)
         draw_sidebar_right(vs, status_texts, sender, &g_settings);
 }

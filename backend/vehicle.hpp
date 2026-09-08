@@ -86,6 +86,7 @@ struct VehicleSnapshot {
 // snapshot carries the parameter table and the inspector's raw-message cache.
 struct VehicleChip {
     VehicleId id;
+    uint32_t  number        = 0;   // Fleet's display number; see Vehicle::number()
     uint8_t   compid        = 0;
     uint8_t   type          = 0;   // MAV_TYPE
     bool      armed         = false;
@@ -113,7 +114,7 @@ struct VehicleChip {
 // the reading of another.
 class Vehicle {
 public:
-    Vehicle(VehicleId id, uint8_t autopilot_compid);
+    Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number);
     ~Vehicle();
 
     Vehicle(const Vehicle&)            = delete;
@@ -142,6 +143,14 @@ public:
 
     MavlinkSender& sender()        { return sender_; }
     VehicleId      id()      const { return id_; }
+
+    // The short number the operator sees beside this vehicle on the map, "(2)".
+    // A sysid is what the aircraft calls itself and is not usable as a name —
+    // two airframes fresh off the bench both answer to 1 — so Fleet hands out a
+    // number of its own on discovery, lowest free one first, fixed for the life
+    // of the object. Lowest-free rather than ever-increasing so a fleet of three
+    // reads 1, 2, 3 rather than 1, 4, 7 after a morning of reconnects.
+    uint32_t       number()  const { return number_; }
     uint8_t        sysid()   const { return id_.sysid; }
     uint8_t        compid()  const { return autopilot_compid_; }
     // Fixed for the object's life: a vehicle is identified by the link it was
@@ -169,6 +178,7 @@ private:
     void publish(bool param_fetch_active, bool republish_params);
 
     const VehicleId id_;
+    const uint32_t  number_;
     const uint8_t   autopilot_compid_;
 
     MavlinkParser parser_;

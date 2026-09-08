@@ -20,13 +20,19 @@
 #include "../../backend/mavlink_parser.hpp"
 #include "../../plugins/plugin_api.hpp"
 #include "../mission_pick.hpp"
+#include "map_view.hpp"
+
+#include <vector>
 
 class MavlinkSender;
 
 // `sender` is handed to the plugin rail beside the video, which is where user
-// plugins reach the vehicle from.
+// plugins reach the vehicle from. `fleet` is every vehicle the map draws, of
+// which `vs` is the active one — the sidebars and the overlay show that one,
+// the map shows them all.
 void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
-                      MissionPickState* pick = nullptr);
+                      MissionPickState* pick = nullptr,
+                      const std::vector<MapVehicle>* fleet = nullptr);
 void center_view_shutdown();   // stop video + delete GL texture — call before context destroy
 
 // True while the feed is fullscreen — the second press of the VIDEO mode
