@@ -18,6 +18,7 @@
 
 #pragma once
 #include "../../backend/mavlink_parser.hpp"
+#include "../goto_target.hpp"
 #include "../mission_pick.hpp"
 #include <string>
 #include <vector>
@@ -43,9 +44,13 @@ void map_view_shutdown();
 //               captures the next left-click as a lat/lon for that waypoint
 //   alt_rel   – altitude above home in metres, shown in the A/C overlay
 //   gs        – ground speed in m/s, shown in the A/C overlay
+//   go        – optional GO HERE state; when present a right-click opens the
+//               map's context menu and a confirmed target is written back for
+//               the caller to send
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
                    const std::vector<MissionItem>* mission = nullptr,
                    MissionPickState* pick = nullptr,
-                   float alt_rel = 0.0f, float gs = 0.0f);
+                   float alt_rel = 0.0f, float gs = 0.0f,
+                   GotoTargetState* go = nullptr);

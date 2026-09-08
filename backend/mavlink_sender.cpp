@@ -41,6 +41,7 @@ static inline int socket_write(int fd, const char* buf, int len)
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+#include <cmath>
 #include <bitset>
 #include <mutex>
 #include <mavlink/ardupilotmega/mavlink.h>
@@ -161,6 +162,43 @@ void MavlinkSender::return_to_launch(uint8_t tsys, uint8_t tcomp)
 {
     // MAV_CMD_NAV_RETURN_TO_LAUNCH (20)
     enqueue_command_long(tsys, tcomp, 20);
+}
+
+void MavlinkSender::goto_position(uint8_t tsys, uint8_t tcomp,
+                                  double lat_deg, double lon_deg,
+                                  float altitude_m)
+{
+    // Everything but the three position fields is masked off. Bits 0-2 are the
+    // position, 3-5 velocity, 6-8 acceleration, 9 force, 10 yaw, 11 yaw rate;
+    // a set bit means "ignore this field", so the position bits are the only
+    // ones left clear.
+    constexpr uint16_t TYPE_MASK = 0x0DF8;   // 0b0000110111111000
+
+    // time_boot_ms is the sender's own uptime, and ArduPilot does not act on
+    // it. Measured from first use rather than from process start because the
+    // field is only ever read as a monotonic stamp.
+    static const auto t0 = std::chrono::steady_clock::now();
+    const uint32_t boot_ms = (uint32_t)std::chrono::duration_cast<
+        std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+
+    mavlink_message_t msg;
+    PackLock _pl(shared_chan_);
+    mavlink_msg_set_position_target_global_int_pack_chan(
+        GCS_SYSID, GCS_COMPID, chan_, &msg,
+        boot_ms, tsys, tcomp,
+        MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+        TYPE_MASK,
+        (int32_t)std::lround(lat_deg * 1e7),
+        (int32_t)std::lround(lon_deg * 1e7),
+        altitude_m,
+        0.f, 0.f, 0.f,      // vx, vy, vz          — ignored by the mask
+        0.f, 0.f, 0.f,      // afx, afy, afz       — ignored by the mask
+        0.f, 0.f);          // yaw, yaw_rate       — ignored by the mask
+
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
 }
 
 void MavlinkSender::command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,

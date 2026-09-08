@@ -36,6 +36,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Interactive map view**: slippy map with OpenStreetMap tile support (configurable tile server)
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click waypoint editing**: click map to place waypoints during mission planning
+- **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map
 
 ### Radio

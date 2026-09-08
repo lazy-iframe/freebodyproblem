@@ -23,12 +23,15 @@
 #include "plugin_rail.hpp"
 #include "video_player.hpp"
 #include "../app_log.hpp"
+#include "../../backend/mavlink_sender.hpp"
 #include "../../plugins/plugin_api.hpp"   // gcs_camera_* are implemented here
 #include "imgui.h"
 #include "stb_image_write.h"
 
 #include <GLFW/glfw3.h>   // brings in OpenGL3 core header
+#include <cctype>
 #include <cstring>
+#include <string>
 #include <vector>
 
 // The Windows SDK ships the OpenGL 1.1 headers; GL_CLAMP_TO_EDGE is 1.2.
@@ -211,6 +214,57 @@ static void draw_video_picker(const VehicleState& vs, MavlinkSender* sender,
 }
 
 // ── draw_center_view ──────────────────────────────────────────────────────────
+
+
+// ── GO HERE ───────────────────────────────────────────────────────────────────
+//
+// The map draws the right-click menu and hands back a point; the send happens
+// here, where the sender is.
+
+static GotoTargetState s_goto;
+
+// The target belongs to the vehicle it was sent to, so a switch of vehicle
+// drops the marker rather than showing one aircraft the other's destination.
+static uint8_t s_goto_sysid = 0;
+
+// Does the vehicle accept a position target right now?
+//
+// ArduPilot honours SET_POSITION_TARGET_GLOBAL_INT in GUIDED and discards it
+// everywhere else, silently. The vehicle's own AVAILABLE_MODES list is the
+// authority on which custom_mode that is — the numbering is per-frame, a
+// Plane's 4 is not a Copter's 4 — and the table below is the fallback for
+// stacks that never publish the list.
+static bool vehicle_in_guided(const VehicleState& vs)
+{
+    if (!vs.has_heartbeat) return false;
+
+    for (const FlightModeInfo& m : vs.available_modes) {
+        if (m.custom_mode != vs.custom_mode) continue;
+        std::string n;
+        n.reserve(m.name.size());
+        for (char c : m.name)
+            n.push_back((char)std::tolower((unsigned char)c));
+        // "Guided" and ArduPilot's "Guided NoGPS", which takes attitude
+        // targets rather than positions, are two different modes; only the
+        // plain one is matched.
+        return n == "guided";
+    }
+
+    switch (vs.type) {
+        case MAV_TYPE_FIXED_WING:
+        case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
+        case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
+        case MAV_TYPE_VTOL_TILTROTOR:
+        case MAV_TYPE_VTOL_FIXEDROTOR:
+        case MAV_TYPE_VTOL_TAILSITTER:
+        case MAV_TYPE_VTOL_TILTWING:
+        case MAV_TYPE_GROUND_ROVER:
+        case MAV_TYPE_SURFACE_BOAT:
+            return vs.custom_mode == 15;   // Plane / Rover GUIDED
+        default:
+            return vs.custom_mode == 4;    // Copter / Sub GUIDED
+    }
+}
 
 void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                       MissionPickState* pick)
@@ -521,12 +575,42 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             (pick && pick->edit_mission) ? pick->edit_mission
             : (vs.has_mission           ? &vs.mission : nullptr);
 
+        if (vs.sysid != s_goto_sysid) {
+            s_goto_sysid      = vs.sysid;
+            s_goto.has_target = false;
+        }
+        s_goto.connected     = vs.has_heartbeat;
+        s_goto.guided        = vehicle_in_guided(vs);
+        s_goto.current_alt_m = vs.alt_rel;
+
         draw_map_view(vs.lat, vs.lon, vs.has_global_pos,
                       (float)vs.heading, vs.has_vfr,
                       band_x, content_top + vid_h,
                       vid_w, map_h,
                       map_mission, pick,
-                      vs.alt_rel, vs.groundspeed);
+                      vs.alt_rel, vs.groundspeed, &s_goto);
+
+        // Consume the map's request. Guarded again rather than trusting the
+        // menu's own check: the flags it read were a frame old, and a mode
+        // change between the click and here would otherwise send a target into
+        // a vehicle that will drop it.
+        if (s_goto.requested) {
+            s_goto.requested = false;
+            if (sender && s_goto.connected && s_goto.guided) {
+                sender->goto_position(vs.sysid, vs.compid,
+                                      s_goto.req_lat, s_goto.req_lon,
+                                      s_goto.req_alt_m);
+                s_goto.has_target   = true;
+                s_goto.target_lat   = s_goto.req_lat;
+                s_goto.target_lon   = s_goto.req_lon;
+                s_goto.target_alt_m = s_goto.req_alt_m;
+                gcs_log("go here \xe2\x86\x92 %.6f, %.6f at %.1f m",
+                        s_goto.req_lat, s_goto.req_lon,
+                        (double)s_goto.req_alt_m);
+            } else {
+                gcs_log("go here ignored \xe2\x80\x94 vehicle not in GUIDED");
+            }
+        }
     }
 
     // ── Plugin rail ───────────────────────────────────────────────────────────

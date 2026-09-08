@@ -81,6 +81,23 @@ public:
 
     void return_to_launch(uint8_t target_sysid, uint8_t target_compid);
 
+    // ── Guided flight ─────────────────────────────────────────────────────────
+
+    // SET_POSITION_TARGET_GLOBAL_INT (#86) — "fly to this point and hold it".
+    //
+    // A stream message rather than a command: there is no COMMAND_ACK, and a
+    // vehicle that is not in GUIDED discards it silently. Callers check the
+    // mode themselves, since the wire says nothing either way.
+    //
+    // altitude_m is metres above home (MAV_FRAME_GLOBAL_RELATIVE_ALT_INT), the
+    // same datum the takeoff altitude and the A/C overlay use. The type_mask
+    // ignores velocity, acceleration, yaw and yaw rate, leaving position the
+    // only field the vehicle is asked to honour — the fields the mask ignores
+    // are still sent as zero, and a vehicle that mistook one for a demand
+    // would be commanded to stop dead.
+    void goto_position(uint8_t target_sysid, uint8_t target_compid,
+                       double lat_deg, double lon_deg, float altitude_m);
+
     // MAV_CMD_DO_AUX_FUNCTION (218): trigger any ArduPilot auxiliary function.
     // function: RCx_OPTION value (e.g. 32 = motor interlock)
     // switch_pos: 0 = LOW, 1 = MIDDLE, 2 = HIGH

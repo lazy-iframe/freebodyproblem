@@ -447,6 +447,108 @@ static bool draw_fallback_tile(ImDrawList* dl,
     return false;
 }
 
+// ── GO HERE context menu ──────────────────────────────────────────────────────
+//
+// A right-click on the map names a point; this is what the operator does with
+// it. The menu only reads and writes GotoTargetState — the send itself belongs
+// to the caller, which is the one holding a sender.
+
+static double s_ctx_lat = 0.0;      // where the last right-click landed
+static double s_ctx_lon = 0.0;
+
+// Target altitude, metres above home. Seeded from the vehicle's own altitude
+// the first time the menu opens — "go there, stay at this height" is the
+// common ask — and remembered after that, since an operator working a series
+// of targets means the same height for all of them.
+static float s_goto_alt_m     = 10.0f;
+static bool  s_goto_alt_seeded = false;
+
+static constexpr float GOTO_ALT_MIN_M = 0.0f;
+static constexpr float GOTO_ALT_MAX_M = 1000.0f;
+
+static void draw_goto_menu(GotoTargetState& go)
+{
+    constexpr float MENU_W = 250.0f;
+
+    ui_push_dialog_style();
+    if (ImGui::BeginPopup("##map_ctx", ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoTitleBar)) {
+        ui_dialog_title("GO HERE", MENU_W);
+
+        char coords[80];
+        snprintf(coords, sizeof(coords), "%.6f%c   %.6f%c",
+                 s_ctx_lat < 0 ? -s_ctx_lat : s_ctx_lat, s_ctx_lat < 0 ? 'S' : 'N',
+                 s_ctx_lon < 0 ? -s_ctx_lon : s_ctx_lon, s_ctx_lon < 0 ? 'W' : 'E');
+        ui_dialog_text(coords, ui_col_value());
+        ImGui::Spacing();
+
+        // Altitude row, centred like everything else in a dialog: label, field,
+        // unit. The number is the only argument the target carries beyond the
+        // click, so it sits with the button that uses it.
+        {
+            constexpr float LBL_W = 34.0f, FLD_W = 72.0f, UNIT_W = 96.0f, GAP = 6.0f;
+            ui_dialog_row(LBL_W + FLD_W + UNIT_W + GAP * 2.0f);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, ui_col_label());
+            ImGui::TextUnformatted("ALT");
+            ImGui::PopStyleColor();
+
+            ImGui::SameLine(0, GAP);
+            ImGui::SetNextItemWidth(FLD_W);
+            ImGui::InputFloat("##goto_alt", &s_goto_alt_m, 0.f, 0.f, "%.1f");
+            s_goto_alt_m = std::max(GOTO_ALT_MIN_M,
+                                    std::min(GOTO_ALT_MAX_M, s_goto_alt_m));
+
+            ImGui::SameLine(0, GAP);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("M ABOVE HOME");
+        }
+
+        ImGui::Spacing();
+
+        // The vehicle discards a position target it is not in GUIDED for, and
+        // says nothing about having done so. Better to refuse here and name the
+        // reason than to send one into silence.
+        const bool sendable = go.connected && go.guided;
+
+        constexpr float BW = 150.0f;
+        ui_dialog_row(BW);
+        ImGui::BeginDisabled(!sendable);
+        if (ui_grid_button("GO", { BW, UI_DIALOG_BH })) {
+            go.req_lat   = s_ctx_lat;
+            go.req_lon   = s_ctx_lon;
+            go.req_alt_m = s_goto_alt_m;
+            go.requested = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+
+        if (!sendable) {
+            ImGui::Spacing();
+            ui_dialog_text(go.connected ? "GUIDED MODE REQUIRED" : "NO LINK",
+                           ui_col(g_theme.col_error));
+        }
+
+        // Dropping the marker is not a command — it only stops the map drawing
+        // a target the operator has finished with.
+        if (go.has_target) {
+            ImGui::Spacing();
+            ui_dialog_row(BW);
+            if (ui_grid_button("CLEAR TARGET", { BW, UI_DIALOG_BH })) {
+                go.has_target = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+    ui_pop_dialog_style();
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void map_view_set_tile_source(const std::string& url, const std::string& attribution)
@@ -475,7 +577,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                    float win_x, float win_y, float win_w, float win_h,
                    const std::vector<MissionItem>* mission,
                    MissionPickState* pick,
-                   float alt_rel, float gs)
+                   float alt_rel, float gs,
+                   GotoTargetState* go)
 {
     ensure_started();
     drain_upload_queue();
@@ -570,6 +673,23 @@ void draw_map_view(double lat, double lon, bool has_pos,
             pick->pick_done = true;
             // active_index intentionally left set; tab_mission clears it after consuming
         }
+
+        // ── Right-click → GO HERE menu ────────────────────────────────────────
+        // Not while picking a waypoint: the mouse belongs to that gesture, and a
+        // second target offered mid-pick is one the operator did not ask for.
+        if (go && !pick_active && ImGui::IsWindowHovered() &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            double gx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
+            double gy = ((double)(mouse.y - wp.y) + tl_py) / TILE_PX;
+            tile_frac_to_lat_lon(gx, gy, g_map.zoom, s_ctx_lat, s_ctx_lon);
+            if (!s_goto_alt_seeded) {
+                s_goto_alt_m = std::max(2.0f, std::round(go->current_alt_m));
+                s_goto_alt_seeded = true;
+            }
+            ImGui::OpenPopup("##map_ctx");
+        }
+        if (go) draw_goto_menu(*go);
 
         int tx0 = (int)std::floor(tl_px / TILE_PX);
         int ty0 = (int)std::floor(tl_py / TILE_PX);
@@ -701,6 +821,42 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 const ImVec2 tsz = ImGui::CalcTextSize(seq_str);
                 dl->AddText({ sp.x - tsz.x * 0.5f, sp.y - tsz.y * 0.5f },
                             IM_COL32(255, 255, 255, 255), seq_str);
+            }
+        }
+
+        // ── Guided target marker ──────────────────────────────────────────────
+        // Where the vehicle was last told to go, with the altitude it was told
+        // to hold. A ringed cross rather than a filled disc, so it reads as a
+        // destination and never as one more waypoint.
+        if (go && go->has_target) {
+            double gx, gy;
+            lat_lon_to_tile_frac(go->target_lat, go->target_lon, g_map.zoom, gx, gy);
+            const ImVec2 tp = { wp.x + (float)(gx * TILE_PX - tl_px),
+                                wp.y + (float)(gy * TILE_PX - tl_py) };
+            constexpr float R = 10.0f;
+            const ImU32 col = ui_col_accent();
+            dl->AddCircle(tp, R,        col, 0, 2.0f);
+            dl->AddCircle(tp, R * 0.35f, col, 0, 2.0f);
+            dl->AddLine({ tp.x - R - 5.0f, tp.y }, { tp.x - R + 2.0f, tp.y }, col, 2.0f);
+            dl->AddLine({ tp.x + R - 2.0f, tp.y }, { tp.x + R + 5.0f, tp.y }, col, 2.0f);
+            dl->AddLine({ tp.x, tp.y - R - 5.0f }, { tp.x, tp.y - R + 2.0f }, col, 2.0f);
+            dl->AddLine({ tp.x, tp.y + R - 2.0f }, { tp.x, tp.y + R + 5.0f }, col, 2.0f);
+
+            char tlbl[32];
+            snprintf(tlbl, sizeof(tlbl), "GOTO  %.0f M", (double)go->target_alt_m);
+            ImFont* fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+            ui_tracked_text(dl, fm, UI_SZ_MICRO,
+                            { tp.x + R + 8.0f, tp.y - UI_SZ_MICRO * 0.5f },
+                            col, tlbl);
+
+            // A line from the aircraft to the target: at a glance it says both
+            // which vehicle the target belongs to and how far it has to run.
+            if (has_pos) {
+                double vx2, vy2;
+                lat_lon_to_tile_frac(lat, lon, g_map.zoom, vx2, vy2);
+                dl->AddLine({ wp.x + (float)(vx2 * TILE_PX - tl_px),
+                              wp.y + (float)(vy2 * TILE_PX - tl_py) },
+                            tp, ui_col(g_theme.accent, 0.45f), 1.5f);
             }
         }
 
