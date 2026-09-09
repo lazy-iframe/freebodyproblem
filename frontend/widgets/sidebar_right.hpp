@@ -24,8 +24,19 @@
 #include "../../backend/mavlink_sender.hpp"
 #include "../settings.hpp"
 
+// Take in whatever this vehicle has said since the last call, for the fleet
+// event log both panels below draw. Called once per vehicle per frame by the
+// render loop, not from the draw: the log carries the whole fleet, so it must
+// see vehicles that are not the one on screen.
+//
+// `number` is Fleet's display number, which is what tags the line.
+void event_log_pump(const VehicleState& vs,
+                    const std::vector<StatusText>& status_texts,
+                    uint32_t number);
+
+// The event log shows every vehicle, so neither of these takes a message list —
+// they read the fleet log, and it does not follow the callsign chip.
 void draw_sidebar_right(const VehicleState& vs,
-                        const std::vector<StatusText>& status_texts,
                         MavlinkSender* sender,
                         AppSettings* settings);
 
@@ -33,5 +44,4 @@ void draw_sidebar_right(const VehicleState& vs,
 // attitude and the event log, semi-transparent, in the map's top-right corner.
 // Call it after draw_center_view() — later submission is what puts it over the
 // map — and only while center_view_map_fullscreen() is true.
-void draw_map_overlay(const VehicleState& vs,
-                      const std::vector<StatusText>& status_texts);
+void draw_map_overlay(const VehicleState& vs);

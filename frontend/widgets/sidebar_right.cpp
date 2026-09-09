@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <unordered_set>
 #include <chrono>
+#include <deque>
 #include <cctype>
 #include <ctime>
 #include <string>
@@ -292,34 +293,104 @@ static void draw_vfr_strip(const VehicleState& vs, float strip_h,
     ImGui::Dummy({ w, strip_h });
 }
 
-// The scrolling body of the event log: a wall-clock stamp per vehicle message,
-// severity-coloured, pinned to the bottom while the view is already there.
-// `bg_alpha` scales the well behind it, so the overlay can let the map through.
-static void draw_event_log_body(const std::vector<StatusText>& status_texts,
-                                float bg_alpha, bool small_text = false)
+// ── Fleet event log ───────────────────────────────────────────────────────────
+//
+// One log for the whole fleet rather than one per vehicle. A STATUSTEXT is the
+// vehicle saying something went wrong, and the aircraft that most needs saying
+// so is rarely the one already on screen — a per-vehicle log hides exactly the
+// message the operator needed to see. So this does not follow the callsign
+// chip: switching vehicles leaves it alone.
+
+struct FleetLogEntry {
+    uint32_t    number;     // Fleet's display number for the vehicle that spoke
+    uint8_t     severity;
+    std::string stamp;      // wall clock at the moment it was taken in
+    std::string text;
+};
+
+// Bounded for the same reason the per-vehicle deque behind it is: a talkative
+// airframe must not grow this without limit over a long flight. Deeper than one
+// vehicle's 200, since several vehicles now share it.
+static constexpr size_t FLEET_LOG_MAX = 800;
+
+static std::deque<FleetLogEntry> g_fleet_log;
+
+// Which vehicles have actually said something. The "[2]" prefix is only drawn
+// once this holds more than one — with a single aircraft talking there is
+// nothing to tell apart, and the prefix would be noise on every line.
+static std::unordered_set<uint32_t> g_fleet_log_numbers;
+
+void event_log_pump(const VehicleState& vs,
+                    const std::vector<StatusText>& status_texts,
+                    uint32_t number)
 {
-    // Wall-clock stamps, captured as each message arrives.
-    //
-    // Per vehicle: these line up positionally with that vehicle's status_texts,
-    // so a shared list would stamp one aircraft's messages with the times
-    // another's arrived. Shared between the two log views deliberately — the
-    // stamp on a message is when it arrived, not which panel is showing it.
-    static VehicleUiState<std::vector<std::string>> s_stamps_by_vehicle;
-    std::vector<std::string>& stamps = *s_stamps_by_vehicle;
-    if (status_texts.size() < stamps.size()) stamps.clear();
-    while (stamps.size() < status_texts.size()) {
-        const std::time_t t  = std::time(nullptr);
+    // How many of this vehicle's messages have already been taken in. Per
+    // vehicle, and dropped with it — see widgets/vehicle_ui_state.hpp.
+    static VehicleUiState<uint32_t> s_ingested;
+    uint32_t& ingested = *s_ingested;
+
+    // Counted rather than diffed against the list. The vehicle keeps only its
+    // last 200 messages and drops the oldest to make room, so the list's length
+    // stops being a count of anything the moment it fills up; statustext_total
+    // is the number the vehicle has ever sent and only goes up.
+    const uint32_t total = vs.statustext_total;
+    if (total == ingested) return;
+    if (total < ingested) ingested = 0;   // vehicle replaced under the same id
+
+    // Anything older than what the vehicle still holds is gone for good — this
+    // takes what is left of the backlog and accepts the gap.
+    const size_t n_new = std::min<size_t>(total - ingested, status_texts.size());
+
+    char stamp[16];
+    {
+        const std::time_t t = std::time(nullptr);
         std::tm            lt{};
 #ifdef _WIN32
         localtime_s(&lt, &t);
 #else
         localtime_r(&t, &lt);
 #endif
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+        snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d",
                  lt.tm_hour, lt.tm_min, lt.tm_sec);
-        stamps.emplace_back(buf);
     }
+
+    for (size_t i = status_texts.size() - n_new; i < status_texts.size(); ++i) {
+        g_fleet_log.push_back(FleetLogEntry{ number, status_texts[i].severity,
+                                             stamp, status_texts[i].text });
+        if (g_fleet_log.size() > FLEET_LOG_MAX) g_fleet_log.pop_front();
+    }
+    if (n_new > 0) g_fleet_log_numbers.insert(number);
+
+    ingested = total;
+}
+
+// The vehicle tag, "[2]", in the accent colour and thickened.
+//
+// Drawn twice a fraction of a pixel apart rather than in a bold face: the app
+// ships Regular weights only, and at 13 px this reads as bold without a second
+// font in the atlas. Submitted as an ImGui item so it sits in the line's normal
+// left-to-right flow with the stamp and the message.
+static void draw_log_vehicle_tag(uint32_t number)
+{
+    char tag[16];
+    snprintf(tag, sizeof(tag), "[%u]", (unsigned)number);
+
+    const ImVec2 p   = ImGui::GetCursorScreenPos();
+    const ImU32  col = ui_col_accent();
+    ImDrawList*  dl  = ImGui::GetWindowDrawList();
+    dl->AddText(p, col, tag);
+    dl->AddText({ p.x + 0.7f, p.y }, col, tag);
+
+    ImGui::Dummy(ImGui::CalcTextSize(tag));
+}
+
+// The scrolling body of the event log: a wall-clock stamp per vehicle message,
+// severity-coloured, pinned to the bottom while the view is already there.
+// `bg_alpha` scales the well behind it, so the overlay can let the map through.
+static void draw_event_log_body(float bg_alpha, bool small_text = false)
+{
+    // Only worth tagging lines once more than one vehicle has spoken.
+    const bool tag_vehicles = g_fleet_log_numbers.size() > 1;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ui_col(g_theme.bg_child_darker, bg_alpha));
@@ -332,19 +403,22 @@ static void draw_event_log_body(const std::vector<StatusText>& status_texts,
         const bool pushed_font = small_text && g_font_micro;
         if (pushed_font) ImGui::PushFont(g_font_micro);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 6.0f, 3.0f });
-        if (status_texts.empty()) {
+        if (g_fleet_log.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, col_no_link_muted());
             ImGui::TextUnformatted("AWAITING VEHICLE MESSAGES");
             ImGui::PopStyleColor();
         } else {
-            for (size_t i = 0; i < status_texts.size(); ++i) {
+            for (const FleetLogEntry& e : g_fleet_log) {
                 ImGui::PushStyleColor(ImGuiCol_Text, col_log());
-                ImGui::TextUnformatted(i < stamps.size() ? stamps[i].c_str()
-                                                         : "--:--:--");
+                ImGui::TextUnformatted(e.stamp.c_str());
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 8);
-                ImGui::TextColored(col_status_severity(status_texts[i].severity),
-                                   "%s", status_texts[i].text);
+                if (tag_vehicles) {
+                    draw_log_vehicle_tag(e.number);
+                    ImGui::SameLine(0, 6);
+                }
+                ImGui::TextColored(col_status_severity(e.severity),
+                                   "%s", e.text.c_str());
             }
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
                 ImGui::SetScrollHereY(1.0f);
@@ -820,7 +894,6 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
 // ── Right sidebar ─────────────────────────────────────────────────────────────
 
 void draw_sidebar_right(const VehicleState& vs,
-                        const std::vector<StatusText>& status_texts,
                         MavlinkSender* sender,
                         AppSettings* settings)
 {
@@ -914,9 +987,9 @@ void draw_sidebar_right(const VehicleState& vs,
         if (ImGui::BeginChild("##sysmsg", { 0.0f, 0.0f },
                               false, ImGuiWindowFlags_NoScrollbar)) {
             char log_meta[24];
-            snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)status_texts.size());
+            snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)g_fleet_log.size());
             ui_panel_header("EVENT LOG", log_meta);
-            draw_event_log_body(status_texts, 1.0f);
+            draw_event_log_body(1.0f);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -928,8 +1001,6 @@ void draw_sidebar_right(const VehicleState& vs,
 }
 
 // Which half of the fullscreen-map overlay is expanded to its sidebar size.
-enum class OverlayFocus { None, Hud, Log };
-
 // ── Fullscreen-map overlay ────────────────────────────────────────────────────
 //
 // What the right sidebar was showing, condensed into the map's top-right
@@ -942,8 +1013,7 @@ enum class OverlayFocus { None, Hud, Log };
 // over the map. The map window is NoBringToFrontOnFocus, so clicking the map
 // cannot raise it above this.
 
-void draw_map_overlay(const VehicleState& vs,
-                      const std::vector<StatusText>& status_texts)
+void draw_map_overlay(const VehicleState& vs)
 {
     float mx, my, mw, mh;
     center_view_map_rect(mx, my, mw, mh);
@@ -952,24 +1022,28 @@ void draw_map_overlay(const VehicleState& vs,
     constexpr float MARGIN = 10.0f;
     constexpr float PAD    = 8.0f;
 
-    // Which half the operator last clicked, if either. Small is the resting
-    // state — the corner is a glance, not a panel — and a click on one half
-    // brings that half back to the size it had in the sidebar, until a click
-    // lands somewhere else. Only one at a time: the whole point of the small
-    // state is the map behind it, and expanding both would be the sidebar again.
-    static OverlayFocus s_focus = OverlayFocus::None;
+    // How big each half is standing. Small is the resting state — the corner is
+    // a glance, not a panel — and a click on a half toggles that half between
+    // it and the size it had in the sidebar.
+    //
+    // Each is its own switch: a click on one says nothing about the other, and
+    // nothing outside the block moves either. An operator who opened the log to
+    // read it and then went back to flying the map should not find it shut when
+    // they look again.
+    static bool s_hud_big = false;
+    static bool s_log_big = false;
 
-    // Small is what it comes back as. This function only runs while the map is
+    // Both come back small. This function only runs while the map is
     // fullscreen, so a break in the frames it drew on is exactly "the operator
     // left and came back" — and coming back to an expanded block over a map
     // they have not looked at yet is not what the corner is for.
     static int s_last_frame = -2;
     const int  frame = ImGui::GetFrameCount();
-    if (frame != s_last_frame + 1) s_focus = OverlayFocus::None;
+    if (frame != s_last_frame + 1) { s_hud_big = false; s_log_big = false; }
     s_last_frame = frame;
 
-    const bool hud_big = (s_focus == OverlayFocus::Hud);
-    const bool log_big = (s_focus == OverlayFocus::Log);
+    const bool hud_big = s_hud_big;
+    const bool log_big = s_log_big;
 
     // "Normal size" is the size these had before the map went fullscreen, which
     // is the right sidebar's width — the width the map took in the first place.
@@ -1072,9 +1146,9 @@ void draw_map_overlay(const VehicleState& vs,
         if (ImGui::BeginChild("##ov_log", { 0.0f, 0.0f }, false,
                               ImGuiWindowFlags_NoScrollbar)) {
             char log_meta[24];
-            snprintf(log_meta, sizeof(log_meta), "%d", (int)status_texts.size());
+            snprintf(log_meta, sizeof(log_meta), "%d", (int)g_fleet_log.size());
             ui_panel_header("EVENT LOG", log_meta);
-            draw_event_log_body(status_texts, 0.45f, /*small_text=*/!log_big);
+            draw_event_log_body(0.45f, /*small_text=*/!log_big);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1084,7 +1158,11 @@ void draw_map_overlay(const VehicleState& vs,
     ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(2);
 
-    // ── Which half is expanded ───────────────────────────────────────────────
+    // ── Sizing the halves ────────────────────────────────────────────────────
+    //
+    // Only a click on the block resizes it, and only the half that was clicked.
+    // A click anywhere else — the map, a sidebar, another panel — leaves both
+    // exactly as they stand.
     //
     // Tested against the rectangle just drawn rather than through an ImGui
     // item: the log is a scrolling child with a scrollbar of its own, and an
@@ -1092,17 +1170,17 @@ void draw_map_overlay(const VehicleState& vs,
     // Reading the mouse position instead leaves both halves fully usable while
     // expanded, and costs a frame of latency nobody can see.
     //
-    // Clicking the half that is already expanded is deliberately not a
-    // collapse: dragging that log's scrollbar is a click inside it, and it must
-    // not shut the thing being read. Anywhere outside the block collapses.
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    // Skipped whenever a widget took the press. Nothing in here is interactive
+    // except that scrollbar, so this is what keeps a drag on it from toggling
+    // the very log being scrolled — the one gesture that lands inside a half
+    // without meaning "resize it".
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemActive()) {
         const ImVec2 m = ImGui::GetMousePos();
-        if (m.x < ov_p0.x || m.x > ov_p0.x + w ||
-            m.y < ov_p0.y || m.y > ov_p0.y + h)
-            s_focus = OverlayFocus::None;
-        else if (m.y < ov_p0.y + PAD + hud_h)
-            s_focus = OverlayFocus::Hud;
-        else
-            s_focus = OverlayFocus::Log;
+        const bool inside = m.x >= ov_p0.x && m.x <= ov_p0.x + w &&
+                            m.y >= ov_p0.y && m.y <= ov_p0.y + h;
+        if (inside) {
+            if (m.y < ov_p0.y + PAD + hud_h) s_hud_big = !s_hud_big;
+            else                             s_log_big = !s_log_big;
+        }
     }
 }

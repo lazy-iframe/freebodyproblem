@@ -207,7 +207,9 @@ static void render_ui()
     VehicleState& vs                = snap.state;
     auto&         params            = snap.params;
     auto&         stats             = snap.msg_stats;
-    auto&         status_texts      = snap.status_texts;
+    // snap.status_texts is deliberately not bound here: the event log is the
+    // whole fleet's now, fed per vehicle by event_log_pump() below rather than
+    // read off whichever vehicle happens to be on screen.
     const uint64_t total_msg        = snap.total_messages;
     const uint64_t total_bytes      = snap.total_bytes;
     const uint64_t errors           = snap.parse_errors;
@@ -288,6 +290,7 @@ static void render_ui()
             ui_bind_vehicle(v->id());
             rc_tab_pump(&vsnap.state);
             sensors_tab_pump(&vsnap.state, vsnap.status_texts, now_s);
+            event_log_pump(vsnap.state, vsnap.status_texts, v->number());
             map_track_pump(vsnap.state);
 
             // The map draws the whole fleet, and this loop is already holding
@@ -353,11 +356,11 @@ static void render_ui()
                           g_fleet.links(), &g_mission_pick);
     draw_center_view(vs, sender, &g_mission_pick, &g_map_fleet);
     if (!video_full && !map_full)
-        draw_sidebar_right(vs, status_texts, sender, &g_settings);
+        draw_sidebar_right(vs, sender, &g_settings);
 
     // After the centre view, which is what puts it over the map.
     if (map_full)
-        draw_map_overlay(vs, status_texts);
+        draw_map_overlay(vs);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
