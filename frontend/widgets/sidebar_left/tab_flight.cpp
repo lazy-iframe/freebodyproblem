@@ -207,15 +207,6 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         ImGui::PopStyleVar(); // FramePadding
     }
 
-    {
-        const bool rtl_active = connected && (vs->custom_mode == FlightMode::RTL);
-        if (ui_grid_button("RTL", { -1.0f, 28.0f }, rtl_active,
-                           sender->query_flash(20))) {
-            sender->return_to_launch(tsys, tcomp);
-            gcs_log("RTL command sent");
-        }
-    }
-
     ImGui::Spacing();
 
     // Mode buttons come from the vehicle's own AVAILABLE_MODES list when it
@@ -238,6 +229,11 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
             modes.push_back({ mode_button_label(m.name, col_w), m.custom_mode });
         }
     } else {
+        // RTL is in this list rather than on a button of its own. A vehicle
+        // that publishes AVAILABLE_MODES already offers it above, and a second
+        // control for the same mode is one the operator has to think about.
+        // It has to be here, though: without it a stack that never answers
+        // would have no way to reach RTL at all.
         modes = {
             { "STAB", FlightMode::STABILIZE },
             { "ACRO", FlightMode::ACRO      },
@@ -245,6 +241,7 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
             { "LOIT", FlightMode::LOITER    },
             { "GUID", FlightMode::GUIDED    },
             { "AUTO", FlightMode::AUTO      },
+            { "RTL",  FlightMode::RTL       },
             { "LAND", FlightMode::LAND      },
         };
     }

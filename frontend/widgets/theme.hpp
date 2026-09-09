@@ -149,9 +149,12 @@ struct ThemeVars {
     ImVec4 ah_airspeed_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 ah_throttle_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 ah_heading_text   = { 0.925f, 0.725f, 0.306f, 0.950f };
-    ImVec4 ah_roll_arc       = { 0.722f, 0.761f, 0.702f, 0.350f };
-    ImVec4 ah_roll_tick      = { 0.827f, 0.855f, 0.812f, 0.600f };
-    ImVec4 ah_roll_label     = { 0.722f, 0.761f, 0.702f, 0.600f };
+    // The roll scale is olive rather than the near-white the rest of the ball's
+    // chrome uses — it is the one part of the instrument that is scale rather
+    // than state, and the palette's own olive says so without dimming it.
+    ImVec4 ah_roll_arc       = { 0.706f, 0.776f, 0.561f, 0.650f };  // olive #B4C68F, see col_log
+    ImVec4 ah_roll_tick      = { 0.788f, 0.859f, 0.639f, 0.950f };  // #C9DBA3 — the graduations, brightest
+    ImVec4 ah_roll_label     = { 0.749f, 0.820f, 0.600f, 0.920f };  // #BFD199
     ImVec4 ah_roll_pointer   = { 0.969f, 0.812f, 0.396f, 0.950f };
     ImVec4 ah_border         = { 0.275f, 0.333f, 0.184f, 0.900f };
 
@@ -410,9 +413,9 @@ inline ThemeVars retro_amber_theme_vars()
     t.ah_airspeed_text       = { 1.000f, 0.690f, 0.000f, 1.000f };
     t.ah_throttle_text       = { 1.000f, 0.824f, 0.235f, 1.000f };
     t.ah_heading_text        = { 1.000f, 0.784f, 0.392f, 0.902f };
-    t.ah_roll_arc            = { 0.627f, 0.373f, 0.000f, 0.431f };
-    t.ah_roll_tick           = { 0.824f, 0.510f, 0.000f, 0.608f };
-    t.ah_roll_label          = { 0.745f, 0.463f, 0.000f, 0.608f };
+    t.ah_roll_arc            = { 0.804f, 0.478f, 0.000f, 0.700f };
+    t.ah_roll_tick           = { 1.000f, 0.647f, 0.075f, 0.950f };
+    t.ah_roll_label          = { 0.949f, 0.596f, 0.043f, 0.920f };
     t.ah_roll_pointer        = { 1.000f, 0.824f, 0.157f, 0.902f };
     t.ah_border              = { 0.588f, 0.353f, 0.000f, 0.608f };
 
@@ -514,9 +517,9 @@ inline ThemeVars matrix_theme_vars()
     t.ah_airspeed_text  = { 0.000f, 1.000f, 0.255f, 1.000f };
     t.ah_throttle_text  = { 0.000f, 0.800f, 0.200f, 1.000f };
     t.ah_heading_text   = { 0.667f, 1.000f, 0.000f, 0.902f };    // yellow-green
-    t.ah_roll_arc       = { 0.000f, 0.467f, 0.118f, 0.431f };
-    t.ah_roll_tick      = { 0.000f, 0.533f, 0.133f, 0.608f };
-    t.ah_roll_label     = { 0.000f, 0.467f, 0.118f, 0.608f };
+    t.ah_roll_arc       = { 0.000f, 0.667f, 0.180f, 0.700f };
+    t.ah_roll_tick      = { 0.145f, 0.902f, 0.290f, 0.950f };
+    t.ah_roll_label     = { 0.078f, 0.804f, 0.235f, 0.920f };
     t.ah_roll_pointer   = { 0.667f, 1.000f, 0.000f, 0.902f };    // yellow-green
     t.ah_border         = { 0.000f, 0.467f, 0.118f, 0.608f };
 

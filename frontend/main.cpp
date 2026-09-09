@@ -432,9 +432,17 @@ int main()
             g_theme = retro_amber_theme_vars();
         } else {
             auto it = g_settings.themes.find(g_settings.active_theme);
-            if (it != g_settings.themes.end())
+            if (it != g_settings.themes.end()) {
                 g_theme = it->second;
-            // else: "Tactical" or unknown — ThemeVars defaults apply
+            } else {
+                // "Tactical", or a name that no longer exists — a built-in
+                // theme dropped from the build stays behind in settings.json.
+                // The defaults apply either way, so the name is put back to
+                // match them: leaving it would label the selector with a theme
+                // that is not the one on screen.
+                g_theme = ThemeVars{};
+                g_settings.active_theme = THEME_BUILTIN_NAME;
+            }
         }
     }
     apply_global_theme(ImGui::GetStyle());

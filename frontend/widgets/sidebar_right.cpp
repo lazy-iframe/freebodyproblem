@@ -190,23 +190,43 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
     {
         const float arc_r = r * 1.08f;
         const float base  = -(float)M_PI / 2.0f;
-        dl->PathArcTo({ cx, cy }, arc_r,
-                      base - 60.0f * (float)M_PI / 180.0f,
-                      base + 60.0f * (float)M_PI / 180.0f, 40);
-        dl->PathStroke(ah_roll_arc(), false, AH_THICK_ROLL_ARC);
 
-        static const float ticks[] = { -60, -30, 0, 30, 60 };
-        for (float t : ticks) {
-            const float a   = base + t * (float)M_PI / 180.0f;
-            const float len = (t == 0) ? r * 0.10f : r * 0.06f;
+        // A full ring rather than the ±60° span this used to draw. Past 60° of
+        // roll the pointer used to run off the end of its own scale and sit
+        // against nothing, which is exactly the attitude where the number is
+        // worth reading. A closed ring has graduation under the pointer at any
+        // angle the vehicle can reach.
+        dl->AddCircle({ cx, cy }, arc_r, ah_roll_arc(), 64, AH_THICK_ROLL_ARC);
+
+        // Graduated every 15° the whole way round, so a tick is never more than
+        // 7.5° from the pointer. Lengths carry the reading: the cardinals
+        // (wings level, and inverted) longest, every 30° next, the 15°
+        // subdivisions shortest.
+        for (int deg = -180; deg < 180; deg += 15) {
+            const bool cardinal = (deg == 0 || deg == 180 || deg == -180);
+            const bool major    = (deg % 30 == 0);
+
+            const float a   = base + (float)deg * (float)M_PI / 180.0f;
+            const float len = cardinal ? r * 0.13f
+                            : major    ? r * 0.09f
+                                       : r * 0.05f;
             dl->AddLine({ cx + cosf(a) * arc_r,           cy + sinf(a) * arc_r },
                         { cx + cosf(a) * (arc_r - len),   cy + sinf(a) * (arc_r - len) },
                         ah_roll_tick(), AH_THICK_ROLL_TICK);
 
-            if (t != 0.0f) {
-                const float label_r = arc_r + r * 0.14f;
+            // Every 30° gets its number, bar wings-level and inverted: those
+            // two are what the long ticks say on their own.
+            //
+            // The numbers ride closer to the ring than they used to. ±90 is
+            // where the scale is widest — the label goes straight out sideways
+            // with none of the angle to shorten its reach — and at the old
+            // radius it landed past the edge of the panel the instrument sits
+            // in. Pulling the label ring in clears it at both HUD sizes and
+            // leaves the instrument itself the size it was.
+            if (deg != 0 && major && deg > -180 && deg < 180) {
+                const float label_r = arc_r + r * 0.07f;
                 char buf[8];
-                snprintf(buf, sizeof(buf), "%d", (int)fabsf(t));
+                snprintf(buf, sizeof(buf), "%d", (int)fabsf((float)deg));
                 const float tw = (float)strlen(buf) * 5.5f * k;
                 const float tx = cx + cosf(a) * label_r - tw * 0.5f;
                 const float ty = cy + sinf(a) * label_r - fh * 0.5f;
@@ -238,7 +258,13 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
 
 // Ground speed, heading and climb rate as three readouts on one row, drawn at
 // the cursor and consuming `strip_h` of vertical space.
-static void draw_vfr_strip(const VehicleState& vs, float strip_h)
+//
+// `value_size` is the number's size, not the label's. The fullscreen map's
+// overlay asks for a smaller one: at the sidebar's size three of these numbers
+// nearly meet across a block a third the sidebar's width, and a readout that
+// touches its neighbour reads as one long number.
+static void draw_vfr_strip(const VehicleState& vs, float strip_h,
+                           float value_size = UI_SZ_BODY + 2.0f)
 {
     ImDrawList*  dl = ImGui::GetWindowDrawList();
     const ImVec2 s0 = ImGui::GetCursorScreenPos();
@@ -258,7 +284,7 @@ static void draw_vfr_strip(const VehicleState& vs, float strip_h)
         const ImVec2 p1 = { p0.x + cw,     s0.y + strip_h };
         ui_readout(dl, p0, p1, items[i].label, items[i].value,
                    vs.has_vfr ? ui_col_value() : ui_col(g_theme.col_no_link_muted),
-                   UI_SZ_BODY + 2.0f);
+                   value_size);
         if (i > 0)
             dl->AddLine({ p0.x, p0.y + 4.0f }, { p0.x, p1.y - 4.0f },
                         ui_col(g_theme.separator, 0.6f), 1.0f);
@@ -954,12 +980,12 @@ void draw_map_overlay(const VehicleState& vs,
     // box sized for something else — it is the widest thing in here, and a
     // wider box would only put dead space either side of it.
     //
-    // 0.55 of the width a full-width ball would have had: half, and a tenth
-    // back on top. Over a map, roll and pitch are a glance rather than
-    // something to fly on, and the room it gives up is map the operator gets
-    // back. The clamp against the map's own width is what keeps the block sane
-    // on a small window.
-    const float ball_small = std::min(167.0f, (mw * 0.34f - PAD * 2.0f) * 0.55f);
+    // 0.605 of the width a full-width ball would have had — half, then a tenth
+    // back on top of that twice over. Over a map, roll and pitch are a glance
+    // rather than something to fly on, and the room it gives up is map the
+    // operator gets back. The clamp against the map's own width is what keeps
+    // the block sane on a small window.
+    const float ball_small = std::min(184.0f, (mw * 0.34f - PAD * 2.0f) * 0.605f);
 
     const float w      = (hud_big || log_big) ? full_w : ball_small + PAD * 2.0f;
     const float ball_h = hud_big ? std::min(w - PAD * 2.0f, mh * 0.45f)
@@ -972,6 +998,12 @@ void draw_map_overlay(const VehicleState& vs,
     // expanded ball is the sidebar's size again and wants the sidebar's text,
     // which is what 0 asks for.
     const float hud_text_sz = hud_big ? 0.0f : 10.0f;
+
+    // The GND / HDG / CLB numbers under it. Three of them share a row a third
+    // of the sidebar's width, so the sidebar's 18 px leaves them nearly
+    // touching; 13 px puts air between the columns. Expanded, the row is the
+    // sidebar's width again and takes the sidebar's size back.
+    const float strip_value_sz = hud_big ? UI_SZ_BODY + 2.0f : UI_SZ_MICRO;
 
     // Attitude is that square plus its header and the readout strip.
     const float hud_h  = ball_h + UI_HEADER_H + 40.0f + PAD;
@@ -1030,7 +1062,7 @@ void draw_map_overlay(const VehicleState& vs,
                 const ImVec2 avail = ImGui::GetContentRegionAvail();
                 ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - STRIP_H) });
             }
-            draw_vfr_strip(vs, STRIP_H);
+            draw_vfr_strip(vs, STRIP_H, strip_value_sz);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
