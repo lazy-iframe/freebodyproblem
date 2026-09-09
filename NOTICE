@@ -13,6 +13,10 @@ Dear ImGui
 Copyright (c) 2014-2026 Omar Cornut
 Licensed under the MIT License.
 
+ImGuiFileDialog
+Copyright (c) 2018-2025 Stephane Cuillerdier (aka Aiekick)
+Licensed under the MIT License.
+
 MAVLink (generated headers)
 Copyright (c) 2010-present ArduPilot/MAVLink project contributors
 The MAVLink generator is (L)GPL v3; generated headers are licensed under the

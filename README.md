@@ -410,6 +410,13 @@ own — ArduPilot saves its `STAT_*` counters as it runs, and broadcasts each sa
 — updates the row in place without ever becoming a pending edit, so WRITE ALL
 can never offer to write a stale value back over a newer one.
 
+Under **PARAM FILE**, both **LOAD** and **SAVE** name their file through a
+browser rather than a typed path — an in-app one, drawn by the same ImGui pass
+as the rest of the panel rather than the desktop's own dialog. Neither reads
+nor writes anything until a file has been named, and the browser opens where
+the last one left off, so a save after a load lands beside what was loaded.
+SAVE asks before overwriting; LOAD does not, having nothing to overwrite.
+
 **DISCARD** asks for confirmation because a loaded parameter file can put
 hundreds of edits behind it and there is no undo. The per-row **×** does not:
 it can only lose one value, and the value it restores is on the vehicle.
@@ -688,6 +695,7 @@ the serial handle, drains them.
 
 ### Libraries
 - **Dear ImGui** (third_party/imgui): Immediate-mode GUI
+- **ImGuiFileDialog** (third_party/ImGuiFileDialog): In-app file browser for the parameter-file path — renders through the same draw list as everything else, so it needs no native GTK/Win32 dialog and inherits the active theme
 - **MAVLink** (third_party/mavlink): Auto-generated C headers (ardupilotmega dialect)
 - **stb_image / stb_image_write** (FetchContent): PNG/JPG decoding for map tiles, PNG encoding for video snapshots
 - **miniaudio** (FetchContent): header-only audio playback for the cue tones

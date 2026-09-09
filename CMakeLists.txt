@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.5.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.5.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -271,6 +271,28 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
+# ── Third-party: ImGuiFileDialog (in-app file browser) ────────────────────────
+#
+# Renders through the same ImGui draw list as everything else in this app —
+# no native GTK/Win32 dialog, so it needs nothing added to the .deb's Depends
+# and it inherits the active theme's colors the same way every other panel
+# does (apply_global_theme() writes ImGuiStyle::Colors once; this just reads
+# them like any other ImGui widget).
+set(IGFD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ImGuiFileDialog")
+
+add_library(imguifiledialog STATIC
+    ${IGFD_DIR}/ImGuiFileDialog.cpp
+)
+target_include_directories(imguifiledialog PUBLIC ${IGFD_DIR})
+target_link_libraries(imguifiledialog PUBLIC imgui)
+# std::filesystem over the bundled dirent.h shim — C++17 is already required
+# project-wide, so this trades a vendored compatibility header for the real
+# thing rather than adding a dependency.
+target_compile_definitions(imguifiledialog PRIVATE USE_STD_FILESYSTEM)
+if(WIN32)
+    target_compile_definitions(imguifiledialog PRIVATE NOMINMAX)
+endif()
+
 # User plugins — every .cpp in plugins/ is a set of buttons on the rail beside
 # the video. Globbed on purpose: a user adding a plugin should not have to edit
 # this file. CONFIGURE_DEPENDS makes the build re-glob when the folder changes,
@@ -345,6 +367,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(freebodyproblem PRIVATE
     mavlink_headers
     imgui
+    imguifiledialog
     httplib::httplib
     nlohmann_json::nlohmann_json
     OpenSSL::SSL

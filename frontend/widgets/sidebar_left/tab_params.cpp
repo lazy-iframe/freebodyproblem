@@ -24,6 +24,7 @@
 #include "../../audio.hpp"
 #include "../../param_file.hpp"
 #include "imgui.h"
+#include "ImGuiFileDialog.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -33,6 +34,64 @@
 #include <vector>
 
 // ── Parameter files ───────────────────────────────────────────────────────────
+
+// Keys ImGuiFileDialog tracks each dialog under. One per direction, so each
+// carries its own title and its own flags; only one can be open at a time
+// regardless, since IGFD's singleton holds a single dialog's state.
+//
+// Deliberately without the "##" prefix every other id in this file carries.
+// These are not ImGui labels, they are IGFD's keys, and IGFD names its window
+// `title + "##" + key` (ImGuiFileDialog.cpp). A "##" here would make that
+// four consecutive '#', which ImHashStr and ImHashSkipUncontributingPrefix
+// disagree about: the former consumes one "###" and hashes the leftover '#'
+// as data, the latter re-matches and skips it. The window would then hash to
+// one id and its .ini settings entry to another, and imgui asserts
+// (settings->ID == window->ID) the next time it writes imgui.ini.
+static constexpr const char* PARAM_LOAD_DLG_KEY = "param_load_dlg";
+static constexpr const char* PARAM_SAVE_DLG_KEY = "param_save_dlg";
+
+// Opens one of the two browsers, seeded with the last file touched so a save
+// after a load starts in the same directory.
+//
+// ConfirmOverwrite only on the save side: it is the only one of the two that
+// writes, and warning about an overwrite while picking a file to *read* would
+// be asking about something that is not going to happen.
+static void open_param_file_dialog(const char* key, const char* title,
+                                   const std::string& current_path, bool for_save)
+{
+    IGFD::FileDialogConfig cfg;
+    if (!current_path.empty())
+        cfg.filePathName = current_path;   // IGFD splits this into path + name
+    else
+        cfg.fileName = "parameters.params";
+
+    cfg.flags = ImGuiFileDialogFlags_Modal;
+    if (for_save)
+        cfg.flags |= ImGuiFileDialogFlags_ConfirmOverwrite;
+
+    ImGuiFileDialog::Instance()->OpenDialog(
+        key, title, "Parameter files (*.params){.params},All files{.*}", cfg);
+}
+
+// Same border-and-background treatment ui_push_dialog_style() gives the app's
+// own popups, without its padding/spacing — those are tuned for a centered
+// title and a button row, and would just leave the file browser's table
+// looking sparse. Colors alone are enough for the dialog to read as this
+// app's rather than a bolted-on default-ImGui one; apply_global_theme()
+// already zeroed every corner radius globally, so the squared-off look is
+// free.
+static void push_file_dialog_style()
+{
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, g_theme.bg_panel);
+    ImGui::PushStyleColor(ImGuiCol_Border,  ui_col(g_theme.accent, 0.55f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+}
+
+static void pop_file_dialog_style()
+{
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+}
 
 // What the file's comment header claims about the vehicle it came off. Only
 // what the link has actually told us — a header is documentation, and a guessed
@@ -278,20 +337,48 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     ImGui::Spacing();
 
     // ── Parameter file ────────────────────────────────────────────────────────
-    static char s_param_path[256] = "parameters.params";
+    //
+    // Both buttons name their file through the browser rather than off a typed
+    // path: a .params file lives wherever the operator keeps their configs, and
+    // an absolute path is a thing to find, not to remember and retype. What is
+    // kept between presses is only the last file touched, which seeds the
+    // browser so a save after a load lands next to what was loaded.
+    static std::string s_param_path = "parameters.params";
 
     ImGui::TextDisabled("PARAM FILE");
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##param_path", "parameters.params",
-                             s_param_path, sizeof(s_param_path));
-
     {
         const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
 
-        // LOAD reads the file and opens the picker below — it neither stages nor
-        // writes on its own. A parameter file is a whole vehicle's worth of
-        // settings, and pulling one in wholesale is rarely what is wanted.
-        if (ui_grid_button("LOAD", { half, 24.0f })) {
+        if (ui_grid_button("LOAD", { half, 24.0f }))
+            open_param_file_dialog(PARAM_LOAD_DLG_KEY, "LOAD PARAMETERS",
+                                   s_param_path, /*for_save=*/false);
+
+        ImGui::SameLine(0, 4);
+
+        if (ui_grid_button("SAVE", { -1.0f, 24.0f }))
+            open_param_file_dialog(PARAM_SAVE_DLG_KEY, "SAVE PARAMETERS",
+                                   s_param_path, /*for_save=*/true);
+    }
+
+    // ── The two browsers ──────────────────────────────────────────────────────
+    //
+    // Polled every frame whether or not their button was pressed — Display()
+    // returns immediately for a key that is not the open dialog, so only one
+    // of these ever does anything, and only one can be open at a time.
+    //
+    // The work each button used to do inline happens here instead, once the
+    // operator has named a file. Nothing is read or written until they do.
+    push_file_dialog_style();
+
+    if (ImGuiFileDialog::Instance()->Display(PARAM_LOAD_DLG_KEY,
+                                             ImGuiWindowFlags_NoCollapse,
+                                             { 640.0f, 420.0f })) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            s_param_path = ImGuiFileDialog::Instance()->GetFilePathName();
+
+            // Reads the file and opens the picker below — it neither stages nor
+            // writes on its own. A parameter file is a whole vehicle's worth of
+            // settings, and pulling one in wholesale is rarely what is wanted.
             std::vector<ParamFileRow> rows;
             std::string err;
             st().load_rows.clear();
@@ -313,19 +400,27 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
                 if (st().load_rows.empty()) {
                     gcs_log("%s: nothing to change (%d match, %d not on vehicle, %d bad lines)",
-                            s_param_path, st().load_matched, st().load_unknown, st().load_skipped);
+                            s_param_path.c_str(), st().load_matched,
+                            st().load_unknown, st().load_skipped);
                 } else {
+                    // The picker is submitted further down this same function,
+                    // so it opens on this frame rather than the next one.
                     ImGui::OpenPopup("##param_load_pick");
                 }
             }
         }
+        ImGuiFileDialog::Instance()->Close();
+    }
 
-        ImGui::SameLine(0, 4);
+    if (ImGuiFileDialog::Instance()->Display(PARAM_SAVE_DLG_KEY,
+                                             ImGuiWindowFlags_NoCollapse,
+                                             { 640.0f, 420.0f })) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            s_param_path = ImGuiFileDialog::Instance()->GetFilePathName();
 
-        // SAVE writes what the list shows, pending edits included — the file is
-        // the configuration you are looking at, not a snapshot of the vehicle.
-        // The log says so whenever the two differ.
-        if (ui_grid_button("SAVE", { -1.0f, 24.0f })) {
+            // Writes what the list shows, pending edits included — the file is
+            // the configuration you are looking at, not a snapshot of the
+            // vehicle. The log says so whenever the two differ.
             std::vector<ParamFileRow> rows;
             rows.reserve(sorted_ids.size());
             int pending = 0;
@@ -348,12 +443,16 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 gcs_log("param save failed: %s", err.c_str());
             } else if (pending > 0) {
                 gcs_log("saved %d params to %s (%d are unwritten edits)",
-                        (int)rows.size(), s_param_path, pending);
+                        (int)rows.size(), s_param_path.c_str(), pending);
             } else {
-                gcs_log("saved %d params to %s", (int)rows.size(), s_param_path);
+                gcs_log("saved %d params to %s", (int)rows.size(),
+                        s_param_path.c_str());
             }
         }
+        ImGuiFileDialog::Instance()->Close();
     }
+
+    pop_file_dialog_style();
 
     // ── Load picker ───────────────────────────────────────────────────────────
     //
@@ -372,7 +471,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         for (const LoadRow& r : st().load_rows)
             if (r.selected) ++selected;
 
-        ImGui::TextDisabled("%s", s_param_path);
+        ImGui::TextDisabled("%s", s_param_path.c_str());
         ImGui::TextDisabled("%d differ \xe2\x80\x94 %d already match, %d not on vehicle, %d bad lines",
                             (int)st().load_rows.size(), st().load_matched,
                             st().load_unknown, st().load_skipped);
@@ -449,7 +548,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             // Staged, not written: they join the pending edits as if typed by
             // hand, and WRITE ALL remains the deliberate second act.
             gcs_log("staged %d parameter%s from %s \xe2\x80\x94 press WRITE ALL to send",
-                    staged, staged == 1 ? "" : "s", s_param_path);
+                    staged, staged == 1 ? "" : "s", s_param_path.c_str());
             st().load_rows.clear();
             ImGui::CloseCurrentPopup();
         }
