@@ -327,6 +327,7 @@ add_executable(freebodyproblem
     backend/geodesic_grid.cpp
     backend/timesync.cpp
     backend/rc_binding.cpp
+    backend/firmware_profile.cpp
     frontend/main.cpp
     frontend/settings.cpp
     frontend/param_file.cpp

@@ -17,6 +17,7 @@
 
 
 #include "vehicle.hpp"
+#include "firmware_profile.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -289,14 +290,26 @@ void Vehicle::loop()
         // Addressed to this vehicle rather than to the hardcoded (1,1) the link
         // thread used. That was harmless with one vehicle whose sysid was almost
         // always 1, and wrong the moment a second one exists.
-        if (!rates_requested) {
+        //
+        // Gated on a heartbeat having been parsed, not just on the vehicle
+        // existing. This loop's first pass can come from the 50 ms wait_for
+        // timeout with an empty batch, and until a heartbeat lands the parser
+        // does not know which stack this is — which now decides what the burst
+        // asks for. Costs at most one heartbeat interval.
+        if (!rates_requested && parser_.state().has_heartbeat) {
             rates_requested = true;
+
+            const FirmwareProfile& prof = firmware_profile(parser_.state().autopilot);
+
             sender_.request_message_interval(tsys, tcomp,  30,  50000); // ATTITUDE            @ 20 Hz
             sender_.request_message_interval(tsys, tcomp,  74, 100000); // VFR_HUD             @ 10 Hz
             sender_.request_message_interval(tsys, tcomp,  33, 200000); // GLOBAL_POSITION_INT @  5 Hz
             sender_.request_message_interval(tsys, tcomp,   1, 500000); // SYS_STATUS          @  2 Hz
             sender_.request_message_interval(tsys, tcomp,  24, 500000); // GPS_RAW_INT         @  2 Hz
-            sender_.request_message_interval(tsys, tcomp, 193, 200000); // EKF_STATUS_REPORT   @  5 Hz
+            // Estimator health @ 5 Hz — EKF_STATUS_REPORT (#193) on ArduPilot,
+            // ESTIMATOR_STATUS (#230) on PX4, which has no #193 to give.
+            sender_.request_message_interval(tsys, tcomp,
+                                             prof.estimator_msgid(), 200000);
             // HOME_POSITION at 0.5 Hz. A vehicle announces home when it sets or
             // moves it, but home is usually already set by the time a GCS
             // connects — and that announcement is long gone. Streaming it
@@ -312,7 +325,7 @@ void Vehicle::loop()
             sender_.request_available_modes(tsys, tcomp);
             modes_last_req = Clock::now();
             ++modes_probes;
-            gcs_log("[sys%u] telemetry rates configured", tsys);
+            gcs_log("[sys%u] telemetry rates configured (%s)", tsys, prof.name());
         }
 
         // ── Command ACKs ──────────────────────────────────────────────────────
@@ -324,7 +337,11 @@ void Vehicle::loop()
             case  22: cname = "takeoff";      break;
             case  20: cname = "RTL";          break;
             case 176: cname = "mode change";  break;
+            // DO_SET_STANDARD_MODE — the other way a mode gets set, and the
+            // only one that reaches PX4's standard modes.
+            case 262: cname = "mode change";  break;
             case 218: cname = "aux function"; break;
+            case 192: cname = "reposition";   break;
             default:  break;
             }
             // Tone only for commands with a name above, i.e. the ones a person

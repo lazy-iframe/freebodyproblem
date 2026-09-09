@@ -50,6 +50,28 @@ const char* mag_cal_status_name(uint8_t s)
     }
 }
 
+// The name of a MAV_STANDARD_MODE, for a vehicle that gave a mode number
+// without a string.
+//
+// Not invention: a flight stack publishing a standard mode is entitled to leave
+// mode_name empty precisely because the number already says what the mode is,
+// and PX4 does exactly that — of the 28 modes it advertises, the standard ones
+// arrive nameless. Without this they reach the UI as "?" buttons.
+const char* standard_mode_name(uint8_t standard_mode)
+{
+    switch (standard_mode) {
+    case 1: return "Position Hold";
+    case 2: return "Orbit";
+    case 3: return "Cruise";
+    case 4: return "Altitude Hold";
+    case 5: return "Safe Recovery";
+    case 6: return "Mission";
+    case 7: return "Land";
+    case 8: return "Takeoff";
+    default: return nullptr;   // 0 is NON_STANDARD: the vehicle owed us a name
+    }
+}
+
 const char* mav_result_name(uint8_t r)
 {
     switch (r) {
@@ -123,6 +145,7 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         case MAVLINK_MSG_ID_HOME_POSITION:
         case MAVLINK_MSG_ID_VFR_HUD:
         case MAVLINK_MSG_ID_EKF_STATUS_REPORT:
+        case MAVLINK_MSG_ID_ESTIMATOR_STATUS:
         case MAVLINK_MSG_ID_RC_CHANNELS:
         case MAVLINK_MSG_ID_RC_CHANNELS_RAW:
         case MAVLINK_MSG_ID_PARAM_VALUE:
@@ -293,6 +316,37 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         state_.ekf_terrain_alt_variance = ekf.terrain_alt_variance;
         state_.ekf_airspeed_variance    = ekf.airspeed_variance;
         state_.ekf_flags                = ekf.flags;
+        state_.ekf_source_msgid         = MAVLINK_MSG_ID_EKF_STATUS_REPORT;
+        state_.has_ekf_status           = true;
+        break;
+    }
+
+    // The portable twin of the above, and what PX4 sends. Its ratios go into
+    // the same fields so nothing downstream has to know which arrived.
+    //
+    // #193 wins if a vehicle somehow sends both: it exists only on ArduPilot,
+    // so hearing it at all settles which stack is talking, and letting the two
+    // alternate would swing the bars between two different scales. No firmware
+    // profile needed for that — the message's own existence is the evidence.
+    case MAVLINK_MSG_ID_ESTIMATOR_STATUS: {
+        if (state_.ekf_source_msgid == MAVLINK_MSG_ID_EKF_STATUS_REPORT) break;
+
+        mavlink_estimator_status_t est;
+        mavlink_msg_estimator_status_decode(&msg, &est);
+        state_.ekf_velocity_variance    = est.vel_ratio;
+        state_.ekf_pos_horiz_variance   = est.pos_horiz_ratio;
+        state_.ekf_pos_vert_variance    = est.pos_vert_ratio;
+        state_.ekf_compass_variance     = est.mag_ratio;
+        // Kept as sent, NaN included. PX4 reports NaN — not zero — for an
+        // estimate it is not running: on a stock x500 hagl_ratio and tas_ratio
+        // both arrive NaN because there is no rangefinder and no airspeed
+        // sensor. That is worth preserving rather than flattening, because it
+        // is the one thing that tells "not estimated" apart from "perfect",
+        // which a zero cannot. The bars check for it.
+        state_.ekf_terrain_alt_variance = est.hagl_ratio;
+        state_.ekf_airspeed_variance    = est.tas_ratio;
+        state_.ekf_flags                = est.flags;   // ESTIMATOR_STATUS_FLAGS here
+        state_.ekf_source_msgid         = MAVLINK_MSG_ID_ESTIMATOR_STATUS;
         state_.has_ekf_status           = true;
         break;
     }
@@ -397,6 +451,14 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         info.standard_mode = am.standard_mode;
         info.properties    = am.properties;
         info.name          = name;
+
+        // A standard mode may arrive with no name of its own, the number being
+        // the name. Fill it from the enum so every consumer — the mode grid,
+        // the topbar chip, the RC slot editor — has something to print.
+        if (info.name.empty()) {
+            if (const char* std_name = standard_mode_name(info.standard_mode))
+                info.name = std_name;
+        }
 
         auto it = std::find_if(state_.available_modes.begin(),
                                state_.available_modes.end(),

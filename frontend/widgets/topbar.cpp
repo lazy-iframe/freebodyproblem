@@ -17,6 +17,7 @@
 
 
 #include "topbar.hpp"
+#include "../../backend/firmware_profile.hpp"
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "vehicle_ui_state.hpp"
@@ -53,32 +54,6 @@ static VehicleUiState<bool> s_interlock_state;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// ArduCopter custom_mode → short name. Only correct for Copter — mode
-// numbering is frame-specific, so this mislabels a Plane (Plane 3 is TRAINING,
-// Copter 3 is AUTO). Used only when the vehicle does not publish
-// AVAILABLE_MODES; see mode_display_name() below.
-static const char* mode_short_name_fallback(uint32_t custom_mode)
-{
-    switch (custom_mode) {
-    case 0:  return "STAB";
-    case 1:  return "ACRO";
-    case 2:  return "ALTH";
-    case 3:  return "AUTO";
-    case 4:  return "GUID";
-    case 5:  return "LOIT";
-    case 6:  return "RTL";
-    case 7:  return "CIRC";
-    case 9:  return "LAND";
-    case 11: return "DRFT";
-    case 13: return "SPRT";
-    case 16: return "POSH";
-    case 17: return "BRAKE";
-    case 20: return "GUID-NG";
-    case 21: return "SMRTRTL";
-    default: return "MODE ?";
-    }
-}
-
 // Resolve the current custom_mode to a display name, preferring the vehicle's
 // own AVAILABLE_MODES list over the Copter-only table above.
 static std::string mode_display_name(const VehicleState& vs)
@@ -91,7 +66,10 @@ static std::string mode_display_name(const VehicleState& vs)
             return out;
         }
     }
-    return mode_short_name_fallback(vs.custom_mode);
+    // No published list. Each stack's own table then — and it has to be the
+    // right one, because these numbers do not mean the same thing twice: a PX4
+    // custom_mode is a packed main/sub pair, not a flat ArduCopter number.
+    return firmware_profile(vs).mode_short_name(vs.custom_mode, vs.type);
 }
 
 static const char* link_status_text(LinkStatus s)
@@ -495,19 +473,35 @@ void draw_topbar(const VehicleState& vs,
             ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
 
             // ── INTERLOCK annunciator ─────────────────────────────────────────
+            //
+            // Motor interlock is an ArduPilot auxiliary function, reached
+            // through MAV_CMD_DO_AUX_FUNCTION, which PX4 does not implement.
+            // The latch below is the reason this has to be gated rather than
+            // merely left to fail: it flips on the click regardless of what the
+            // vehicle did, so on PX4 the chip would read INTLK HIGH about a
+            // state that was never set — a safety-relevant caption asserting
+            // something untrue.
+            const Capability aux_cap =
+                firmware_profile(connected ? vs.autopilot : MAV_AUTOPILOT_GENERIC)
+                    .aux_functions();
+
             ImGui::SetCursorPos({ intlk_x0, btn_y });
             ImGui::InvisibleButton("##ilkbtn", { BTN_W_INTLK, BTN_H });
             const bool ilk_hovered = ImGui::IsItemHovered();
             {
                 const ImVec2 i0 = { wp.x + intlk_x0,    wp.y + btn_y };
                 const ImVec2 i1 = { i0.x + BTN_W_INTLK, i0.y + BTN_H };
-                if ((*s_interlock_state))
+                if (!aux_cap.supported)
+                    ui_status_block(dl, i0, i1, "INTLK N/A", g_theme.col_no_link, true);
+                else if ((*s_interlock_state))
                     ui_status_block(dl, i0, i1, "INTLK HIGH", g_theme.col_warning, false);
                 else
                     ui_status_block(dl, i0, i1, "INTLK LOW", g_theme.col_no_link,
                                     !ilk_hovered);
             }
-            if (ImGui::IsItemClicked()) {
+            if (ilk_hovered && !aux_cap.supported && aux_cap.reason)
+                ImGui::SetTooltip("%s", aux_cap.reason);
+            if (ImGui::IsItemClicked() && aux_cap.supported) {
                 (*s_interlock_state) = !(*s_interlock_state);
                 if (connected) {
                     sender->do_aux_function(tsys, tcomp, 32,

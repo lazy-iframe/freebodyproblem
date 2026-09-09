@@ -70,6 +70,17 @@ public:
 
     // ── High-level commands ───────────────────────────────────────────────────
 
+    // HEARTBEAT (#0) announcing this GCS: MAV_TYPE_GCS, autopilot INVALID,
+    // MAV_STATE_ACTIVE. Broadcast rather than addressed — a heartbeat says "I
+    // am here" to whoever is listening, and carries no target fields to say it
+    // to anyone in particular.
+    //
+    // Not decoration. A vehicle counts the seconds since it last heard from a
+    // ground station, and PX4 refuses to arm without one: its prearm check
+    // reads "no connection to GCS". ArduPilot leaves the equivalent failsafe
+    // off by default, which is why this went unnoticed for so long.
+    void send_heartbeat();
+
     void arm   (uint8_t target_sysid, uint8_t target_compid);
     void disarm(uint8_t target_sysid, uint8_t target_compid, bool force = false);
 
@@ -77,7 +88,22 @@ public:
     void takeoff(uint8_t target_sysid, uint8_t target_compid, float altitude_m);
 
     // ArduCopter/Plane custom_mode values (e.g. STABILIZE=0, ALT_HOLD=2, GUIDED=4)
+    //
+    // The ArduPilot shape of set_mode_raw() below: the whole flat mode number
+    // in the custom-mode field, no submode. Kept because everything that is not
+    // the mode grid wants exactly that; the grid goes through
+    // send_set_mode() in backend/firmware_profile.hpp instead, which is what
+    // gets a PX4 vehicle the split encoding it needs.
     void set_mode(uint8_t target_sysid, uint8_t target_compid, uint32_t custom_mode);
+
+    // MAV_CMD_DO_SET_MODE (176) with all three parameters spelled out.
+    //
+    // What belongs in them is the caller's business, because it is not the same
+    // for every stack: common.xml gives param2 "Custom Mode" and param3 "Custom
+    // Submode", ArduPilot uses only the former, PX4 needs both. This sender
+    // holds no opinion about which — see backend/firmware_profile.hpp.
+    void set_mode_raw(uint8_t target_sysid, uint8_t target_compid,
+                      float base_mode, float custom_mode, float custom_submode);
 
     void return_to_launch(uint8_t target_sysid, uint8_t target_compid);
 
@@ -95,6 +121,23 @@ public:
     // only field the vehicle is asked to honour — the fields the mask ignores
     // are still sent as zero, and a vehicle that mistook one for a demand
     // would be commanded to stop dead.
+    // MAV_CMD_DO_REPOSITION (192) — "fly to this point and hold there", as a
+    // COMMAND_INT.
+    //
+    // The other half of goto_position() below: same intent, different stack.
+    // PX4 ignores SET_POSITION_TARGET_GLOBAL_INT outside OFFBOARD — tested
+    // in Hold, one-shot and streamed at 5 Hz, and it does not move — but acts
+    // on this from Hold and Mission. Being a command it also ACKs, so a refusal
+    // is visible where an ignored setpoint message is silent.
+    //
+    // COMMAND_INT rather than COMMAND_LONG because the position is carried in
+    // int32 degE7 fields. Through COMMAND_LONG's floats, 1e-7 of a degree loses
+    // roughly a metre.
+    //
+    // altitude_m is metres above home, matching goto_position().
+    void reposition(uint8_t target_sysid, uint8_t target_compid,
+                    double lat_deg, double lon_deg, float altitude_m);
+
     void goto_position(uint8_t target_sysid, uint8_t target_compid,
                        double lat_deg, double lon_deg, float altitude_m);
 

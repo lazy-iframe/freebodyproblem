@@ -17,6 +17,7 @@
 
 
 #include "sidebar_internal.hpp"
+#include "../../../backend/firmware_profile.hpp"
 #include "../vehicle_ui_state.hpp"
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
@@ -24,6 +25,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <string>
@@ -60,9 +62,28 @@ static void draw_ekf_bars(const VehicleState& vs)
 
     for (int i = 0; i < N; ++i) {
         const float x   = p0.x + i * (bar_w + GAP);
-        const float val = std::max(0.0f, std::min(bars[i].value, 1.0f));
+
+        // A quantity the vehicle is not estimating at all arrives as NaN — PX4
+        // sends it for terrain height with no rangefinder, and for airspeed
+        // with no airspeed sensor. An empty bar would read as a perfect score,
+        // so those get a dash instead of a fill.
+        const bool  estimated = std::isfinite(bars[i].value);
+        const float val = estimated
+            ? std::max(0.0f, std::min(bars[i].value, 1.0f)) : 0.0f;
 
         dl->AddRectFilled({x, p0.y}, {x + bar_w, p0.y + BAR_H}, ekf_bg());
+
+        if (!estimated) {
+            dl->AddRect({x, p0.y}, {x + bar_w, p0.y + BAR_H}, ekf_outline());
+            const ImVec2 dsz = ImGui::CalcTextSize("-");
+            dl->AddText({ x + (bar_w - dsz.x) * 0.5f,
+                          p0.y + (BAR_H - dsz.y) * 0.5f }, ekf_label(), "-");
+            const char* nlbl = bars[i].label;
+            const ImVec2 ntsz = ImGui::CalcTextSize(nlbl);
+            dl->AddText({x + (bar_w - ntsz.x) * 0.5f, p0.y + BAR_H + 2.0f},
+                        ekf_label(), nlbl);
+            continue;
+        }
 
         // Color: green (0) → yellow (0.5) → red (1)
         ImU32 fill_col;
@@ -92,19 +113,6 @@ static void draw_ekf_bars(const VehicleState& vs)
     }
 
     ImGui::Dummy({avail_w, BAR_H + fh + 4.0f});
-}
-
-// ── ArduCopter flight mode values ─────────────────────────────────────────────
-
-namespace FlightMode {
-    static constexpr uint32_t STABILIZE = 0;
-    static constexpr uint32_t ACRO      = 1;
-    static constexpr uint32_t ALT_HOLD  = 2;
-    static constexpr uint32_t AUTO      = 3;
-    static constexpr uint32_t GUIDED    = 4;
-    static constexpr uint32_t LOITER    = 5;
-    static constexpr uint32_t RTL       = 6;
-    static constexpr uint32_t LAND      = 9;
 }
 
 // Vehicle-reported mode names run from "Acro" to "Loiter to QLand"; the grid is
@@ -150,6 +158,13 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     const bool    connected = (vs && vs->has_heartbeat);
     const uint8_t tsys      = connected ? vs->sysid  : 1;
     const uint8_t tcomp     = connected ? vs->compid : 1;
+
+    // Which flight stack this is, and so what a mode number means, how one is
+    // written on the wire, and what the estimator bars are measuring. An
+    // unknown stack resolves to ArduPilot, which is what this panel assumed
+    // before the profile existed.
+    const FirmwareProfile& prof =
+        firmware_profile(vs ? vs->autopilot : MAV_AUTOPILOT_GENERIC);
 
     // ── Flight mode controls ──────────────────────────────────────────────────
 
@@ -213,7 +228,9 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     // publishes one — custom_mode numbering is per-frame (a Plane's mode 3 is
     // not a Copter's mode 3), so a hardcoded table is only correct by accident.
     // Older flight stacks never answer, and fall back to the Copter table.
-    struct ModeBtn { std::string label; uint32_t mode; };
+    // standard_mode rides along because it, not the custom mode number, is
+    // what actually reaches some modes — see FirmwareProfile::encode_set_mode.
+    struct ModeBtn { std::string label; uint32_t mode; uint8_t standard_mode; };
     std::vector<ModeBtn> modes;
 
     // Three columns: a vehicle that publishes its full list reports ~25 modes,
@@ -226,27 +243,18 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     if (connected && !vs->available_modes.empty()) {
         for (const FlightModeInfo& m : vs->available_modes) {
             if (!m.user_selectable()) continue;   // MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
-            modes.push_back({ mode_button_label(m.name, col_w), m.custom_mode });
+            modes.push_back({ mode_button_label(m.name, col_w), m.custom_mode,
+                              m.standard_mode });
         }
     } else {
-        // RTL is in this list rather than on a button of its own. A vehicle
-        // that publishes AVAILABLE_MODES already offers it above, and a second
-        // control for the same mode is one the operator has to think about.
-        // It has to be here, though: without it a stack that never answers
-        // would have no way to reach RTL at all.
-        modes = {
-            { "STAB", FlightMode::STABILIZE },
-            { "ACRO", FlightMode::ACRO      },
-            { "ALTH", FlightMode::ALT_HOLD  },
-            { "LOIT", FlightMode::LOITER    },
-            { "GUID", FlightMode::GUIDED    },
-            { "AUTO", FlightMode::AUTO      },
-            { "RTL",  FlightMode::RTL       },
-            { "LAND", FlightMode::LAND      },
-        };
+        // The stack's own built-in table. Which one that is matters: a PX4
+        // mode number is not an ArduCopter mode number, and offering the
+        // Copter table to a PX4 vehicle would command it somewhere arbitrary.
+        for (const FallbackMode& m : prof.fallback_modes(vs ? vs->type
+                                                            : MAV_TYPE_GENERIC))
+            modes.push_back({ m.label, m.custom_mode, 0 });
     }
 
-    const CmdFlashState mode_fs = sender->query_flash(176);
 
     for (size_t i = 0; i < modes.size(); ++i) {
         if (i % MODE_COLS != 0) ImGui::SameLine(0, MODE_GAP);
@@ -254,8 +262,18 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         // ##index keeps the ImGui ID unique when a vehicle reports two modes
         // whose names truncate to the same label.
         const std::string id = modes[i].label + "##mode" + std::to_string(i);
+        // Flash on whichever command this particular button sends: a standard
+        // mode goes out as DO_SET_STANDARD_MODE, not DO_SET_MODE, and keying
+        // every button to 176 would leave those with no ACK feedback.
+        const CmdFlashState mode_fs = sender->query_flash(
+            prof.encode_set_mode(modes[i].mode, modes[i].standard_mode).command);
         if (ui_grid_button(id.c_str(), { col_w, 26.0f }, is_active_mode, mode_fs)) {
-            sender->set_mode(tsys, tcomp, modes[i].mode);
+            // Through the profile, not sender->set_mode(): ArduPilot takes the
+            // whole mode number in one command parameter, PX4 splits it across
+            // two. This is the path an AVAILABLE_MODES-publishing PX4 needs as
+            // much as an old one does.
+            send_set_mode(*sender, tsys, tcomp, prof, modes[i].mode,
+                          modes[i].standard_mode);
             gcs_log("mode → %s (%u)", modes[i].label.c_str(),
                     (unsigned)modes[i].mode);
         }
@@ -278,7 +296,10 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     // ── EKF status ────────────────────────────────────────────────────────────
 
     ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "EKF STATUS");
+    // The six bars are the same fields whichever stack filled them, but not
+    // the same quantity — say which, rather than let a PX4 innovation ratio be
+    // read as an ArduPilot variance.
+    ImGui::TextColored(accent_col(), "EKF STATUS \xc2\xb7 %s", prof.estimator_units());
     themed_sep();
     ImGui::Spacing();
     draw_ekf_bars(vs ? *vs : VehicleState{});
@@ -373,6 +394,16 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
             (vs && vs->has_heartbeat) ? vs->type : MAV_TYPE_QUADROTOR);
         const auto& aux_options = rc_aux_options();
 
+        // The whole pad is ArduPilot's RCn_OPTION table fired through
+        // MAV_CMD_DO_AUX_FUNCTION. PX4 has neither, so rather than offer a
+        // grid of buttons it will reject, say so and grey the lot.
+        const Capability aux_cap = prof.aux_functions();
+        if (!aux_cap.supported && aux_cap.reason) {
+            ImGui::TextColored(col_no_link_muted(), "%s", aux_cap.reason);
+            ImGui::Spacing();
+        }
+        ImGui::BeginDisabled(!aux_cap.supported);
+
         // Firmware badge
         const char* fw_label = rc_firmware_label(fw);
         if (!connected) {
@@ -453,5 +484,6 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         ImGui::PopStyleColor(); // Border
         ImGui::PopStyleVar(2);  // FrameRounding, FrameBorderSize
         ImGui::PopStyleColor(); // ChildBg
+        ImGui::EndDisabled();   // aux_cap.supported
     }
 }

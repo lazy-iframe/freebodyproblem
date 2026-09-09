@@ -28,11 +28,18 @@
 struct GotoTargetState {
     // ── In: what the vehicle can be asked for ────────────────────────────────
 
-    // True while a vehicle is connected and in GUIDED. The menu item is drawn
-    // either way — an operator who right-clicks wants to know *why* they
-    // cannot go there — but only sends when this is set.
-    bool  guided    = false;
-    bool  connected = false;
+    // Whether a target can be sent right now and, if not, why. The menu is
+    // drawn either way — an operator who right-clicks wants to know *why* they
+    // cannot go there — but only sends when `sendable` is set.
+    //
+    // `reason` points at a string literal owned by the vehicle's firmware
+    // profile, so it outlives every frame that shows it. Null iff sendable.
+    // Carrying the text rather than a bool is what lets a PX4 vehicle say
+    // something truthful instead of "GUIDED MODE REQUIRED", which on PX4 names
+    // a mode that does not exist.
+    bool        sendable  = false;
+    const char* reason    = nullptr;
+    bool        connected = false;
 
     // Vehicle altitude above home, metres. Seeds the altitude field the first
     // time the menu opens, so the default is "stay at this height".
