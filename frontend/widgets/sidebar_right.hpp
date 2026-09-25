@@ -22,6 +22,7 @@
 #include <vector>
 #include "../../backend/mavlink_parser.hpp"
 #include "../../backend/mavlink_sender.hpp"
+#include "../../backend/vehicle.hpp"
 #include "../settings.hpp"
 
 // Take in whatever this vehicle has said since the last call, for the fleet
@@ -29,10 +30,18 @@
 // render loop, not from the draw: the log carries the whole fleet, so it must
 // see vehicles that are not the one on screen.
 //
-// `number` is Fleet's display number, which is what tags the line.
-void event_log_pump(const VehicleState& vs,
+// `number` is Fleet's display number, which is what tags the line. `online` is
+// whether the vehicle is being heard — its link up and its heartbeat current —
+// and `reboot_requests` is its sender's count of reboots asked for; the log
+// draws a marker line when either changes, and when the vehicle reboots.
+void event_log_pump(VehicleId id, uint32_t number,
+                    const VehicleState& vs,
                     const std::vector<StatusText>& status_texts,
-                    uint32_t number);
+                    bool online, uint32_t reboot_requests);
+
+// A vehicle has left the fleet: its link was dropped. Marks the log unless its
+// loss is already marked there, and forgets what the log knew about it.
+void event_log_vehicle_gone(VehicleId id, uint32_t number);
 
 // The event log shows every vehicle, so neither of these takes a message list —
 // they read the fleet log, and it does not follow the callsign chip.

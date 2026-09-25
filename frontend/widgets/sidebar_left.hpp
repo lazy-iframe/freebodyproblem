@@ -42,6 +42,11 @@ struct ConnectionRequest {
     bool     requested   = false;     // true for one frame when Connect is pressed
     bool     disconnect  = false;     // true for one frame when Disconnect is pressed
     uint32_t disconnect_link_id = 0;  // which link to drop; 0 means all of them
+
+    // Set for one frame when a reboot has been confirmed in the VEHICLES list.
+    // Named rather than implied by the active vehicle: the list reboots any
+    // aircraft in the fleet, not only the one on screen.
+    VehicleId reboot_vehicle{};
 };
 
 // Feed the RC panel's calibration the live receiver stream.
@@ -82,4 +87,6 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        uint64_t total_bytes,
                        uint64_t parse_errors,
                        const std::vector<LinkInfo>& links,
+                       const std::vector<VehicleChip>& vehicles,
+                       VehicleId active_vehicle,
                        MissionPickState* pick = nullptr);

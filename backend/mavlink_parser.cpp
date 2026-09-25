@@ -85,6 +85,19 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
 
     ++total_messages_;
 
+    // A silence long enough to be something other than a slow heartbeat. A
+    // vehicle with no streams configured still heartbeats at 1 Hz, so the
+    // threshold sits clear of that; a reboot is silent for longer.
+    {
+        constexpr int64_t RESUME_GAP_NS = 1500000000;   // 1.5 s
+        const int64_t now_ns = timesync_monotonic_ns();
+        if (last_rx_ns_ != 0 && now_ns - last_rx_ns_ >= RESUME_GAP_NS) {
+            resume_ns_   = now_ns;
+            resume_mark_ = state_.statustext_total;
+        }
+        last_rx_ns_ = now_ns;
+    }
+
     // Store last raw message per ID for the MAVLink inspector tab.
     state_.last_messages[msg.msgid] = msg;
 
@@ -231,11 +244,22 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         mavlink_timesync_t ts;
         mavlink_msg_timesync_decode(&msg, &ts);
         TimeSync::Reply reply;
+        const int64_t now_ns     = timesync_monotonic_ns();
+        const int64_t old_offset = timesync_.offset_ns();
         if (timesync_.on_timesync(ts.tc1, ts.ts1, msg.sysid, msg.compid,
-                                  timesync_monotonic_ns(), &reply))
+                                  now_ns, &reply))
             timesync_replies_.push_back(reply);
         state_.time_offset_ns = timesync_.offset_ns();
         state_.has_timesync   = timesync_.synced();
+
+        // The reboot check that does not depend on any stream being
+        // configured — a rebooted vehicle has forgotten the message intervals
+        // asked of it, but it still answers TIMESYNC. Only a freshly completed
+        // round trip is a reading; between them the offset is the old boot's.
+        if (timesync_.synced() && timesync_.offset_ns() != old_offset) {
+            const int64_t boot_ns = now_ns + timesync_.offset_ns();
+            if (boot_ns > 0) note_boot_ms((uint32_t)(boot_ns / 1000000), now_ns);
+        }
         break;
     }
 
@@ -247,6 +271,7 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         state_.pitch       = att.pitch * RAD2DEG;
         state_.yaw         = att.yaw   * RAD2DEG;
         state_.has_attitude = true;
+        note_boot_ms(att.time_boot_ms, timesync_monotonic_ns());
         break;
     }
 
@@ -268,6 +293,7 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         state_.alt_asl       = gp.alt          / 1000.0f;
         state_.alt_rel       = gp.relative_alt  / 1000.0f;
         state_.has_global_pos = true;
+        note_boot_ms(gp.time_boot_ms, timesync_monotonic_ns());
         break;
     }
 
@@ -717,6 +743,34 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
     default:
         break;
     }
+}
+
+// ── Reboot detection ──────────────────────────────────────────────────────────
+
+void MavlinkParser::note_boot_ms(uint32_t boot_ms, int64_t now_ns)
+{
+    // Clear of anything the transport can reorder or the TIMESYNC estimate can
+    // be off by, and far short of any real uptime a reboot takes away — an
+    // autopilot is not back up and streaming in under three seconds.
+    constexpr uint32_t REBOOT_BACKSTEP_MS = 3000;
+
+    if (have_boot_ms_ && boot_ms + REBOOT_BACKSTEP_MS < last_boot_ms_) {
+        // Where the old boot's STATUSTEXTs end. The last resume is the right
+        // answer only if it belongs to this reboot: the TIMESYNC path can take
+        // a few seconds after the stream resumes to notice, but not half a
+        // minute. Failing that, everything already received is the old boot's.
+        constexpr int64_t RESUME_WINDOW_NS = 30000000000;   // 30 s
+        const bool resume_is_this_one = resume_ns_ != 0 &&
+                                        now_ns - resume_ns_ <= RESUME_WINDOW_NS;
+
+        ++state_.reboot_count;
+        state_.reboot_statustext_mark = resume_is_this_one ? resume_mark_
+                                                           : state_.statustext_total;
+        gcs_log("[sys%u] vehicle rebooted (boot clock %.1f s \xe2\x86\x92 %.1f s)",
+                (unsigned)sysid_, last_boot_ms_ / 1000.0, boot_ms / 1000.0);
+    }
+    last_boot_ms_ = boot_ms;
+    have_boot_ms_ = true;
 }
 
 // ── MavlinkParser::print_stats ────────────────────────────────────────────────

@@ -213,7 +213,8 @@ void Vehicle::loop()
     const uint8_t tsys  = id_.sysid;
     const uint8_t tcomp = autopilot_compid_;
 
-    bool rates_requested = false;
+    bool     rates_requested = false;
+    uint32_t seen_reboots    = 0;
 
     // AVAILABLE_MODES enumeration. The spec's "request index 0 for all modes"
     // form is not what ArduPilot implements — it replies with index 1 alone —
@@ -283,6 +284,15 @@ void Vehicle::loop()
                 last_heartbeat_ns_.store(now_ns(), std::memory_order_relaxed);
         }
         batch.clear();
+
+        // A rebooted autopilot has forgotten every message interval it was
+        // asked for and goes back to its own defaults, so the connect burst is
+        // run again — without it the panels would sit on the last values the
+        // old boot sent.
+        if (parser_.state().reboot_count != seen_reboots) {
+            seen_reboots    = parser_.state().reboot_count;
+            rates_requested = false;
+        }
 
         // ── Connect burst ─────────────────────────────────────────────────────
         //

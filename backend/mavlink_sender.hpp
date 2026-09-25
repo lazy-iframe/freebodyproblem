@@ -230,6 +230,12 @@ public:
     // immediately, and over USB it takes its serial device with it.
     void reboot_autopilot(uint8_t target_sysid, uint8_t target_compid);
 
+    // How many reboots have been asked of this vehicle, from any panel. The
+    // event log marks each one, so the operator can see where the messages
+    // they asked for a restart after begin — whichever button did the asking.
+    uint32_t reboot_requests() const
+    { return reboot_requests_.load(std::memory_order_relaxed); }
+
     // Request all parameters (PARAM_REQUEST_LIST #21).
     // FC responds with a stream of PARAM_VALUE (#22) messages.
     void request_param_list(uint8_t target_sysid, uint8_t target_compid);
@@ -368,6 +374,7 @@ private:
     mutable std::mutex                      mtx_;
     std::queue<std::vector<uint8_t>>        queue_;
     std::atomic<uint32_t>                   param_list_seq_ { 0 };
+    std::atomic<uint32_t>                   reboot_requests_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;
 
     std::vector<MissionItem>                upload_items_;

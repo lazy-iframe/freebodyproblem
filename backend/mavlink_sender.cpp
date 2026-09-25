@@ -314,6 +314,7 @@ void MavlinkSender::reboot_autopilot(uint8_t tsys, uint8_t tcomp)
     // companion computer, and the higher ones select bootloader and shutdown
     // modes that this GCS has no business asking for.
     enqueue_command_long(tsys, tcomp, 246, 1.f);
+    reboot_requests_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void MavlinkSender::request_autopilot_capabilities(uint8_t tsys, uint8_t tcomp)

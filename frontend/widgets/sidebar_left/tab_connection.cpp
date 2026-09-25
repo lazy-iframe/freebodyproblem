@@ -130,12 +130,82 @@ static void draw_system_block(MavlinkSender* sender, const VehicleState* vs,
     }
 }
 
+// ── Vehicles ──────────────────────────────────────────────────────────────────
+//
+// Every vehicle the links above have found, as the callsign chip's switcher
+// lists them, each with a way to restart it. Here rather than in the switcher:
+// the switcher is for looking, and a reboot is not something to put one
+// mis-click away from choosing which aircraft to look at.
+static void draw_vehicle_list(ConnectionRequest* conn_out,
+                              const std::vector<VehicleChip>& vehicles,
+                              VehicleId active_vehicle)
+{
+    ImGui::Spacing();
+    themed_sep();
+    ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "VEHICLES");
+    ImGui::Spacing();
+
+    if (vehicles.empty()) {
+        ImGui::TextDisabled("No vehicles heard yet.");
+        return;
+    }
+
+    // The state box and the REBOOT button are one size, so the two read as a
+    // strip of controls rather than a label and a button.
+    const float btn_w = ui_vehicle_box_width("REBOOT");
+    const float row_h = ui_vehicle_row_height();
+
+    for (const auto& v : vehicles) {
+        // By link and sysid, not by label — see the switcher in topbar.cpp.
+        ImGui::PushID((int)v.id.link_id);
+        ImGui::PushID((int)v.id.sysid);
+
+        const float  text_w = ImGui::GetContentRegionAvail().x - btn_w * 2.0f - 4.0f - 6.0f;
+        const ImVec2 r0     = ImGui::GetCursorScreenPos();
+        ImGui::Dummy({ text_w, row_h });
+        ui_vehicle_row(v, v.id == active_vehicle, r0, { r0.x + text_w, r0.y + row_h },
+                       /*show_state=*/false);
+
+        ImGui::SameLine(0, 6);
+        ui_vehicle_state_box(v, { btn_w, row_h });
+
+        // Not while armed: a restart in the air is a crash. ArduPilot refuses
+        // it anyway, but the button should not offer what the vehicle will
+        // decline. Not while silent either — the command would go nowhere.
+        const bool can_reboot = v.has_heartbeat && !v.armed && !v.stale;
+
+        ImGui::SameLine(0, 4);
+        ImGui::BeginDisabled(!can_reboot);
+        if (ui_solid_button("REBOOT", { btn_w, row_h },
+                            btn_disconnect_base(), btn_disconnect_hov()))
+            ImGui::OpenPopup("##confirm_reboot_vehicle");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (v.armed)       ImGui::SetTooltip("Disarm before rebooting");
+            else if (v.stale)  ImGui::SetTooltip("No signal \xe2\x80\x94 it would not hear the command");
+            else               ImGui::SetTooltip("Restart vehicle %u's autopilot", (unsigned)v.number);
+        }
+
+        char question[64];
+        snprintf(question, sizeof(question), "RESTART VEHICLE %u NOW?", (unsigned)v.number);
+        if (ui_confirm_popup("##confirm_reboot_vehicle", "REBOOT VEHICLE", question,
+                             "REBOOT", btn_disconnect_base()) == UiConfirm::Confirmed)
+            conn_out->reboot_vehicle = v.id;
+
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+}
+
 void draw_tab_connection(MavlinkSender* sender,
                          const VehicleState* vs,
                          ConnectionRequest* conn_out,
                          LinkStatus link_status,
                          AppSettings* settings,
-                         const std::vector<LinkInfo>& links)
+                         const std::vector<LinkInfo>& links,
+                         const std::vector<VehicleChip>& vehicles,
+                         VehicleId active_vehicle)
 {
     ImGui::Spacing();
     ImGui::TextColored(accent_col(), "CONNECTION");
@@ -335,6 +405,8 @@ void draw_tab_connection(MavlinkSender* sender,
             ImGui::PopID();
         }
     }
+
+    draw_vehicle_list(conn_out, vehicles, active_vehicle);
 
     // ── Connection profiles ───────────────────────────────────────────────────
     if (settings) {

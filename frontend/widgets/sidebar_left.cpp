@@ -32,6 +32,8 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        uint64_t total_bytes,
                        uint64_t parse_errors,
                        const std::vector<LinkInfo>& links,
+                       const std::vector<VehicleChip>& vehicles,
+                       VehicleId active_vehicle,
                        MissionPickState* pick)
 {
     const GcsLayout l = GcsLayout::compute();
@@ -97,7 +99,8 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     // ── Dispatch to per-tab panels ────────────────────────────────────────────
     switch (selected) {
     case Tab::Connection: draw_tab_connection(sender, vs, conn_out, link_status,
-                                              settings, links);                     break;
+                                              settings, links, vehicles,
+                                              active_vehicle);                      break;
     case Tab::Flight:     draw_tab_flight(sender, vs);                              break;
     case Tab::Mavlink:    draw_tab_mavlink(sender, vs, msg_stats, total_messages,
                                            total_bytes, parse_errors);              break;

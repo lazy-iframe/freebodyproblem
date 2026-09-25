@@ -226,6 +226,17 @@ struct VehicleState {
     // an index into it silently points at a different message afterwards.
     uint32_t statustext_total = 0;
 
+    // Reboots noticed since this vehicle was discovered, from its boot clock
+    // (time_boot_ms, and the TIMESYNC offset) running backwards. Counted rather
+    // than flagged, so a consumer that samples it can never miss one.
+    //
+    // `reboot_statustext_mark` is the statustext_total the old boot ended on:
+    // messages numbered above it were sent by the new boot. It is what lets the
+    // event log draw its line between the two in the right place, even though
+    // the reboot is noticed only after the new boot has started talking.
+    uint32_t reboot_count           = 0;
+    uint32_t reboot_statustext_mark = 0;
+
     // MAV_CMD_ACCELCAL_VEHICLE_POS (42429), arriving as a COMMAND_LONG from the
     // vehicle. During an accelerometer calibration ArduPilot sends this
     // alongside the human-readable STATUSTEXT, and it is the authoritative half
@@ -503,4 +514,21 @@ private:
     static constexpr size_t MAX_STATUS_TEXTS = 200;
 
     uint64_t total_messages_ = 0;
+
+    // Reboot detection — see VehicleState::reboot_count.
+    //
+    // The vehicle's boot clock as last read, from any message that carries it.
+    // Going backwards by more than jitter can explain is the vehicle restarting.
+    void note_boot_ms(uint32_t boot_ms, int64_t now_ns);
+    uint32_t last_boot_ms_  = 0;
+    bool     have_boot_ms_  = false;
+
+    // Where the stream last resumed after a silence, and how many STATUSTEXTs
+    // had arrived by then. A reboot is always a silence followed by a new boot,
+    // but it is noticed only when the first message carrying the new clock
+    // arrives — and the new boot's first STATUSTEXTs can beat it. The resume
+    // point is where the new boot's messages actually begin.
+    int64_t  last_rx_ns_    = 0;
+    int64_t  resume_ns_     = 0;
+    uint32_t resume_mark_   = 0;
 };

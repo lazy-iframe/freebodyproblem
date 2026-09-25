@@ -294,47 +294,17 @@ void draw_topbar(const VehicleState& vs,
 
                     const bool is_active = (v.id == active);
 
-                    // Led by the GCS's own number for this vehicle, the same
-                    // "(2)" its symbol carries on the map — which is what makes
-                    // the two rows reading SYS1 tellable apart at a glance,
-                    // rather than only by the link name on the line below.
-                    char row[48];
-                    snprintf(row, sizeof(row), "(%u) SYS%d\xc2\xb7%d",
-                             (unsigned)v.number, (int)v.id.sysid, (int)v.compid);
-
                     // Two lines per row: who it is, and where it came from.
                     // Selectable spans both so the whole block is the target.
-                    const float line_h = ImGui::GetTextLineHeight();
                     if (ImGui::Selectable("##veh", is_active,
                                           ImGuiSelectableFlags_None,
-                                          { 0.0f, line_h * 2.0f + 4.0f }) &&
+                                          { 0.0f, ui_vehicle_row_height() }) &&
                         selected_out)
                         *selected_out = v.id;
                     if (is_active) ImGui::SetItemDefaultFocus();
 
-                    const ImVec2 rmin = ImGui::GetItemRectMin();
-                    const ImVec2 rmax = ImGui::GetItemRectMax();
-                    ImDrawList*  rdl  = ImGui::GetWindowDrawList();
-
-                    rdl->AddText({ rmin.x + 4.0f, rmin.y + 1.0f },
-                                 is_active ? ui_col_accent()
-                                           : ui_col(g_theme.col_text_on_dark),
-                                 row);
-
-                    // State on the right of the first line, coloured by what it
-                    // means: armed is the one worth catching the eye.
-                    const char* state = v.stale ? "NO SIGNAL"
-                                      : v.armed ? "ARMED"
-                                      : v.has_heartbeat ? "idle"
-                                                        : "no heartbeat";
-                    const ImU32 scol = v.stale ? ui_col(g_theme.col_error)
-                                     : v.armed ? ui_col(g_theme.col_warning)
-                                               : ui_col_label();
-                    const float sw = ImGui::CalcTextSize(state).x;
-                    rdl->AddText({ rmax.x - sw - 4.0f, rmin.y + 1.0f }, scol, state);
-
-                    rdl->AddText({ rmin.x + 4.0f, rmin.y + line_h + 3.0f },
-                                 ui_col_label(), v.link_name);
+                    ui_vehicle_row(v, is_active, ImGui::GetItemRectMin(),
+                                   ImGui::GetItemRectMax());
 
                     ImGui::PopID();
                     ImGui::PopID();

@@ -192,3 +192,29 @@ enum class UiConfirm { None, Confirmed, Cancelled };
 UiConfirm ui_confirm_popup(const char* id, const char* title, const char* question,
                            const char* confirm_label, ImVec4 confirm_col,
                            bool modal = false);
+
+// ── Vehicle rows ─────────────────────────────────────────────────────────────
+//
+// One vehicle as the fleet lists show it: "(2) SYS1·1" with its state on the
+// right, and the link it came in on underneath. Drawn into [rmin, rmax], which
+// the caller has already claimed with an item of its own — a Selectable in the
+// callsign chip's switcher, a plain block in the CONNECTION tab's list — so
+// both lists read the same whatever each one does on a click.
+struct VehicleChip;
+
+// Height of the two lines, for sizing the item the row is drawn over.
+float ui_vehicle_row_height();
+
+// `show_state` = false leaves the state off the first line, for a caller that
+// shows it as a ui_vehicle_state_box beside the row instead.
+void ui_vehicle_row(const VehicleChip& v, bool is_active, ImVec2 rmin, ImVec2 rmax,
+                    bool show_state = true);
+
+// The vehicle's state as a framed box — IDLE, ARMED, LOST, WAIT — in the same
+// chrome and size as the buttons beside it, so a row of state and actions reads
+// as one strip. Not a control: hovering it spells the state out in full.
+void ui_vehicle_state_box(const VehicleChip& v, ImVec2 size);
+
+// A width every state box caption fits in, and the given button caption too, so
+// the box and its neighbouring button can be made exactly the same size.
+float ui_vehicle_box_width(const char* button_caption);

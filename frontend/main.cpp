@@ -193,6 +193,7 @@ static void render_ui()
     g_conn_req.requested          = false;
     g_conn_req.disconnect         = false;
     g_conn_req.disconnect_link_id = 0;
+    g_conn_req.reboot_vehicle     = VehicleId{};
     g_close_req           = false;
 
     // The vehicle on screen. Held for the whole frame so that a link dropping on
@@ -283,6 +284,7 @@ static void render_ui()
     // calibration on one keeps advancing while the operator watches another.
     {
         const double now_s = ImGui::GetTime();
+        const std::vector<LinkInfo> links_now = g_fleet.links();
         g_map_fleet.clear();
         for (const auto& v : g_fleet.vehicles()) {
             VehicleSnapshot vsnap;
@@ -290,7 +292,17 @@ static void render_ui()
             ui_bind_vehicle(v->id());
             rc_tab_pump(&vsnap.state);
             sensors_tab_pump(&vsnap.state, vsnap.status_texts, now_s);
-            event_log_pump(vsnap.state, vsnap.status_texts, v->number());
+            // Heard from means both: its link still up, and a heartbeat recent
+            // enough. A link that errors out — the USB device vanishing under a
+            // reboot — is known at once, long before the heartbeat goes stale.
+            bool link_up = false;
+            for (const auto& li : links_now)
+                if (li.id == v->link_id()) {
+                    link_up = (li.status == LinkStatus::Connected);
+                    break;
+                }
+            event_log_pump(v->id(), v->number(), vsnap.state, vsnap.status_texts,
+                           link_up && !v->stale(), v->sender().reboot_requests());
             map_track_pump(vsnap.state);
 
             // The map draws the whole fleet, and this loop is already holding
@@ -325,13 +337,18 @@ static void render_ui()
     // disconnected and reopened does not inherit the last airframe's half-run
     // calibration or its staged RC edits.
     {
-        static std::vector<VehicleId> known;
-        std::vector<VehicleId> now_ids;
-        for (const auto& v : g_fleet.vehicles()) now_ids.push_back(v->id());
+        // With each one's display number, which the event log's "VEHICLE 2
+        // DISCONNECTED" needs and which is gone with the vehicle.
+        static std::vector<std::pair<VehicleId, uint32_t>> known;
+        std::vector<std::pair<VehicleId, uint32_t>> now_ids;
+        for (const auto& v : g_fleet.vehicles()) now_ids.emplace_back(v->id(), v->number());
 
-        for (const VehicleId& old_id : known) {
-            if (std::find(now_ids.begin(), now_ids.end(), old_id) == now_ids.end())
+        for (const auto& [old_id, old_number] : known) {
+            if (std::none_of(now_ids.begin(), now_ids.end(),
+                             [&](const auto& n) { return n.first == old_id; })) {
+                event_log_vehicle_gone(old_id, old_number);
                 ui_forget_vehicle(old_id);
+            }
         }
         known.swap(now_ids);
     }
@@ -353,7 +370,8 @@ static void render_ui()
     if (!video_full)
         draw_sidebar_left(sender, &vs, &g_conn_req, link_status, &params, &g_settings,
                           &stats, total_msg, total_bytes, errors,
-                          g_fleet.links(), &g_mission_pick);
+                          g_fleet.links(), chips, g_fleet.active_id(),
+                          &g_mission_pick);
     draw_center_view(vs, sender, &g_mission_pick, &g_map_fleet);
     if (!video_full && !map_full)
         draw_sidebar_right(vs, sender, &g_settings);
@@ -531,6 +549,18 @@ int main()
 
         if (g_close_req)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+        if (g_conn_req.reboot_vehicle.valid()) {
+            // Through the vehicle's own sender, addressed to its own autopilot:
+            // the VEHICLES list reboots any aircraft, not the one on screen.
+            for (const auto& v : g_fleet.vehicles()) {
+                if (v->id() != g_conn_req.reboot_vehicle) continue;
+                v->sender().reboot_autopilot(v->sysid(), v->compid());
+                gcs_log("reboot requested for vehicle (%u) sys%u",
+                        (unsigned)v->number(), (unsigned)v->sysid());
+                break;
+            }
+        }
 
         if (g_conn_req.disconnect) {
             // The CONNECTION tab names the link to drop, since several are live

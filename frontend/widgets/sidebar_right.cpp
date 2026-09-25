@@ -31,6 +31,7 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 #include <chrono>
 #include <deque>
@@ -301,11 +302,27 @@ static void draw_vfr_strip(const VehicleState& vs, float strip_h,
 // message the operator needed to see. So this does not follow the callsign
 // chip: switching vehicles leaves it alone.
 
+// What a line in the log is. Most are the vehicle speaking; the rest are the
+// GCS drawing a line across the log where that vehicle's story broke — so what
+// it said before a reboot or a dropped link is never read as being about the
+// aircraft as it is now. The log cannot simply be cleared at those points: it
+// is the whole fleet's, and the other vehicles' messages are still current.
+enum class FleetLogKind : uint8_t {
+    Message,
+    RebootRequested,   // the operator asked; the vehicle may not have acted yet
+    Rebooted,          // the vehicle's boot clock went back to zero
+    LinkLost,          // stopped hearing it, or its link was dropped
+};
+
 struct FleetLogEntry {
-    uint32_t    number;     // Fleet's display number for the vehicle that spoke
-    uint8_t     severity;
-    std::string stamp;      // wall clock at the moment it was taken in
-    std::string text;
+    FleetLogKind kind;
+    VehicleId    vid;        // which vehicle, for placing a reboot marker
+    uint32_t     number;     // Fleet's display number for the vehicle that spoke
+    uint32_t     ordinal;    // Message only: its statustext_total, 1-based
+    uint8_t      severity;
+    std::string  stamp;      // wall clock at the moment it was taken in
+    std::string  text;
+    uint64_t     seq = 0;    // identity for the selection; see fleet_log_add()
 };
 
 // Bounded for the same reason the per-vehicle deque behind it is: a talkative
@@ -320,48 +337,147 @@ static std::deque<FleetLogEntry> g_fleet_log;
 // nothing to tell apart, and the prefix would be noise on every line.
 static std::unordered_set<uint32_t> g_fleet_log_numbers;
 
-void event_log_pump(const VehicleState& vs,
-                    const std::vector<StatusText>& status_texts,
-                    uint32_t number)
+// What the log has taken in from each vehicle so far. Its own map rather than a
+// VehicleUiState: event_log_vehicle_gone() has to read it for a vehicle that is
+// no longer bound to anything, and erases it itself once it has.
+struct FleetLogCursor {
+    uint32_t ingested        = 0;      // statustext_total already taken in
+    uint32_t reboots         = 0;      // VehicleState::reboot_count already marked
+    uint32_t reboot_requests = 0;      // MavlinkSender::reboot_requests() already marked
+    bool     lost            = false;  // a LinkLost marker is standing for it
+};
+static std::unordered_map<VehicleId, FleetLogCursor, VehicleIdHash> g_fleet_log_cursors;
+
+static std::string wall_stamp()
 {
-    // How many of this vehicle's messages have already been taken in. Per
-    // vehicle, and dropped with it — see widgets/vehicle_ui_state.hpp.
-    static VehicleUiState<uint32_t> s_ingested;
-    uint32_t& ingested = *s_ingested;
+    char stamp[16];
+    const std::time_t t = std::time(nullptr);
+    std::tm            lt{};
+#ifdef _WIN32
+    localtime_s(&lt, &t);
+#else
+    localtime_r(&t, &lt);
+#endif
+    snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d",
+             lt.tm_hour, lt.tm_min, lt.tm_sec);
+    return stamp;
+}
+
+static void fleet_log_trim()
+{
+    while (g_fleet_log.size() > FLEET_LOG_MAX) g_fleet_log.pop_front();
+}
+
+// Every entry gets a number of its own on the way in. A selection is held as
+// the numbers of the lines at its two ends rather than their positions: the
+// log drops lines off its front as it fills and a reboot marker can land in
+// its middle, and either would slide a selection held by position onto lines
+// the operator never chose.
+static uint64_t g_fleet_log_seq = 0;
+
+static void fleet_log_add(FleetLogEntry e)
+{
+    e.seq = ++g_fleet_log_seq;
+    g_fleet_log.push_back(std::move(e));
+    fleet_log_trim();
+}
+
+static FleetLogEntry fleet_log_marker(FleetLogKind kind, VehicleId vid,
+                                      uint32_t number, const char* what)
+{
+    char text[64];
+    snprintf(text, sizeof(text), "VEHICLE %u %s", (unsigned)number, what);
+    return FleetLogEntry{ kind, vid, number, 0, 0, wall_stamp(), text };
+}
+
+// The reboot line goes where the old boot's messages end, which is not always
+// the end of the log: the reboot is noticed only when the new boot's clock is
+// first read, and by then its opening STATUSTEXTs may already be in. So the
+// marker goes before the first of this vehicle's messages numbered past
+// `mark`, and takes that message's stamp so the clock never runs backwards.
+static void fleet_log_insert_reboot(VehicleId vid, uint32_t number, uint32_t mark)
+{
+    FleetLogEntry m = fleet_log_marker(FleetLogKind::Rebooted, vid, number, "REBOOTED");
+
+    size_t at = g_fleet_log.size();
+    for (size_t i = g_fleet_log.size(); i-- > 0; ) {
+        const FleetLogEntry& e = g_fleet_log[i];
+        if (e.vid != vid || e.kind != FleetLogKind::Message) continue;
+        if (e.ordinal <= mark) break;
+        at = i;
+    }
+    if (at < g_fleet_log.size()) m.stamp = g_fleet_log[at].stamp;
+    m.seq = ++g_fleet_log_seq;
+    g_fleet_log.insert(g_fleet_log.begin() + (std::ptrdiff_t)at, std::move(m));
+    fleet_log_trim();
+}
+
+void event_log_pump(VehicleId id, uint32_t number,
+                    const VehicleState& vs,
+                    const std::vector<StatusText>& status_texts,
+                    bool online, uint32_t reboot_requests)
+{
+    FleetLogCursor& cur = g_fleet_log_cursors[id];
+
+    // The operator asked for a restart. Marked at once, not when the vehicle
+    // acts on it: the request is the operator's reference point, and a vehicle
+    // that never comes back would otherwise leave no trace of having been asked.
+    if (reboot_requests != cur.reboot_requests) {
+        cur.reboot_requests = reboot_requests;
+        fleet_log_add(fleet_log_marker(FleetLogKind::RebootRequested, id,
+                                       number, "REBOOT REQUESTED"));
+    }
 
     // Counted rather than diffed against the list. The vehicle keeps only its
     // last 200 messages and drops the oldest to make room, so the list's length
     // stops being a count of anything the moment it fills up; statustext_total
     // is the number the vehicle has ever sent and only goes up.
     const uint32_t total = vs.statustext_total;
-    if (total == ingested) return;
-    if (total < ingested) ingested = 0;   // vehicle replaced under the same id
+    if (total < cur.ingested) cur.ingested = 0;   // cannot happen; never underflow
+    if (total != cur.ingested) {
+        // Anything older than what the vehicle still holds is gone for good —
+        // this takes what is left of the backlog and accepts the gap.
+        const size_t n_new = std::min<size_t>(total - cur.ingested, status_texts.size());
+        const std::string stamp = wall_stamp();
 
-    // Anything older than what the vehicle still holds is gone for good — this
-    // takes what is left of the backlog and accepts the gap.
-    const size_t n_new = std::min<size_t>(total - ingested, status_texts.size());
-
-    char stamp[16];
-    {
-        const std::time_t t = std::time(nullptr);
-        std::tm            lt{};
-#ifdef _WIN32
-        localtime_s(&lt, &t);
-#else
-        localtime_r(&t, &lt);
-#endif
-        snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d",
-                 lt.tm_hour, lt.tm_min, lt.tm_sec);
+        uint32_t ordinal = total - (uint32_t)n_new;
+        for (size_t i = status_texts.size() - n_new; i < status_texts.size(); ++i) {
+            fleet_log_add(FleetLogEntry{ FleetLogKind::Message, id, number,
+                                         ++ordinal, status_texts[i].severity,
+                                         stamp, status_texts[i].text });
+        }
+        if (n_new > 0) g_fleet_log_numbers.insert(number);
+        cur.ingested = total;
     }
 
-    for (size_t i = status_texts.size() - n_new; i < status_texts.size(); ++i) {
-        g_fleet_log.push_back(FleetLogEntry{ number, status_texts[i].severity,
-                                             stamp, status_texts[i].text });
-        if (g_fleet_log.size() > FLEET_LOG_MAX) g_fleet_log.pop_front();
+    // After the messages, so the ones the new boot has already sent are in the
+    // log for the marker to be placed ahead of.
+    if (vs.reboot_count != cur.reboots) {
+        cur.reboots = vs.reboot_count;
+        fleet_log_insert_reboot(id, number, vs.reboot_statustext_mark);
     }
-    if (n_new > 0) g_fleet_log_numbers.insert(number);
 
-    ingested = total;
+    // Once per outage, not once per frame of it. Heard from again, it is
+    // re-armed — the line then separates what it said before the gap from what
+    // it says after.
+    if (!online && !cur.lost) {
+        cur.lost = true;
+        fleet_log_add(fleet_log_marker(FleetLogKind::LinkLost, id,
+                                       number, "CONNECTION LOST"));
+    } else if (online) {
+        cur.lost = false;
+    }
+}
+
+void event_log_vehicle_gone(VehicleId id, uint32_t number)
+{
+    auto it = g_fleet_log_cursors.find(id);
+    // A vehicle whose loss is already marked needs no second line for being
+    // removed — dropping a dead link is housekeeping, not news.
+    if (it == g_fleet_log_cursors.end() || !it->second.lost)
+        fleet_log_add(fleet_log_marker(FleetLogKind::LinkLost, id,
+                                       number, "DISCONNECTED"));
+    if (it != g_fleet_log_cursors.end()) g_fleet_log_cursors.erase(it);
 }
 
 // The vehicle tag, "[2]", in the accent colour and thickened.
@@ -384,10 +500,92 @@ static void draw_log_vehicle_tag(uint32_t number)
     ImGui::Dummy(ImGui::CalcTextSize(tag));
 }
 
+// A line across the log where one vehicle's story broke: a band the width of
+// the log, tinted and edged in the error red, with the stamp and what happened.
+// Loud on purpose — its whole job is to be seen while scrolling, so nothing
+// above it is read as being about the vehicle as it is now. A reboot the
+// operator asked for is amber instead: it is intent, and the red line follows
+// when the vehicle actually restarts.
+//
+// The band is drawn by the caller, which alone knows how tall the line came out
+// once wrapped; this draws the text and says which colour the band should be.
+static ImVec4 log_marker_col(const FleetLogEntry& e)
+{
+    return (e.kind == FleetLogKind::RebootRequested) ? col_warning() : col_error();
+}
+
+static void draw_log_marker(const FleetLogEntry& e)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, log_marker_col(e));
+    ImGui::TextUnformatted(e.stamp.c_str());
+    ImGui::SameLine(0, 8);
+    ImGui::Text("\xe2\x80\x94 %s \xe2\x80\x94", e.text.c_str());
+    ImGui::PopStyleColor();
+}
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+//
+// The log is drawn as coloured text, and ImGui text cannot be selected — so the
+// log keeps a selection of its own, by whole line, which is what gets pasted
+// into a report or a bug anyway. Click a line, drag or shift-click to extend,
+// Ctrl+A for everything, Ctrl+C or the right-click menu to copy.
+//
+// One selection for both places the log is drawn: the sidebar and the
+// fullscreen map's overlay are the same log, and never on screen together.
+static uint64_t g_log_sel_anchor   = 0;   // seq of the line the selection began on; 0 = none
+static uint64_t g_log_sel_end      = 0;   // seq of the line it extends to
+static bool     g_log_sel_dragging = false;
+
+// A line as it reads on screen, for the clipboard.
+static void log_line_append(std::string& out, const FleetLogEntry& e, bool tag_vehicles)
+{
+    out += e.stamp;
+    out += "  ";
+    if (e.kind != FleetLogKind::Message) {
+        out += "\xe2\x80\x94 " + e.text + " \xe2\x80\x94";
+    } else {
+        if (tag_vehicles) out += "[" + std::to_string(e.number) + "] ";
+        out += e.text;
+    }
+    out += '\n';
+}
+
+// Positions of the selection's two ends, in order. False when there is no
+// selection, or when either end has since dropped off the front of the log.
+static bool log_selection_range(size_t& lo, size_t& hi)
+{
+    if (g_log_sel_anchor == 0) return false;
+    bool have_a = false, have_b = false;
+    size_t a = 0, b = 0;
+    for (size_t i = 0; i < g_fleet_log.size(); ++i) {
+        if (g_fleet_log[i].seq == g_log_sel_anchor) { a = i; have_a = true; }
+        if (g_fleet_log[i].seq == g_log_sel_end)    { b = i; have_b = true; }
+    }
+    if (!have_a || !have_b) {
+        g_log_sel_anchor = g_log_sel_end = 0;
+        return false;
+    }
+    lo = std::min(a, b);
+    hi = std::max(a, b);
+    return true;
+}
+
+static void log_copy(size_t lo, size_t hi, bool tag_vehicles)
+{
+    std::string out;
+    for (size_t i = lo; i <= hi && i < g_fleet_log.size(); ++i)
+        log_line_append(out, g_fleet_log[i], tag_vehicles);
+    ImGui::SetClipboardText(out.c_str());
+}
+
 // The scrolling body of the event log: a wall-clock stamp per vehicle message,
 // severity-coloured, pinned to the bottom while the view is already there.
 // `bg_alpha` scales the well behind it, so the overlay can let the map through.
-static void draw_event_log_body(float bg_alpha, bool small_text = false)
+// `wrap` folds long lines onto the next under their own text rather than
+// scrolling sideways — for the map overlay, whose narrow block would otherwise
+// show the start of every message and hide the part that says what went wrong.
+static void draw_event_log_body(float bg_alpha, bool small_text = false,
+                                bool wrap = false)
 {
     // Only worth tagging lines once more than one vehicle has spoken.
     const bool tag_vehicles = g_fleet_log_numbers.size() > 1;
@@ -396,7 +594,8 @@ static void draw_event_log_body(float bg_alpha, bool small_text = false)
                           ui_col(g_theme.bg_child_darker, bg_alpha));
     const ImVec2 inner_sz = { 0.0f, ImGui::GetContentRegionAvail().y };
     if (ImGui::BeginChild("##sysmsg_scroll", inner_sz, false,
-                          ImGuiWindowFlags_HorizontalScrollbar)) {
+                          wrap ? ImGuiWindowFlags_None
+                               : ImGuiWindowFlags_HorizontalScrollbar)) {
         // The 13 px mono rather than a scaled body font: these lines are a
         // stamp and a message, and a mono face is what keeps the stamps in a
         // column when the block is small enough that they nearly touch.
@@ -408,19 +607,140 @@ static void draw_event_log_body(float bg_alpha, bool small_text = false)
             ImGui::TextUnformatted("AWAITING VEHICLE MESSAGES");
             ImGui::PopStyleColor();
         } else {
-            for (const FleetLogEntry& e : g_fleet_log) {
-                ImGui::PushStyleColor(ImGuiCol_Text, col_log());
-                ImGui::TextUnformatted(e.stamp.c_str());
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0, 8);
-                if (tag_vehicles) {
-                    draw_log_vehicle_tag(e.number);
-                    ImGui::SameLine(0, 6);
+            size_t sel_lo = 0, sel_hi = 0;
+            const bool has_sel = log_selection_range(sel_lo, sel_hi);
+
+            const float  line_h  = ImGui::GetTextLineHeight();
+            const float  gap     = ImGui::GetStyle().ItemSpacing.y;
+            const float  mouse_y = ImGui::GetIO().MousePos.y;
+            const ImVec2 win_pos = ImGui::GetWindowPos();
+            const float  win_r   = win_pos.x + ImGui::GetWindowWidth();
+            ImDrawList*  dl      = ImGui::GetWindowDrawList();
+
+            // The line under the pointer, found while drawing since that is
+            // where each line's position is known. The band a line owns takes
+            // half the gap either side, so there is no dead strip between two.
+            long hot = -1;
+
+            // Wrapped, a line is as tall as it comes out, which is known only
+            // once it is drawn — so the selection and marker bands behind it go
+            // on a lower channel, drawn after the text but composited under it.
+            // Wrap position 0 is the window's right edge; -1 turns it off. Plain
+            // Text calls below rather than TextWrapped, which wraps regardless.
+            ImGui::PushTextWrapPos(wrap ? 0.0f : -1.0f);
+            dl->ChannelsSplit(2);
+
+            for (size_t i = 0; i < g_fleet_log.size(); ++i) {
+                const FleetLogEntry& e = g_fleet_log[i];
+                const float y0 = ImGui::GetCursorScreenPos().y;
+
+                dl->ChannelsSetCurrent(1);
+                if (e.kind != FleetLogKind::Message) {
+                    draw_log_marker(e);
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, col_log());
+                    ImGui::TextUnformatted(e.stamp.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 8);
+                    if (tag_vehicles) {
+                        draw_log_vehicle_tag(e.number);
+                        ImGui::SameLine(0, 6);
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, col_status_severity(e.severity));
+                    ImGui::TextUnformatted(e.text.c_str());
+                    ImGui::PopStyleColor();
                 }
-                ImGui::TextColored(col_status_severity(e.severity),
-                                   "%s", e.text.c_str());
+                const float y1 = ImGui::GetItemRectMax().y;
+
+                if (mouse_y >= y0 - gap * 0.5f && mouse_y < y1 + gap * 0.5f)
+                    hot = (long)i;
+
+                // Across the visible width however far the log is scrolled
+                // sideways. A marker's band is loud on purpose — its whole job
+                // is to be seen while scrolling — with a solid edge on the left.
+                dl->ChannelsSetCurrent(0);
+                if (e.kind != FleetLogKind::Message) {
+                    const ImVec4 mc = log_marker_col(e);
+                    dl->AddRectFilled({ win_pos.x, y0 - 2.0f }, { win_r, y1 + 2.0f },
+                                      ui_col(mc, 0.16f));
+                    dl->AddRectFilled({ win_pos.x, y0 - 2.0f }, { win_pos.x + 3.0f, y1 + 2.0f },
+                                      ui_col(mc));
+                }
+                if (has_sel && i >= sel_lo && i <= sel_hi)
+                    dl->AddRectFilled({ win_pos.x, y0 - gap * 0.5f },
+                                      { win_r,     y1 + gap * 0.5f },
+                                      ui_col(g_theme.accent, 0.22f));
             }
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+
+            dl->ChannelsMerge();
+            ImGui::PopTextWrapPos();
+
+            // ── Selecting ─────────────────────────────────────────────────
+            const ImGuiIO& io      = ImGui::GetIO();
+            const bool     hovered = ImGui::IsWindowHovered();
+
+            if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                if (hot >= 0) {
+                    const uint64_t seq = g_fleet_log[(size_t)hot].seq;
+                    if (!(io.KeyShift && g_log_sel_anchor != 0)) g_log_sel_anchor = seq;
+                    g_log_sel_end      = seq;
+                    g_log_sel_dragging = true;
+                } else {
+                    g_log_sel_anchor = g_log_sel_end = 0;   // click past the last line
+                }
+            }
+            if (g_log_sel_dragging) {
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    g_log_sel_dragging = false;
+                } else {
+                    // Dragged past either edge: scroll that way, and extend to
+                    // the line now at the edge.
+                    const float top = win_pos.y, bot = win_pos.y + ImGui::GetWindowHeight();
+                    if (mouse_y < top)
+                        ImGui::SetScrollY(ImGui::GetScrollY() - line_h);
+                    else if (mouse_y > bot)
+                        ImGui::SetScrollY(ImGui::GetScrollY() + line_h);
+                    if (hot >= 0) g_log_sel_end = g_fleet_log[(size_t)hot].seq;
+                }
+            }
+
+            // Right-click on a line outside the selection selects that line
+            // first, so the menu always acts on what the pointer is on.
+            if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                if (hot >= 0 && !(has_sel && (size_t)hot >= sel_lo && (size_t)hot <= sel_hi))
+                    g_log_sel_anchor = g_log_sel_end = g_fleet_log[(size_t)hot].seq;
+                ImGui::OpenPopup("##log_ctx");
+            }
+
+            if (ImGui::IsWindowFocused()) {
+                if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_A)) {
+                    g_log_sel_anchor = g_fleet_log.front().seq;
+                    g_log_sel_end    = g_fleet_log.back().seq;
+                }
+                if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C) &&
+                    log_selection_range(sel_lo, sel_hi))
+                    log_copy(sel_lo, sel_hi, tag_vehicles);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                    g_log_sel_anchor = g_log_sel_end = 0;
+            }
+
+            if (ImGui::BeginPopup("##log_ctx")) {
+                const bool sel_now = log_selection_range(sel_lo, sel_hi);
+                if (ImGui::MenuItem("Copy", "Ctrl+C", false, sel_now))
+                    log_copy(sel_lo, sel_hi, tag_vehicles);
+                if (ImGui::MenuItem("Copy all"))
+                    log_copy(0, g_fleet_log.size() - 1, tag_vehicles);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Select all", "Ctrl+A")) {
+                    g_log_sel_anchor = g_fleet_log.front().seq;
+                    g_log_sel_end    = g_fleet_log.back().seq;
+                }
+                ImGui::EndPopup();
+            }
+
+            // Pinned to the newest line while the view is already there — but
+            // not while a drag is scrolling it somewhere else.
+            if (!g_log_sel_dragging && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
                 ImGui::SetScrollHereY(1.0f);
         }
         ImGui::PopStyleVar();
@@ -1084,8 +1404,11 @@ void draw_map_overlay(const VehicleState& vs)
 
     // The log comes down with the ball, so the corner stays a corner block
     // rather than becoming a log with an instrument on top.
-    const float log_h   = log_big ? std::min(360.0f, mh * 0.50f)
-                                  : std::min(150.0f, mh * 0.25f);
+    //
+    // Half again as tall as it first was: wrapped, one message can take two or
+    // three lines, and at the old height that left only a handful on screen.
+    const float log_h   = log_big ? std::min(540.0f, mh * 0.75f)
+                                  : std::min(225.0f, mh * 0.375f);
     const float h       = std::min(mh - MARGIN * 2.0f, hud_h + log_h + PAD * 2.0f);
 
     const ImVec2 ov_p0 = { mx + mw - w - MARGIN, my + MARGIN };
@@ -1148,7 +1471,7 @@ void draw_map_overlay(const VehicleState& vs)
             char log_meta[24];
             snprintf(log_meta, sizeof(log_meta), "%d", (int)g_fleet_log.size());
             ui_panel_header("EVENT LOG", log_meta);
-            draw_event_log_body(0.45f, /*small_text=*/!log_big);
+            draw_event_log_body(0.45f, /*small_text=*/!log_big, /*wrap=*/true);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();

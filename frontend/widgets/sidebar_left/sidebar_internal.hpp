@@ -30,7 +30,9 @@ void draw_tab_connection(MavlinkSender* sender,
                          ConnectionRequest* conn_out,
                          LinkStatus link_status,
                          AppSettings* settings,
-                         const std::vector<LinkInfo>& links);
+                         const std::vector<LinkInfo>& links,
+                         const std::vector<VehicleChip>& vehicles,
+                         VehicleId active_vehicle);
 
 void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs);
 

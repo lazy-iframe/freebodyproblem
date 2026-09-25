@@ -17,6 +17,7 @@
 
 
 #include "ui_kit.hpp"
+#include "../../backend/vehicle.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -466,4 +467,87 @@ void ui_progress_bar(const char* text, float frac, float height)
     // Empty overlay, not nullptr: nullptr makes ImGui draw its own "%.0f%%"
     // inside the bar, which is the clipped text this widget exists to avoid.
     ImGui::ProgressBar(frac, { -1.0f, height }, "");
+}
+
+// ── Vehicle rows ─────────────────────────────────────────────────────────────
+
+float ui_vehicle_row_height()
+{
+    return ImGui::GetTextLineHeight() * 2.0f + 4.0f;
+}
+
+// One state, three ways of saying it: the row's word, the box's short caption,
+// and the colour both share — armed is the one worth catching the eye.
+struct VehicleStateView { const char* word; const char* caption; ImVec4 col; };
+
+static VehicleStateView vehicle_state_view(const VehicleChip& v)
+{
+    if (v.stale)          return { "NO SIGNAL",    "LOST",  g_theme.col_error   };
+    if (v.armed)          return { "ARMED",        "ARMED", g_theme.col_warning };
+    if (v.has_heartbeat)  return { "idle",         "IDLE",  g_theme.col_log     };
+    return                       { "no heartbeat", "WAIT",  g_theme.col_log     };
+}
+
+void ui_vehicle_row(const VehicleChip& v, bool is_active, ImVec2 rmin, ImVec2 rmax,
+                    bool show_state)
+{
+    const float line_h = ImGui::GetTextLineHeight();
+    ImDrawList* dl     = ImGui::GetWindowDrawList();
+
+    // A long serial path or host:port runs past a narrow row; clipped here so
+    // it stops at the row's edge instead of running under the buttons beside it.
+    dl->PushClipRect(rmin, rmax, true);
+
+    // Led by the GCS's own number for this vehicle, the same "(2)" its symbol
+    // carries on the map — which is what makes two rows reading SYS1 tellable
+    // apart at a glance, rather than only by the link name on the line below.
+    char row[48];
+    snprintf(row, sizeof(row), "(%u) SYS%d\xc2\xb7%d",
+             (unsigned)v.number, (int)v.id.sysid, (int)v.compid);
+    dl->AddText({ rmin.x + 4.0f, rmin.y + 1.0f },
+                is_active ? ui_col_accent() : ui_col(g_theme.col_text_on_dark),
+                row);
+
+    if (show_state) {
+        const VehicleStateView s = vehicle_state_view(v);
+        const float sw = ImGui::CalcTextSize(s.word).x;
+        dl->AddText({ rmax.x - sw - 4.0f, rmin.y + 1.0f }, ui_col(s.col), s.word);
+    }
+
+    dl->AddText({ rmin.x + 4.0f, rmin.y + line_h + 3.0f }, ui_col_label(), v.link_name);
+    dl->PopClipRect();
+}
+
+float ui_vehicle_box_width(const char* button_caption)
+{
+    ImFont* fu = g_font_ui ? g_font_ui : ImGui::GetFont();
+    const float track = UI_TRACK * 0.6f;   // the buttons' caption tracking
+    float w = ui_tracked_width(fu, UI_SZ_BODY, button_caption, track);
+    for (const char* c : { "LOST", "ARMED", "IDLE", "WAIT" })
+        w = std::max(w, ui_tracked_width(fu, UI_SZ_BODY, c, track));
+    return w + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+}
+
+void ui_vehicle_state_box(const VehicleChip& v, ImVec2 size)
+{
+    const VehicleStateView s = vehicle_state_view(v);
+    ImFont*     fu    = g_font_ui ? g_font_ui : ImGui::GetFont();
+    const float track = UI_TRACK * 0.6f;
+
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1 = { p0.x + size.x, p0.y + size.y };
+    ImGui::Dummy(size);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.word);
+
+    // The buttons' dark well and 1 px seam, with the seam and the caption in
+    // the state's colour — idle stays quiet, armed and lost do not.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool quiet = !v.stale && !v.armed;
+    dl->AddRectFilled(p0, p1, ui_col(g_theme.bg_child_darker));
+    ui_frame(dl, p0, p1, quiet ? ui_col(g_theme.separator, 0.9f) : ui_col(s.col));
+
+    const float tw = ui_tracked_width(fu, UI_SZ_BODY, s.caption, track);
+    ui_tracked_text(dl, fu, UI_SZ_BODY,
+                    { p0.x + (size.x - tw) * 0.5f, p0.y + (size.y - UI_SZ_BODY) * 0.5f - 1.0f },
+                    ui_col(s.col), s.caption, track);
 }
