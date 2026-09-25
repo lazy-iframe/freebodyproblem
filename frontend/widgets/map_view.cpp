@@ -605,36 +605,62 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
         // Tail segment centre → notch
         dl->AddLine(tail_c, notch, ui_col(g_theme.map_vehicle_ring, A), 1.5f);
 
-        // Dotted heading line. For the active aircraft it runs to the edge of
-        // the panel, which is what says where the vehicle is pointed against
+        // Dotted heading line. For the active aircraft it runs the width of the
+        // panel, which is what says where the vehicle is pointed against
         // everything else on the map. The others get a stub: three lines across
         // the whole map is not three times as much information, it is a grid
         // over the imagery.
         constexpr float DOT_LEN  = 5.0f;
         constexpr float DOT_GAP  = 5.0f;
         constexpr float STUB_LEN = 40.0f;
+        constexpr float PERIOD   = DOT_LEN + DOT_GAP;
 
-        float line_dist = STUB_LEN;
-        if (mv.active) {
-            // Distance along (dx, dy) to the panel edge. One axis at a time,
-            // nearest crossing wins; an axis the ray runs parallel to is never
-            // crossed and the other is what bounds it — both cannot be
-            // parallel, the direction being a unit vector.
-            const auto axis_exit = [](float from, float dir,
-                                      float lo, float hi) -> float {
-                if (dir >  1e-6f) return (hi - from) / dir;
-                if (dir < -1e-6f) return (lo - from) / dir;
-                return std::numeric_limits<float>::max();
-            };
-            line_dist = std::max(0.0f, std::min(
-                axis_exit(tip.x, dx, wp.x, wp.x + win_w),
-                axis_exit(tip.y, dy, wp.y, wp.y + win_h)));
+        // The span of the ray that is actually on the panel — where it comes
+        // into view and where it leaves — rather than only how far it is to the
+        // far edge.
+        //
+        // The difference matters when the aircraft is off screen, which happens
+        // the moment there are two vehicles far apart: switch to one while the
+        // map is still over the other, and the tip of this ray is however many
+        // pixels apart those two places are. At zoom 19 that is tens of
+        // millions, and asking only for the exit distance and stepping ten
+        // pixels at a time meant millions of segments per frame for a line with
+        // nothing of it visible. Clipped properly the span is at most the
+        // panel's diagonal, whatever the aircraft is doing.
+        float t_enter = 0.0f;
+        float t_exit  = mv.active ? std::numeric_limits<float>::max() : STUB_LEN;
+        {
+            const float org[2] = { tip.x, tip.y };
+            const float dir[2] = { dx, dy };
+            const float lo [2] = { wp.x, wp.y };
+            const float hi [2] = { wp.x + win_w, wp.y + win_h };
+            for (int ax = 0; ax < 2; ++ax) {
+                if (std::fabs(dir[ax]) < 1e-6f) {
+                    // Parallel to this edge: either always within it or never.
+                    if (org[ax] < lo[ax] || org[ax] > hi[ax]) {
+                        t_exit = t_enter;   // nothing to draw
+                        break;
+                    }
+                    continue;
+                }
+                float ta = (lo[ax] - org[ax]) / dir[ax];
+                float tb = (hi[ax] - org[ax]) / dir[ax];
+                if (ta > tb) { const float tmp = ta; ta = tb; tb = tmp; }
+                if (ta > t_enter) t_enter = ta;
+                if (tb < t_exit)  t_exit  = tb;
+            }
         }
 
-        for (float t = 0.0f; t < line_dist; t += DOT_LEN + DOT_GAP) {
-            const float t1 = std::min(t + DOT_LEN, line_dist);
-            dl->AddLine({ tip.x + dx * t,  tip.y + dy * t  },
-                        { tip.x + dx * t1, tip.y + dy * t1 },
+        // Phase pinned to the ray's own origin rather than to wherever it
+        // enters the panel, so the dashes do not crawl along the line as the
+        // map is panned.
+        for (float t = std::floor(t_enter / PERIOD) * PERIOD;
+             t < t_exit; t += PERIOD) {
+            const float a0 = std::max(t, t_enter);
+            const float a1 = std::min(t + DOT_LEN, t_exit);
+            if (a1 <= a0) continue;
+            dl->AddLine({ tip.x + dx * a0, tip.y + dy * a0 },
+                        { tip.x + dx * a1, tip.y + dy * a1 },
                         ui_col(g_theme.map_vehicle_ring, A), 1.5f);
         }
     } else {
@@ -738,7 +764,7 @@ static void draw_goto_menu(GotoTargetState& go)
         // The vehicle discards a position target it is not in GUIDED for, and
         // says nothing about having done so. Better to refuse here and name the
         // reason than to send one into silence.
-        const bool sendable = go.connected && go.guided;
+        const bool sendable = go.sendable;
 
         constexpr float BW = 150.0f;
         ui_dialog_row(BW);
@@ -754,7 +780,7 @@ static void draw_goto_menu(GotoTargetState& go)
 
         if (!sendable) {
             ImGui::Spacing();
-            ui_dialog_text(go.connected ? "GUIDED MODE REQUIRED" : "NO LINK",
+            ui_dialog_text(go.reason ? go.reason : "UNAVAILABLE",
                            ui_col(g_theme.col_error));
         }
 

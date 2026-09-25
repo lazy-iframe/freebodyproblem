@@ -19,7 +19,11 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ## Features
 
-> Only tested with Ardupilot for now. PX4 support pending.
+> ArduPilot is the primary target. PX4 works for **telemetry and flight modes** —
+> heartbeat, attitude, position, battery, GPS, estimator health, arming and mode
+> switching, verified against PX4 SITL. Mission, parameters, RC configuration and
+> sensor calibration remain ArduPilot-shaped; where a panel cannot work on PX4 it
+> says so rather than failing quietly.
 
 ![screen capture](screens/cap0.png)
 
@@ -73,6 +77,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Auto-discovery**: serial port enumeration with device descriptions
 - **Configurable baud rates**: 9600 to 921600
 - **Automatic telemetry rate configuration**: requests optimal message rates on connect, addressed to each vehicle as it is discovered
+- **The GCS announces itself**: a `HEARTBEAT` per link per second, as MAV_TYPE_GCS. Vehicles count the time since they last heard from a ground station, and PX4 will not arm without one — its prearm check reads *no connection to GCS*. ArduPilot leaves the equivalent failsafe off by default, which is why this was easy to miss
 - **Connection timeout handling**: 10-second connect timeout and a 15-second silence timeout, per link, with clear status indicators
 
 ### Video Streaming
@@ -667,6 +672,7 @@ the serial handle, drains them.
 - **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
 - **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
 - **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each on its own MAVLink TX channel so their sequence counters stay independent
+- **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
 - **accel_calibration.cpp** / **gyro_calibration.cpp** / **mag_calibration.cpp**: the GCS half of each calibration — link-free state machines fed messages and a clock
 - **sensor_inventory.cpp**: compass/accel/gyro devices decoded out of the parameter table (device-ID packing, chip names)
@@ -780,7 +786,7 @@ Example `settings.json`:
 
 - Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
 - Multi-vehicle UI: a way to watch more than one aircraft's telemetry without switching between them
-- PX4 Support
+- PX4: mission, parameters, RC configuration and sensor calibration (telemetry and modes are done)
 - macOS Support
 - Video AI features
 

@@ -231,6 +231,7 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
 
     auto link_start = Clock::now();
     auto last_rx    = Clock::now();
+    auto last_hb_tx = Clock::now() - std::chrono::seconds(1);   // send one at once
     bool had_data   = false;
 
     // Vehicles seen on this link, so the flush below does not walk the whole
@@ -310,6 +311,24 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
                 link.set_status(LinkStatus::Timeout);
                 break;
             }
+        }
+
+        // ── The GCS's own heartbeat, 1 Hz ────────────────────────────────────
+        //
+        // Once per link, not once per vehicle: it says this ground station is
+        // alive on this connection, which is a fact about the link. Queued on
+        // whichever vehicle happens to be first because that is where a peer
+        // address lives — on UDP there is nowhere to send until a vehicle has
+        // told us where it is — and the frame itself is a broadcast that names
+        // no target, so which queue carries it makes no difference on the wire.
+        //
+        // A vehicle that hears none of these considers the ground station gone.
+        // PX4 will not arm in that state: the prearm check says "no connection
+        // to GCS".
+        if (!mine.empty() &&
+            Clock::now() - last_hb_tx >= std::chrono::seconds(1)) {
+            last_hb_tx = Clock::now();
+            mine.front()->sender().send_heartbeat();
         }
 
         // Drain what the vehicles queued. The transport handle belongs to this

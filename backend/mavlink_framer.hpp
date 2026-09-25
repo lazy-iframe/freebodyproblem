@@ -57,7 +57,23 @@ public:
                 cb(static_cast<const mavlink_message_t&>(msg));
             } else if (result == MAVLINK_FRAMING_BAD_CRC ||
                        result == MAVLINK_FRAMING_BAD_SIGNATURE) {
-                ++parse_errors_;
+                // A frame carrying a message this dialect does not define
+                // fails its CRC for a reason that is not corruption: the check
+                // is seeded with a per-message constant, and there is none for
+                // a message we have never heard of. Counting those as link
+                // errors makes the error counter measure our own vocabulary
+                // rather than the quality of the wire — and PX4 sends two such
+                // messages continuously (GNSS_INTEGRITY #441 and
+                // ESTIMATOR_SENSOR_FUSION_STATUS #514, both development-dialect
+                // and neither in ardupilotmega), so the count climbs forever on
+                // a link that is in fact perfect.
+                //
+                // The id is readable either way: it comes out of the header,
+                // which is parsed before the CRC is checked.
+                if (mavlink_get_msg_entry(msg.msgid) == nullptr)
+                    ++unknown_msgs_;
+                else
+                    ++parse_errors_;
             }
         }
 
@@ -66,7 +82,14 @@ public:
 
     uint64_t total_bytes()    const { return total_bytes_;    }
     uint64_t total_messages() const { return total_messages_; }
+
+    // Frames that failed their CRC and carried a message this build knows.
+    // This is the one that means something is wrong with the link.
     uint64_t parse_errors()   const { return parse_errors_;   }
+
+    // Well-formed frames skipped for carrying a message this dialect does not
+    // define. Not an error — nothing is lost that this GCS could have used.
+    uint64_t unknown_msgs()   const { return unknown_msgs_;   }
 
 private:
     mavlink_message_t rxmsg_{};
@@ -75,4 +98,5 @@ private:
     uint64_t total_bytes_    = 0;
     uint64_t total_messages_ = 0;
     uint64_t parse_errors_   = 0;
+    uint64_t unknown_msgs_   = 0;
 };

@@ -199,13 +199,29 @@ struct VehicleState {
     uint16_t load_pct         = 0;
     bool    has_sys_status    = false;
 
-    // EKF_STATUS_REPORT (#193)
+    // Estimator health, from whichever message the stack reports it in:
+    // ArduPilot's own EKF_STATUS_REPORT (#193, ardupilotmega.xml) or the
+    // portable ESTIMATOR_STATUS (#230, common.xml) that PX4 sends.
+    //
+    // The six fields line up one-to-one, but they are not the same quantity —
+    // ArduPilot reports normalised variances, PX4 innovation test ratios — so
+    // the panel drawing them has to say which. See FirmwareProfile.
     float    ekf_velocity_variance    = 0;
     float    ekf_pos_horiz_variance   = 0;
     float    ekf_pos_vert_variance    = 0;
     float    ekf_compass_variance     = 0;
     float    ekf_terrain_alt_variance = 0;
     float    ekf_airspeed_variance    = 0;
+
+    // Which of the two filled the fields above: 0 none, 193, or 230. Not
+    // decoration — it is the only thing that says what they mean, and it is
+    // what keeps a vehicle sending both from flickering between two scales.
+    uint32_t ekf_source_msgid         = 0;
+
+    // The bitmask that came with it, and the one field the two messages do NOT
+    // agree on: EKF_STATUS_FLAGS when ekf_source_msgid is 193,
+    // ESTIMATOR_STATUS_FLAGS when it is 230. Nothing reads this today; nothing
+    // may start to without checking the source first.
     uint16_t ekf_flags                = 0;
     bool     has_ekf_status           = false;
 

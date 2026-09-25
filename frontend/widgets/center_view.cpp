@@ -25,6 +25,7 @@
 #include "video_player.hpp"
 #include "../app_log.hpp"
 #include "../../backend/mavlink_sender.hpp"
+#include "../../backend/firmware_profile.hpp"
 #include "../../plugins/plugin_api.hpp"   // gcs_camera_* are implemented here
 #include "imgui.h"
 #include "stb_image_write.h"
@@ -237,43 +238,15 @@ static void draw_video_picker(const VehicleState& vs, MavlinkSender* sender,
 static VehicleUiState<GotoTargetState> s_goto_state;
 static GotoTargetState& goto_state() { return *s_goto_state; }
 
-// Does the vehicle accept a position target right now?
+// Can this vehicle be given a position target right now, and if not, why?
 //
-// ArduPilot honours SET_POSITION_TARGET_GLOBAL_INT in GUIDED and discards it
-// everywhere else, silently. The vehicle's own AVAILABLE_MODES list is the
-// authority on which custom_mode that is — the numbering is per-frame, a
-// Plane's 4 is not a Copter's 4 — and the table below is the fallback for
-// stacks that never publish the list.
-static bool vehicle_in_guided(const VehicleState& vs)
+// Both halves of that answer come from the vehicle's firmware profile: which
+// mode accepts SET_POSITION_TARGET_GLOBAL_INT is a per-stack fact, and on PX4
+// the honest answer is "none of them, not the way this GCS sends it".
+static Capability goto_capability(const VehicleState& vs)
 {
-    if (!vs.has_heartbeat) return false;
-
-    for (const FlightModeInfo& m : vs.available_modes) {
-        if (m.custom_mode != vs.custom_mode) continue;
-        std::string n;
-        n.reserve(m.name.size());
-        for (char c : m.name)
-            n.push_back((char)std::tolower((unsigned char)c));
-        // "Guided" and ArduPilot's "Guided NoGPS", which takes attitude
-        // targets rather than positions, are two different modes; only the
-        // plain one is matched.
-        return n == "guided";
-    }
-
-    switch (vs.type) {
-        case MAV_TYPE_FIXED_WING:
-        case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
-        case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
-        case MAV_TYPE_VTOL_TILTROTOR:
-        case MAV_TYPE_VTOL_FIXEDROTOR:
-        case MAV_TYPE_VTOL_TAILSITTER:
-        case MAV_TYPE_VTOL_TILTWING:
-        case MAV_TYPE_GROUND_ROVER:
-        case MAV_TYPE_SURFACE_BOAT:
-            return vs.custom_mode == 15;   // Plane / Rover GUIDED
-        default:
-            return vs.custom_mode == 4;    // Copter / Sub GUIDED
-    }
+    if (!vs.has_heartbeat) return { false, "NO LINK" };
+    return firmware_profile(vs).position_target(vs);
 }
 
 // ── draw_center_view ──────────────────────────────────────────────────────────
@@ -609,8 +582,10 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             : (vs.has_mission           ? &vs.mission : nullptr);
 
         GotoTargetState& s_goto = goto_state();
+        const Capability goto_cap = goto_capability(vs);
         s_goto.connected     = vs.has_heartbeat;
-        s_goto.guided        = vehicle_in_guided(vs);
+        s_goto.sendable      = goto_cap.supported;
+        s_goto.reason        = goto_cap.reason;
         s_goto.current_alt_m = vs.alt_rel;
 
         s_map_x = band_x;
@@ -631,10 +606,9 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
         // a vehicle that will drop it.
         if (s_goto.requested) {
             s_goto.requested = false;
-            if (sender && s_goto.connected && s_goto.guided) {
-                sender->goto_position(vs.sysid, vs.compid,
-                                      s_goto.req_lat, s_goto.req_lon,
-                                      s_goto.req_alt_m);
+            if (sender && s_goto.sendable) {
+                send_goto(*sender, vs.sysid, vs.compid, firmware_profile(vs),
+                          s_goto.req_lat, s_goto.req_lon, s_goto.req_alt_m);
                 s_goto.has_target   = true;
                 s_goto.target_lat   = s_goto.req_lat;
                 s_goto.target_lon   = s_goto.req_lon;

@@ -129,6 +129,20 @@ using Clock = std::chrono::steady_clock;
 
 // ── High-level command methods ────────────────────────────────────────────────
 
+void MavlinkSender::send_heartbeat()
+{
+    mavlink_message_t msg;
+    PackLock _pl(shared_chan_);
+    mavlink_msg_heartbeat_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                    MAV_TYPE_GCS, MAV_AUTOPILOT_INVALID,
+                                    0 /* base_mode */, 0 /* custom_mode */,
+                                    MAV_STATE_ACTIVE);
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
+}
+
 void MavlinkSender::arm(uint8_t tsys, uint8_t tcomp)
 {
     // MAV_CMD_COMPONENT_ARM_DISARM (400), param1=1 (arm)
@@ -151,17 +165,49 @@ void MavlinkSender::takeoff(uint8_t tsys, uint8_t tcomp, float altitude_m)
 
 void MavlinkSender::set_mode(uint8_t tsys, uint8_t tcomp, uint32_t custom_mode)
 {
-    // MAV_CMD_DO_SET_MODE (176)
     // param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (1)
-    // param2 = custom_mode enum value (autopilot-specific)
-    enqueue_command_long(tsys, tcomp, 176,
-                         1.f, static_cast<float>(custom_mode));
+    // param2 = custom_mode enum value, param3 unused — the ArduPilot shape.
+    set_mode_raw(tsys, tcomp, 1.f, static_cast<float>(custom_mode), 0.f);
+}
+
+void MavlinkSender::set_mode_raw(uint8_t tsys, uint8_t tcomp,
+                                 float base_mode, float custom_mode,
+                                 float custom_submode)
+{
+    // MAV_CMD_DO_SET_MODE (176)
+    enqueue_command_long(tsys, tcomp, 176, base_mode, custom_mode, custom_submode);
 }
 
 void MavlinkSender::return_to_launch(uint8_t tsys, uint8_t tcomp)
 {
     // MAV_CMD_NAV_RETURN_TO_LAUNCH (20)
     enqueue_command_long(tsys, tcomp, 20);
+}
+
+void MavlinkSender::reposition(uint8_t tsys, uint8_t tcomp,
+                               double lat_deg, double lon_deg, float altitude_m)
+{
+    mavlink_message_t msg;
+    PackLock _pl(shared_chan_);
+    mavlink_msg_command_int_pack_chan(
+        GCS_SYSID, GCS_COMPID, chan_, &msg,
+        tsys, tcomp,
+        MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+        MAV_CMD_DO_REPOSITION,
+        0,          // current
+        0,          // autocontinue
+        -1.0f,      // ground speed: -1 leaves the vehicle's default alone
+        0.0f,       // bitmask
+        0.0f,       // loiter radius: 0 is the vehicle's own
+        NAN,        // yaw: NaN holds the current heading
+        (int32_t)std::lround(lat_deg * 1e7),
+        (int32_t)std::lround(lon_deg * 1e7),
+        altitude_m);
+
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
 }
 
 void MavlinkSender::goto_position(uint8_t tsys, uint8_t tcomp,
