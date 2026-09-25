@@ -8,10 +8,63 @@
   <a href="https://github.com/lazy-iframe/freebodyproblem/actions/workflows/cd.yml"><img src="https://img.shields.io/github/actions/workflow/status/lazy-iframe/freebodyproblem/cd.yml?style=flat-square&label=build&labelColor=36441E" alt="build"></a>
   <a href="https://github.com/lazy-iframe/freebodyproblem/releases/latest"><img src="https://img.shields.io/github/v/release/lazy-iframe/freebodyproblem?style=flat-square&label=release&labelColor=36441E&color=ECB94E" alt="release"></a>
   <a href="https://github.com/lazy-iframe/freebodyproblem/releases"><img src="https://img.shields.io/badge/changelog-release%20notes-6E7B55?style=flat-square&labelColor=36441E" alt="changelog"></a>
-  <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a><br><br><br>
+  <a href="https://github.com/lazy-iframe/freebodyproblem#readme"><img src="https://img.shields.io/github/v/tag/lazy-iframe/freebodyproblem?style=flat-square&label=docs&labelColor=36441E&color=97EA89" alt="docs"></a>
+</p>
+
+<p align="center">
+  <a href="#features"><b>Features</b></a> &nbsp;·&nbsp;
+  <a href="#install"><b>Install</b></a> &nbsp;·&nbsp;
+  <a href="#building-from-source"><b>Build</b></a> &nbsp;·&nbsp;
+  <a href="#usage"><b>Usage</b></a> &nbsp;·&nbsp;
+  <a href="#architecture"><b>Architecture</b></a> &nbsp;·&nbsp;
+  <a href="plugins/README.md"><b>Plugins</b></a><br><br>
 </p>
 
 A modern, fast ground control station for ArduPilot and PX4 autopilots. Several links and several vehicles at once, each parsed on its own thread. Built for operators who know what they're doing. The development is in its early stages.
+
+<p align="center">
+  <a href="screens/cap0.png"><img src="screens/cap0.png" alt="Free Body Problem with a vehicle connected: map, attitude, telemetry tiles and event log" width="100%"></a>
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="#the-map"><img src="screens/cap2.png" alt="Fullscreen map with the attitude and event-log overlay" width="100%"></a><br>
+      <sub><b>MAP FULL</b> — the map takes the right sidebar; attitude and the event log float in its corner</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="#video-streaming-1"><img src="screens/cap1.png" alt="Fullscreen video feed below the topbar" width="100%"></a><br>
+      <sub><b>VIDEO FULL</b> — the feed takes the whole window below the topbar</sub>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center" width="20%">
+      <a href="#flight-controls"><img src="screens/flight.png" alt="FLIGHT tab" width="100%"></a><br>
+      <sub><b>FLIGHT</b></sub>
+    </td>
+    <td align="center" width="20%">
+      <a href="#parameter-workflow"><img src="screens/params.png" alt="PARAMS tab" width="100%"></a><br>
+      <sub><b>PARAMS</b></sub>
+    </td>
+    <td align="center" width="20%">
+      <a href="#radio-calibration"><img src="screens/radio.png" alt="RADIO tab" width="100%"></a><br>
+      <sub><b>RADIO</b></sub>
+    </td>
+    <td align="center" width="20%">
+      <a href="#sensor-calibration-1"><img src="screens/sensor_calibration.png" alt="SENSORS tab" width="100%"></a><br>
+      <sub><b>SENSORS</b></sub>
+    </td>
+    <td align="center" width="20%">
+      <a href="#mavlink-inspector"><img src="screens/mavlink.png" alt="MAVLINK tab" width="100%"></a><br>
+      <sub><b>MAVLINK</b></sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center"><sub>Click a screenshot to jump to how that part of the app is used.</sub></p>
 
 ## Philosophy
 
@@ -24,8 +77,6 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 > switching, verified against PX4 SITL. Mission, parameters, RC configuration and
 > sensor calibration remain ArduPilot-shaped; where a panel cannot work on PX4 it
 > says so rather than failing quietly.
-
-![screen capture](screens/cap0.png)
 
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
@@ -85,8 +136,6 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Zero-copy frame pipeline**: efficient RGB decoding for real-time display
 - **Configurable stream URLs**: support for standard video sources
 - **Fullscreen feed**: a second press of the video mode button (relabelled **VIDEO FULL**) hands the whole window below the topbar to the picture; ESC restores
-
-![Video Full](screens/cap1.png)
 
 ### Auxiliary Functions
 - **Servo/Aux control**: configure and trigger auxiliary functions
@@ -395,7 +444,9 @@ at, and only the selected vehicle makes sound.
 5. **SERVO** drives a servo output directly by PWM; **AUX** triggers any
    auxiliary function the connected firmware implements
 
-![Flight tab](screens/flight.png)
+<p align="center">
+  <a href="screens/flight.png"><img src="screens/flight.png" alt="FLIGHT tab" width="260"></a>
+</p>
 
 ### Parameter Workflow
 1. Navigate to **PARAMETERS** tab
@@ -427,7 +478,9 @@ SAVE asks before overwriting; LOAD does not, having nothing to overwrite.
 hundreds of edits behind it and there is no undo. The per-row **×** does not:
 it can only lose one value, and the value it restores is on the vehicle.
 
-![Parameters tab](screens/params.png)
+<p align="center">
+  <a href="screens/params.png"><img src="screens/params.png" alt="PARAMS tab" width="260"></a>
+</p>
 
 #### Parameter files
 
@@ -510,10 +563,6 @@ read the map past. Click either half and it grows to the size it had in the
 sidebar, text and all, until you click somewhere else; it always comes back
 small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
 
-![Map Full](screens/cap2.png)
-
-
-
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
    disabled until the vehicle's current values are known, and a red banner says so
@@ -540,7 +589,9 @@ Below the calibration: **BINDING** binds each axis to a channel (press
 mode list the vehicle published, and binds an aux function to a channel. Each
 row writes on its own.
 
-![Radio tab](screens/radio.png)
+<p align="center">
+  <a href="screens/radio.png"><img src="screens/radio.png" alt="RADIO tab" width="260"></a>
+</p>
 
 ### Sensor Calibration
 1. Fetch parameters first, as above — the device lists are read from them
@@ -568,7 +619,9 @@ busy. A run survives a tab switch and a vehicle switch — it belongs to the
 aircraft it was started on and keeps advancing while you look elsewhere — and is
 abandoned with a log line if the link drops.
 
-![Sensors tab](screens/sensor_calibration.png)
+<p align="center">
+  <a href="screens/sensor_calibration.png"><img src="screens/sensor_calibration.png" alt="SENSORS tab" width="260"></a>
+</p>
 
 ### MAVLink Inspector
 1. Navigate to **MAVLINK** tab
@@ -579,7 +632,9 @@ abandoned with a log line if the link drops.
    - Set rate in Hz (e.g., `10`)
    - Click **SEND** to apply
 
-![MAVLink tab](screens/mavlink.png)
+<p align="center">
+  <a href="screens/mavlink.png"><img src="screens/mavlink.png" alt="MAVLINK tab" width="260"></a>
+</p>
 
 ### Video Streaming
 1. Navigate to the **VIDEO** area
