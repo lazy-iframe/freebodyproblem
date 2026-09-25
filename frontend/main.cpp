@@ -387,13 +387,16 @@ int main()
     // protocol for a client to hand over icon pixels at all: there the
     // compositor shows whatever the app id resolves to and nothing else, so an
     // app id that matches StartupWMClass in the desktop entry is the icon.
-#ifdef GLFW_WAYLAND_APP_ID
-    glfwWindowHintString(GLFW_WAYLAND_APP_ID,   "freebodyproblem");
-#endif
-#ifdef GLFW_X11_CLASS_NAME
+    //
+    // Unguarded on purpose. These used to sit behind #ifdefs, which meant a
+    // build against GLFW 3.3 dropped them silently and shipped a window the
+    // compositor could not identify — the failure is invisible at compile time
+    // and only shows up as a missing icon on someone else's desktop. The
+    // CMakeLists now requires 3.4, so if either of these ever stops existing
+    // the build should fail and say so.
+    glfwWindowHintString(GLFW_WAYLAND_APP_ID,    "freebodyproblem");
     glfwWindowHintString(GLFW_X11_CLASS_NAME,    "freebodyproblem");
     glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "freebodyproblem");
-#endif
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "freebodyproblem", nullptr, nullptr);
     if (!window) {

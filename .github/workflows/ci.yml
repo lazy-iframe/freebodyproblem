@@ -44,6 +44,17 @@ jobs:
 
       # dpkg-dev provides dpkg-shlibdeps, which CPACK_DEBIAN_PACKAGE_SHLIBDEPS
       # uses to derive the package's Depends from the linked ELF objects.
+      #
+      # libglfw3-dev is kept for the case where the runner's GLFW is new enough
+      # to be used directly, but CMake requires 3.4 and the runner has 3.3, so
+      # in practice GLFW is built from source here. That build needs the X11
+      # development packages below and libwayland-dev, which also pulls in
+      # libwayland-bin for wayland-scanner. Without it GLFW's configure stops
+      # at "Failed to find wayland-scanner".
+      #
+      # Dropping Wayland support instead is not an option: GLFW_WAYLAND_APP_ID
+      # is how the window tells a Wayland desktop which .desktop entry it
+      # belongs to, and so which icon to show.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -52,7 +63,8 @@ jobs:
             libglfw3-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libssl-dev \
-            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
+            libwayland-dev
 
       - name: Configure
         run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}

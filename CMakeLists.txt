@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.5.3 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.5.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -144,7 +144,24 @@ endif()
 
 # ── Frontend (Dear ImGui + GLFW + OpenGL) ─────────────────────────────────────
 
-find_package(glfw3 QUIET)
+# 3.4 is a hard floor, not a preference. GLFW_WAYLAND_APP_ID arrived in 3.4,
+# and on Wayland it is the only way a window can say which application it
+# belongs to — there is no protocol for a client to hand the compositor icon
+# pixels, so the app id is what resolves to the installed .desktop entry and
+# therefore to the icon. Built against 3.3 the hint does not exist, the code
+# guarding it compiles to nothing, and the result is a window the desktop
+# reports as having no wmclass and cannot track: no icon, "unknown" in the
+# dash. That is what shipped in 0.4.2 through 0.5.3, because CI installs
+# libglfw3-dev and the runner's is 3.3.
+#
+# Asking for the version here means an older system GLFW is declined and the
+# vendored 3.4 below is built instead, rather than quietly losing the feature.
+find_package(glfw3 3.4 QUIET)
+if(glfw3_FOUND)
+    message(STATUS "GLFW: using system installation (${glfw3_VERSION})")
+else()
+    message(STATUS "GLFW: system copy missing or older than 3.4 - building 3.4")
+endif()
 if(NOT glfw3_FOUND)
     include(FetchContent)
     FetchContent_Declare(
