@@ -1343,7 +1343,7 @@ void draw_map_overlay(const VehicleState& vs)
     constexpr float PAD    = 8.0f;
 
     // How big each half is standing. Small is the resting state — the corner is
-    // a glance, not a panel — and a click on a half toggles that half between
+    // a glance, not a panel — and a double click on a half toggles that half between
     // it and the size it had in the sidebar.
     //
     // Each is its own switch: a click on one says nothing about the other, and
@@ -1483,9 +1483,11 @@ void draw_map_overlay(const VehicleState& vs)
 
     // ── Sizing the halves ────────────────────────────────────────────────────
     //
-    // Only a click on the block resizes it, and only the half that was clicked.
-    // A click anywhere else — the map, a sidebar, another panel — leaves both
-    // exactly as they stand.
+    // A double click on the block resizes it, and only the half that was
+    // clicked. A click anywhere else — the map, a sidebar, another panel —
+    // leaves both exactly as they stand. Double rather than single, as on the
+    // SWARM cards: a single click in the log is how a line is selected, and
+    // it must not also throw the log to another size.
     //
     // Tested against the rectangle just drawn rather than through an ImGui
     // item: the log is a scrolling child with a scrollbar of its own, and an
@@ -1493,17 +1495,78 @@ void draw_map_overlay(const VehicleState& vs)
     // Reading the mouse position instead leaves both halves fully usable while
     // expanded, and costs a frame of latency nobody can see.
     //
-    // Skipped whenever a widget took the press. Nothing in here is interactive
-    // except that scrollbar, so this is what keeps a drag on it from toggling
-    // the very log being scrolled — the one gesture that lands inside a half
-    // without meaning "resize it".
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemActive()) {
+    // Skipped whenever a widget took the press — the log's scrollbar, the one
+    // other thing in here that answers the mouse.
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemActive()) {
         const ImVec2 m = ImGui::GetMousePos();
         const bool inside = m.x >= ov_p0.x && m.x <= ov_p0.x + w &&
                             m.y >= ov_p0.y && m.y <= ov_p0.y + h;
         if (inside) {
             if (m.y < ov_p0.y + PAD + hud_h) s_hud_big = !s_hud_big;
             else                             s_log_big = !s_log_big;
+
+            // The press that resized the block also started a selection drag
+            // in the log. With the button still down, the lines move under the
+            // pointer as the block changes size, and the drag would sweep them
+            // all into the selection. The click has picked its line; the drag
+            // ends here.
+            g_log_sel_dragging = false;
         }
     }
+}
+
+// ── Pieces the SWARM view borrows ─────────────────────────────────────────────
+//
+// The swarm screen shows the same instruments and the same log as the sidebar,
+// in its own arrangement. Wrappers rather than copies, so the two cannot drift.
+
+void draw_attitude_ball(const VehicleState& vs, float size, float text_size)
+{
+    if (vs.has_attitude) {
+        draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
+                                vs.has_vfr ? (int)vs.throttle : -1,
+                                vs.has_vfr, size, text_size);
+    } else {
+        // An outline where the ball would be, so a vehicle not yet sending
+        // attitude leaves its card the same shape as the rest.
+        ImDrawList*  dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 c  = { p0.x + size * 0.5f, p0.y + size * 0.5f };
+        dl->AddCircle(c, size * 0.45f, ui_col(g_theme.separator), 0, 1.0f);
+        ImFont*     fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+        const char* t  = "NO ATT";
+        const float tw = ui_tracked_width(fm, UI_SZ_MICRO, t);
+        ui_tracked_text(dl, fm, UI_SZ_MICRO, { c.x - tw * 0.5f, c.y - UI_SZ_MICRO * 0.5f },
+                        ui_col(g_theme.col_no_link_muted), t);
+    }
+    ImGui::Dummy({ size, size });
+}
+
+void draw_vfr_readouts(const VehicleState& vs, float strip_h, float value_size)
+{
+    draw_vfr_strip(vs, strip_h, value_size);
+}
+
+float telemetry_panel_height()
+{
+    return 3.0f * GRID_CELL_H + UI_HEADER_H + 14.0f;
+}
+
+void draw_telemetry_panel(const VehicleState& vs, MavlinkSender* sender,
+                          AppSettings* settings, const char* meta)
+{
+    if (!s_cells_loaded) {
+        if (settings) cells_load(*settings);
+        s_cells_loaded = true;
+    }
+    ui_panel_header("TELEMETRY", meta ? meta : "CLICK A TILE TO ASSIGN");
+    draw_data_grid(&vs, sender, settings);
+}
+
+void draw_event_log_panel(bool wrap)
+{
+    char log_meta[24];
+    snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)g_fleet_log.size());
+    ui_panel_header("EVENT LOG", log_meta);
+    draw_event_log_body(1.0f, /*small_text=*/false, wrap);
 }

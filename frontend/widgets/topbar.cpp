@@ -52,11 +52,128 @@ static constexpr float VALUE_Y     = 28.0f;   // baseline row for the value
 // opposite of what the caption implies. See widgets/vehicle_ui_state.hpp.
 static VehicleUiState<bool> s_interlock_state;
 
+bool interlock_latched(VehicleId id)
+{
+    const VehicleId prev = ui_bound_vehicle();
+    ui_bind_vehicle(id);
+    const bool on = *s_interlock_state;
+    ui_bind_vehicle(prev);
+    return on;
+}
+
+// " #1 #3 #4", for batch-command confirmations and the log.
+static std::string target_list(const std::vector<const FlightTarget*>& ts)
+{
+    std::string out;
+    for (const FlightTarget* t : ts) {
+        char b[16];
+        snprintf(b, sizeof(b), " #%u", (unsigned)t->number);
+        out += b;
+    }
+    return out;
+}
+
+// SWARM: INTERLOCK and ARM as two pairs of plain buttons acting on every
+// checked vehicle. There is no single state to annunciate across a fleet —
+// each card says whether its own vehicle is armed and latched — so each block
+// splits into the two things that can be asked of the whole set.
+static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
+                                       float intlk_x0, float arm_x0, float btn_y,
+                                       float intlk_w, float arm_w, float btn_h,
+                                       const std::vector<FlightTarget>& targets)
+{
+    std::vector<const FlightTarget*> live;
+    for (const FlightTarget& t : targets)
+        if (t.vs && t.vs->has_heartbeat) live.push_back(&t);
+    const bool any = !live.empty();
+
+    constexpr float GAP     = 4.0f;
+    constexpr float TEXT_SZ = 17.0f;
+
+    // One half of a block: an outline that fills while hovered, like the
+    // single-vehicle blocks do.
+    auto half = [&](const char* id, float x, float w, const char* text, ImVec4 col) {
+        ImGui::SetCursorPos({ x, btn_y });
+        ImGui::InvisibleButton(id, { w, btn_h });
+        const bool hov = ImGui::IsItemHovered();
+        ui_status_block(dl, { wp.x + x, wp.y + btn_y }, { wp.x + x + w, wp.y + btn_y + btn_h },
+                        text, any ? col : g_theme.col_no_link, !hov || !any, TEXT_SZ);
+        if (hov && !any)
+            ImGui::SetTooltip("No vehicles checked");
+        return ImGui::IsItemClicked() && any;
+    };
+
+    const float iw = (intlk_w - GAP) * 0.5f;
+    const float aw = (arm_w   - GAP) * 0.5f;
+
+    // ── INTERLOCK ─────────────────────────────────────────────────────────────
+    // Motor interlock is an ArduPilot auxiliary function; PX4 vehicles in the
+    // set are skipped, and the log says which.
+    for (int high = 1; high >= 0; --high) {
+        const float x = high ? intlk_x0 : intlk_x0 + iw + GAP;
+        if (!half(high ? "##sw_ilk_hi" : "##sw_ilk_lo", x, iw,
+                  high ? "ILK HIGH" : "ILK LOW",
+                  high ? g_theme.col_warning : g_theme.col_no_link_muted))
+            continue;
+
+        std::vector<const FlightTarget*> sent, skipped;
+        const VehicleId prev = ui_bound_vehicle();
+        for (const FlightTarget* t : live) {
+            if (!firmware_profile(t->vs->autopilot).aux_functions().supported) {
+                skipped.push_back(t);
+                continue;
+            }
+            t->sender->do_aux_function(t->vs->sysid, t->vs->compid, 32,
+                                       high ? 2 : 0);   // 2=HIGH, 0=LOW
+            ui_bind_vehicle(t->id);
+            *s_interlock_state = (high != 0);
+            sent.push_back(t);
+        }
+        ui_bind_vehicle(prev);
+
+        if (!sent.empty())
+            gcs_log("interlock â %s â%s", high ? "HIGH" : "LOW",
+                    target_list(sent).c_str());
+        if (!skipped.empty())
+            gcs_log("interlock not supported, skipped:%s", target_list(skipped).c_str());
+    }
+
+    // ── ARM / DISARM ──────────────────────────────────────────────────────────
+    if (half("##sw_arm", arm_x0, aw, "ARM", g_theme.col_armed))
+        ImGui::OpenPopup("##confirm_arm_swarm");
+    if (half("##sw_disarm", arm_x0 + aw + GAP, aw, "DISARM", g_theme.accent))
+        ImGui::OpenPopup("##confirm_disarm_swarm");
+
+    // Every checked vehicle named in the question: arming a set is the one
+    // command here where reaching one aircraft too many is not recoverable.
+    const std::string who = target_list(live);
+    char q_arm[160], q_disarm[160];
+    snprintf(q_arm,    sizeof(q_arm),    "Arm%s?",    who.c_str());
+    snprintf(q_disarm, sizeof(q_disarm), "Disarm%s?", who.c_str());
+
+    const float popup_rx = wp.x + arm_x0 + arm_w;
+    const float popup_ty = wp.y + btn_y + btn_h + 4.0f;
+
+    ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always, { 1.0f, 0.0f });
+    if (ui_confirm_popup("##confirm_arm_swarm", "ARM VEHICLES", q_arm,
+                         "CONFIRM ARM", g_theme.btn_arm_base) == UiConfirm::Confirmed) {
+        for (const FlightTarget* t : live) t->sender->arm(t->vs->sysid, t->vs->compid);
+        gcs_log("arm command sent â%s", who.c_str());
+    }
+
+    ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always, { 1.0f, 0.0f });
+    if (ui_confirm_popup("##confirm_disarm_swarm", "DISARM VEHICLES", q_disarm,
+                         "CONFIRM DISARM", g_theme.btn_disarm_base) == UiConfirm::Confirmed) {
+        for (const FlightTarget* t : live) t->sender->disarm(t->vs->sysid, t->vs->compid);
+        gcs_log("disarm command sent â%s", who.c_str());
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Resolve the current custom_mode to a display name, preferring the vehicle's
 // own AVAILABLE_MODES list over the Copter-only table above.
-static std::string mode_display_name(const VehicleState& vs)
+std::string mode_display_name(const VehicleState& vs)
 {
     for (const FlightModeInfo& m : vs.available_modes) {
         if (m.custom_mode == vs.custom_mode) {
@@ -93,7 +210,8 @@ void draw_topbar(const VehicleState& vs,
                  bool* close_requested,
                  const std::vector<VehicleChip>& vehicles,
                  VehicleId  active,
-                 VehicleId* selected_out)
+                 VehicleId* selected_out,
+                 const std::vector<FlightTarget>* swarm_targets)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -434,7 +552,13 @@ void draw_topbar(const VehicleState& vs,
         }
 
         // ── ARM / DISARM / INTERLOCK ─────────────────────────────────────────
-        if (sender) {
+        if (swarm_targets) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
+            draw_swarm_command_buttons(dl, wp, intlk_x0, arm_x0, btn_y,
+                                       BTN_W_INTLK, BTN_W_ARM, BTN_H, *swarm_targets);
+            ImGui::PopStyleVar(2);
+        } else if (sender) {
             const bool    connected = vs.has_heartbeat;
             const uint8_t tsys     = connected ? vs.sysid  : 1;
             const uint8_t tcomp    = connected ? vs.compid : 1;

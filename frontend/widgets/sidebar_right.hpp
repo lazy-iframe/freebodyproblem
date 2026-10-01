@@ -54,3 +54,22 @@ void draw_sidebar_right(const VehicleState& vs,
 // Call it after draw_center_view() — later submission is what puts it over the
 // map — and only while center_view_map_fullscreen() is true.
 void draw_map_overlay(const VehicleState& vs);
+
+// ── Shared with the SWARM view ────────────────────────────────────────────────
+
+// The attitude ball at the cursor, `size` square; `text_size` 0 keeps the
+// current font's size for its lettering. Consumes the square either way, and
+// draws an empty outline for a vehicle not yet sending attitude.
+void draw_attitude_ball(const VehicleState& vs, float size, float text_size = 0.0f);
+
+// Ground speed, heading and climb on one row, `strip_h` tall.
+void draw_vfr_readouts(const VehicleState& vs, float strip_h, float value_size);
+
+// The configurable 3x3 telemetry grid, with its header. `meta` replaces the
+// header's right-hand caption when given.
+float telemetry_panel_height();
+void  draw_telemetry_panel(const VehicleState& vs, MavlinkSender* sender,
+                           AppSettings* settings, const char* meta = nullptr);
+
+// The fleet event log, with its header, filling the space left.
+void draw_event_log_panel(bool wrap);

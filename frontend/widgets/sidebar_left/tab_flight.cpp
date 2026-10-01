@@ -25,6 +25,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -33,7 +34,7 @@
 
 // ── EKF variance bars ─────────────────────────────────────────────────────────
 
-static void draw_ekf_bars(const VehicleState& vs)
+void draw_ekf_bars(const VehicleState& vs, float bar_h, bool small_labels)
 {
     if (!vs.has_ekf_status) {
         ImGui::TextDisabled("No data");
@@ -54,9 +55,18 @@ static void draw_ekf_bars(const VehicleState& vs)
     ImDrawList*  dl      = ImGui::GetWindowDrawList();
     const float  avail_w = ImGui::GetContentRegionAvail().x;
     const ImVec2 p0      = ImGui::GetCursorScreenPos();
-    const float  fh      = ImGui::GetTextLineHeight();
 
-    constexpr float BAR_H = 56.0f;
+    // The swarm cards draw a row of these a fraction of the sidebar's width,
+    // where body-sized labels would run into each other; the micro face is
+    // what they get there.
+    ImFont* const fnt = (small_labels && g_font_micro) ? g_font_micro : ImGui::GetFont();
+    const float   fsz = small_labels ? UI_SZ_MICRO : ImGui::GetFontSize();
+    const auto text_size = [&](const char* t) {
+        return fnt->CalcTextSizeA(fsz, FLT_MAX, 0.0f, t);
+    };
+    const float fh = fsz;
+
+    const float BAR_H = bar_h;
     constexpr float GAP   = 3.0f;
     const float bar_w = (avail_w - GAP * (N - 1)) / N;
 
@@ -75,12 +85,12 @@ static void draw_ekf_bars(const VehicleState& vs)
 
         if (!estimated) {
             dl->AddRect({x, p0.y}, {x + bar_w, p0.y + BAR_H}, ekf_outline());
-            const ImVec2 dsz = ImGui::CalcTextSize("-");
-            dl->AddText({ x + (bar_w - dsz.x) * 0.5f,
-                          p0.y + (BAR_H - dsz.y) * 0.5f }, ekf_label(), "-");
+            const ImVec2 dsz = text_size("-");
+            dl->AddText(fnt, fsz, { x + (bar_w - dsz.x) * 0.5f,
+                                    p0.y + (BAR_H - dsz.y) * 0.5f }, ekf_label(), "-");
             const char* nlbl = bars[i].label;
-            const ImVec2 ntsz = ImGui::CalcTextSize(nlbl);
-            dl->AddText({x + (bar_w - ntsz.x) * 0.5f, p0.y + BAR_H + 2.0f},
+            const ImVec2 ntsz = text_size(nlbl);
+            dl->AddText(fnt, fsz, {x + (bar_w - ntsz.x) * 0.5f, p0.y + BAR_H + 2.0f},
                         ekf_label(), nlbl);
             continue;
         }
@@ -106,8 +116,8 @@ static void draw_ekf_bars(const VehicleState& vs)
 
         // Centred label below the bar
         const char* lbl = bars[i].label;
-        const ImVec2 tsz = ImGui::CalcTextSize(lbl);
-        dl->AddText(
+        const ImVec2 tsz = text_size(lbl);
+        dl->AddText(fnt, fsz,
             {x + (bar_w - tsz.x) * 0.5f, p0.y + BAR_H + 2.0f},
             ekf_label(), lbl);
     }
@@ -151,26 +161,192 @@ static float s_takeoff_alt_m = 5.0f;
 static constexpr float TAKEOFF_ALT_MIN_M = 0.0f;
 static constexpr float TAKEOFF_ALT_MAX_M = 1000.0f;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Flight section ────────────────────────────────────────────────────────────
+//
+// TAKEOFF and the mode grid, for one vehicle or several. The FLIGHT tab hands
+// it the vehicle on screen; the SWARM view hands it whichever vehicles are
+// checked. One implementation for both, so a fix to how a mode is sent cannot
+// reach one screen and miss the other.
 
-void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
+// One target a mode button reaches, with that target's own number for it.
+struct ModeHit {
+    size_t   target;
+    uint32_t mode;
+    uint8_t  standard_mode;
+};
+
+// One button in the mode grid, and every target it reaches.
+//
+// Matched across vehicles by name, never by number: custom_mode numbering is
+// per frame and per stack — GUIDED is 4 on a Copter, 15 on a Plane, a packed
+// main/sub pair on PX4 — so each target keeps its own number and its own
+// encoding, and a vehicle with no mode of that name is simply not sent one.
+struct ModeBtn {
+    std::string          name;             // uppercase, untruncated
+    bool                 advanced = false;
+    std::vector<ModeHit> hits;
+};
+
+// Modes grouped by flight stack. Two ArduPilot frames share most of their mode
+// names and one list serves both; a PX4 HOLD and an ArduPilot LOITER are the
+// same idea under different names, and merging the stacks would put both in
+// one grid with nothing to say which vehicles each one reaches.
+struct ModeGroup {
+    const FirmwareProfile* prof;
+    size_t                 n_targets = 0;
+    std::vector<ModeBtn>   modes;
+};
+
+static std::string to_upper(std::string s)
 {
-    const bool    connected = (vs && vs->has_heartbeat);
-    const uint8_t tsys      = connected ? vs->sysid  : 1;
-    const uint8_t tcomp     = connected ? vs->compid : 1;
+    for (char& c : s)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
 
-    // Which flight stack this is, and so what a mode number means, how one is
-    // written on the wire, and what the estimator bars are measuring. An
-    // unknown stack resolves to ArduPilot, which is what this panel assumed
-    // before the profile existed.
-    const FirmwareProfile& prof =
-        firmware_profile(vs ? vs->autopilot : MAV_AUTOPILOT_GENERIC);
+static bool target_connected(const FlightTarget& t)
+{
+    return t.vs && t.vs->has_heartbeat;
+}
 
-    // ── Flight mode controls ──────────────────────────────────────────────────
+static std::vector<ModeGroup> collect_modes(const std::vector<FlightTarget>& targets)
+{
+    std::vector<ModeGroup> groups;
+    for (size_t t = 0; t < targets.size(); ++t) {
+        const VehicleState* vs = targets[t].vs;
+
+        // Which flight stack this is, and so what a mode number means and how
+        // one is written on the wire. An unknown stack resolves to ArduPilot,
+        // which is what this panel assumed before the profile existed.
+        const FirmwareProfile& prof =
+            firmware_profile(vs ? vs->autopilot : MAV_AUTOPILOT_GENERIC);
+
+        ModeGroup* g = nullptr;
+        for (ModeGroup& e : groups)
+            if (e.prof == &prof) { g = &e; break; }
+        if (!g) {
+            groups.push_back({ &prof, 0, {} });
+            g = &groups.back();
+        }
+        ++g->n_targets;
+
+        const auto add = [&](const std::string& raw, uint32_t mode,
+                             uint8_t standard_mode, bool advanced) {
+            const std::string name = to_upper(raw);
+            for (ModeBtn& b : g->modes) {
+                if (b.name != name) continue;
+                // A vehicle reporting two modes of one name gets the first:
+                // one press must be one command to it, not two.
+                for (const ModeHit& h : b.hits)
+                    if (h.target == t) return;
+                b.hits.push_back({ t, mode, standard_mode });
+                return;
+            }
+            g->modes.push_back({ name, advanced, { { t, mode, standard_mode } } });
+        };
+
+        // The vehicle's own AVAILABLE_MODES list when it publishes one — a
+        // hardcoded table is only correct by accident. standard_mode rides
+        // along because it, not the custom mode number, is what actually
+        // reaches some modes — see FirmwareProfile::encode_set_mode.
+        if (target_connected(targets[t]) && !vs->available_modes.empty()) {
+            for (const FlightModeInfo& m : vs->available_modes)
+                if (m.user_selectable())   // MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
+                    add(m.name, m.custom_mode, m.standard_mode, m.advanced());
+        } else {
+            // The stack's own built-in table. Which one matters: offering the
+            // Copter table to a PX4 vehicle would command it somewhere
+            // arbitrary.
+            for (const FallbackMode& m : prof.fallback_modes(vs ? vs->type
+                                                                : MAV_TYPE_GENERIC))
+                add(m.label, m.custom_mode, 0, false);
+        }
+    }
+
+    // A stable order, whatever order the vehicles were checked in.
+    std::sort(groups.begin(), groups.end(),
+              [](const ModeGroup& a, const ModeGroup& b) {
+                  return std::strcmp(a.prof->name(), b.prof->name()) < 0;
+              });
+    return groups;
+}
+
+// The loudest of several vehicles' flashes: a rejection anywhere is what the
+// button has to show, then a command still in flight.
+static int flash_rank(CmdFlashState s)
+{
+    switch (s) {
+    case CmdFlashState::Rejected: return 3;
+    case CmdFlashState::Pending:  return 2;
+    case CmdFlashState::Accepted: return 1;
+    default:                      return 0;
+    }
+}
+
+static CmdFlashState merge_flash(CmdFlashState a, CmdFlashState b)
+{
+    return flash_rank(b) > flash_rank(a) ? b : a;
+}
+
+// " #1 #3 #4" — the vehicles a command went to, for the log and the tooltips.
+static std::string target_numbers(const std::vector<FlightTarget>& targets,
+                                  const std::vector<size_t>& which)
+{
+    std::string out;
+    for (size_t i : which) {
+        char b[16];
+        snprintf(b, sizeof(b), " #%u", (unsigned)targets[i].number);
+        out += b;
+    }
+    return out;
+}
+
+// Height of everything above the mode grid — heading, TAKEOFF row, spacing —
+// as last drawn. Measured rather than added up, so a change to that part of
+// the section cannot leave flight_section_height() quietly wrong.
+static float s_flight_head_h = 90.0f;
+
+static constexpr int   MODE_COLS  = 3;
+static constexpr float MODE_BTN_H = 26.0f;
+
+float flight_section_height(const std::vector<FlightTarget>& targets, float spacing_y)
+{
+    const std::vector<ModeGroup> groups = collect_modes(targets);
+    float h = s_flight_head_h;
+    for (size_t g = 0; g < groups.size(); ++g) {
+        if (groups.size() > 1) {
+            if (g > 0) h += spacing_y;                            // Spacing()
+            h += ImGui::GetTextLineHeight() + spacing_y;          // stack label
+        }
+        const size_t rows = (groups[g].modes.size() + MODE_COLS - 1) / MODE_COLS;
+        h += rows * (MODE_BTN_H + spacing_y);
+    }
+    return h;
+}
+
+void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_targets)
+{
+    const float y0 = ImGui::GetCursorPosY();
+
+    bool any_connected = false;
+    std::vector<size_t> all;
+    for (size_t i = 0; i < targets.size(); ++i) {
+        all.push_back(i);
+        if (target_connected(targets[i])) any_connected = true;
+    }
 
     ImGui::Spacing();
     ImGui::TextColored(accent_col(), "FLIGHT");
-    if (!connected) {
+    if (name_targets) {
+        // Who the buttons below will reach, always in view. A batch command
+        // aimed at the wrong set is the one mistake this section can make that
+        // the single-vehicle tab cannot.
+        ImGui::SameLine(0, 6);
+        if (targets.empty())
+            ImGui::TextColored(col_no_link_muted(), "\xe2\x86\x92 NO VEHICLES CHECKED");
+        else
+            ImGui::TextColored(col_ok(), "\xe2\x86\x92%s", target_numbers(targets, all).c_str());
+    } else if (!any_connected) {
         ImGui::SameLine(0, 6);
         ImGui::TextColored(col_no_link_muted(), "(no link)");
     }
@@ -180,7 +356,7 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
     ImGui::PushStyleColor(ImGuiCol_Border, col_border_tab());
-    ImGui::BeginDisabled(!connected);
+    ImGui::BeginDisabled(!any_connected);
 
     // TAKEOFF | altitude | unit, on one row: the number is only ever read by the
     // button next to it, so keeping them apart would just hide the argument.
@@ -193,10 +369,23 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         const float btn_w  = ImGui::GetContentRegionAvail().x
                              - ALT_W - unit_w - ROW_GAP * 2.0f;
 
-        if (ui_grid_button("TAKEOFF", { btn_w, ROW_H }, false,
-                           sender->query_flash(22))) {
-            sender->takeoff(tsys, tcomp, s_takeoff_alt_m);
-            gcs_log("takeoff command sent (%.1f m)", (double)s_takeoff_alt_m);
+        CmdFlashState fs = CmdFlashState::Normal;
+        for (const FlightTarget& t : targets)
+            fs = merge_flash(fs, t.sender->query_flash(22));
+
+        if (ui_grid_button("TAKEOFF", { btn_w, ROW_H }, false, fs)) {
+            std::vector<size_t> sent;
+            for (size_t i = 0; i < targets.size(); ++i) {
+                if (!target_connected(targets[i])) continue;
+                targets[i].sender->takeoff(targets[i].vs->sysid,
+                                           targets[i].vs->compid, s_takeoff_alt_m);
+                sent.push_back(i);
+            }
+            if (name_targets)
+                gcs_log("takeoff command sent (%.1f m) \xe2\x86\x92%s",
+                        (double)s_takeoff_alt_m, target_numbers(targets, sent).c_str());
+            else
+                gcs_log("takeoff command sent (%.1f m)", (double)s_takeoff_alt_m);
         }
 
         // The input frame is padded up to the button's height — items on a
@@ -223,68 +412,88 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     }
 
     ImGui::Spacing();
-
-    // Mode buttons come from the vehicle's own AVAILABLE_MODES list when it
-    // publishes one — custom_mode numbering is per-frame (a Plane's mode 3 is
-    // not a Copter's mode 3), so a hardcoded table is only correct by accident.
-    // Older flight stacks never answer, and fall back to the Copter table.
-    // standard_mode rides along because it, not the custom mode number, is
-    // what actually reaches some modes — see FirmwareProfile::encode_set_mode.
-    struct ModeBtn { std::string label; uint32_t mode; uint8_t standard_mode; };
-    std::vector<ModeBtn> modes;
+    s_flight_head_h = ImGui::GetCursorPosY() - y0;
 
     // Three columns: a vehicle that publishes its full list reports ~25 modes,
     // which at two columns runs past the bottom of the sidebar.
-    constexpr int   MODE_COLS = 3;
     constexpr float MODE_GAP  = 4.0f;
     const float col_w = (ImGui::GetContentRegionAvail().x
                          - MODE_GAP * (MODE_COLS - 1)) / MODE_COLS;
 
-    if (connected && !vs->available_modes.empty()) {
-        for (const FlightModeInfo& m : vs->available_modes) {
-            if (!m.user_selectable()) continue;   // MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
-            modes.push_back({ mode_button_label(m.name, col_w), m.custom_mode,
-                              m.standard_mode });
-        }
-    } else {
-        // The stack's own built-in table. Which one that is matters: a PX4
-        // mode number is not an ArduCopter mode number, and offering the
-        // Copter table to a PX4 vehicle would command it somewhere arbitrary.
-        for (const FallbackMode& m : prof.fallback_modes(vs ? vs->type
-                                                            : MAV_TYPE_GENERIC))
-            modes.push_back({ m.label, m.custom_mode, 0 });
-    }
+    const std::vector<ModeGroup> groups = collect_modes(targets);
 
+    for (size_t g = 0; g < groups.size(); ++g) {
+        const ModeGroup& grp = groups[g];
 
-    for (size_t i = 0; i < modes.size(); ++i) {
-        if (i % MODE_COLS != 0) ImGui::SameLine(0, MODE_GAP);
-        const bool is_active_mode = connected && (vs->custom_mode == modes[i].mode);
-        // ##index keeps the ImGui ID unique when a vehicle reports two modes
-        // whose names truncate to the same label.
-        const std::string id = modes[i].label + "##mode" + std::to_string(i);
-        // Flash on whichever command this particular button sends: a standard
-        // mode goes out as DO_SET_STANDARD_MODE, not DO_SET_MODE, and keying
-        // every button to 176 would leave those with no ACK feedback.
-        const CmdFlashState mode_fs = sender->query_flash(
-            prof.encode_set_mode(modes[i].mode, modes[i].standard_mode).command);
-        if (ui_grid_button(id.c_str(), { col_w, 26.0f }, is_active_mode, mode_fs)) {
-            // Through the profile, not sender->set_mode(): ArduPilot takes the
-            // whole mode number in one command parameter, PX4 splits it across
-            // two. This is the path an AVAILABLE_MODES-publishing PX4 needs as
-            // much as an old one does.
-            send_set_mode(*sender, tsys, tcomp, prof, modes[i].mode,
-                          modes[i].standard_mode);
-            gcs_log("mode → %s (%u)", modes[i].label.c_str(),
-                    (unsigned)modes[i].mode);
+        // A mixed fleet gets one grid per stack, each under its stack's name.
+        if (groups.size() > 1) {
+            if (g > 0) ImGui::Spacing();
+            ImGui::TextColored(col_no_link_muted(), "%s",
+                               to_upper(grp.prof->name()).c_str());
         }
-        if (ImGui::IsItemHovered() && !vs->available_modes.empty()) {
-            // Full name, since the button label is truncated to fit.
-            for (const FlightModeInfo& m : vs->available_modes) {
-                if (m.custom_mode == modes[i].mode) {
-                    ImGui::SetTooltip("%s%s", m.name.c_str(),
-                                      m.advanced() ? "  (advanced)" : "");
-                    break;
+
+        for (size_t i = 0; i < grp.modes.size(); ++i) {
+            const ModeBtn& b = grp.modes[i];
+            if (i % MODE_COLS != 0) ImGui::SameLine(0, MODE_GAP);
+
+            // Lit when every vehicle it reaches is already in it.
+            bool is_active_mode = true;
+            bool reachable      = false;
+            CmdFlashState fs    = CmdFlashState::Normal;
+            for (const ModeHit& h : b.hits) {
+                const FlightTarget& t = targets[h.target];
+                if (target_connected(t)) reachable = true;
+                if (!target_connected(t) || t.vs->custom_mode != h.mode)
+                    is_active_mode = false;
+                // Flash on whichever command this particular button sends: a
+                // standard mode goes out as DO_SET_STANDARD_MODE, not
+                // DO_SET_MODE, and keying every button to 176 would leave those
+                // with no ACK feedback.
+                fs = merge_flash(fs, t.sender->query_flash(
+                    grp.prof->encode_set_mode(h.mode, h.standard_mode).command));
+            }
+
+            // ##group/index keeps the ImGui ID unique when two modes truncate
+            // to the same label.
+            const std::string label = mode_button_label(b.name, col_w);
+            const std::string id    = label + "##mode" + std::to_string(g)
+                                    + "_" + std::to_string(i);
+
+            ImGui::BeginDisabled(!reachable);
+            if (ui_grid_button(id.c_str(), { col_w, MODE_BTN_H }, is_active_mode, fs)) {
+                std::vector<size_t> sent;
+                for (const ModeHit& h : b.hits) {
+                    const FlightTarget& t = targets[h.target];
+                    if (!target_connected(t)) continue;
+                    // Through the profile, not sender->set_mode(): ArduPilot
+                    // takes the whole mode number in one command parameter, PX4
+                    // splits it across two.
+                    send_set_mode(*t.sender, t.vs->sysid, t.vs->compid, *grp.prof,
+                                  h.mode, h.standard_mode);
+                    sent.push_back(h.target);
                 }
+                if (name_targets)
+                    gcs_log("mode \xe2\x86\x92 %s \xe2\x86\x92%s", b.name.c_str(),
+                            target_numbers(targets, sent).c_str());
+                else
+                    gcs_log("mode \xe2\x86\x92 %s (%u)", b.name.c_str(),
+                            (unsigned)b.hits.front().mode);
+            }
+            ImGui::EndDisabled();
+
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                // Full name, since the button label is truncated to fit — and,
+                // when not every checked vehicle of this stack has the mode,
+                // which ones the press will actually reach.
+                std::string tip = b.name;
+                if (b.advanced) tip += "  (advanced)";
+                if (name_targets && b.hits.size() < grp.n_targets) {
+                    std::vector<size_t> which;
+                    for (const ModeHit& h : b.hits) which.push_back(h.target);
+                    tip += "\nonly";
+                    tip += target_numbers(targets, which);
+                }
+                if (tip != label) ImGui::SetTooltip("%s", tip.c_str());
             }
         }
     }
@@ -292,6 +501,21 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
     ImGui::EndDisabled();
     ImGui::PopStyleColor(); // Border
     ImGui::PopStyleVar(2);  // FrameRounding, FrameBorderSize
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
+{
+    draw_flight_section({ FlightTarget{ sender, vs, 0 } }, false);
+
+    const bool    connected = (vs && vs->has_heartbeat);
+    const uint8_t tsys      = connected ? vs->sysid  : 1;
+    const uint8_t tcomp     = connected ? vs->compid : 1;
+
+    // What the estimator bars are measuring depends on the stack.
+    const FirmwareProfile& prof =
+        firmware_profile(vs ? vs->autopilot : MAV_AUTOPILOT_GENERIC);
 
     // ── EKF status ────────────────────────────────────────────────────────────
 

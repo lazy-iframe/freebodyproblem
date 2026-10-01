@@ -350,6 +350,7 @@ add_executable(freebodyproblem
     frontend/param_file.cpp
     frontend/audio.cpp
     frontend/widgets/topbar.cpp
+    frontend/widgets/swarm_view.cpp
     frontend/widgets/sidebar_left.cpp
     frontend/widgets/sidebar_left/tab_connection.cpp
     frontend/widgets/sidebar_left/tab_flight.cpp

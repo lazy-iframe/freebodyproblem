@@ -568,6 +568,12 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
     // vehicle every other panel is showing is the one the eye lands on.
     const float A = mv.active ? 1.0f : 0.55f;
 
+    // Checked in the SWARM view: a ring at full strength whatever the
+    // vehicle's own dimming, so the set a batch command will reach can be read
+    // off the map before the button is pressed.
+    if (mv.checked)
+        dl->AddCircle(c, 34.0f, ui_col(g_theme.accent), 0, 2.0f);
+
     if (mv.has_hdg) {
         // Convert heading (degrees CW from north) to screen angle.
         // Screen Y grows downward, so north = -Y → angle = hdg - 90° in

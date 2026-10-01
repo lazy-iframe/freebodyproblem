@@ -46,6 +46,10 @@ bool center_view_video_fullscreen();
 // map instead, which is where the attitude and the event log go.
 bool center_view_map_fullscreen();
 
+// The SWARM screen is showing: sidebars, video and plugin rail give way to
+// the fleet view, and the map moves into the swarm layout's lower right.
+bool center_view_swarm();
+
 // The map's rectangle as the centre view last drew it. For the overlay, which
 // is submitted after this panel — later submission is what puts it on top —
 // and so has to be told where the map ended up.

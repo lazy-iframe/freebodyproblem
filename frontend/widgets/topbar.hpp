@@ -18,12 +18,14 @@
 
 #pragma once
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include "../../backend/mavlink_parser.hpp"
 #include "../../backend/mavlink_sender.hpp"
 #include "../../backend/connection.hpp"
 #include "../../backend/vehicle.hpp"
+#include "flight_target.hpp"
 
 void draw_topbar(const VehicleState& vs,
                  const std::unordered_map<uint32_t, MessageStats>& stats,
@@ -40,4 +42,18 @@ void draw_topbar(const VehicleState& vs,
                  // filled in only on the frame a row is clicked.
                  const std::vector<VehicleChip>& vehicles,
                  VehicleId  active,
-                 VehicleId* selected_out);
+                 VehicleId* selected_out,
+                 // In the SWARM view, the checked vehicles. ARM and INTERLOCK
+                 // then stop being annunciators of one vehicle and become
+                 // buttons that act on all of these; the cards show the state.
+                 // Null everywhere else.
+                 const std::vector<FlightTarget>* swarm_targets = nullptr);
+
+// The vehicle's current flight mode as the topbar shows it: its own
+// AVAILABLE_MODES name when it published one, its stack's table otherwise.
+std::string mode_display_name(const VehicleState& vs);
+
+// The interlock latch the topbar keeps for a vehicle: HIGH after the operator
+// last set it high. The vehicle never reports interlock, so this is what the
+// GCS sent, not what the vehicle did.
+bool interlock_latched(VehicleId id);

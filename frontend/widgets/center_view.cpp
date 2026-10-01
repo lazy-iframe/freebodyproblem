@@ -22,6 +22,7 @@
 #include "map_view.hpp"
 #include "vehicle_ui_state.hpp"
 #include "plugin_rail.hpp"
+#include "swarm_view.hpp"
 #include "video_player.hpp"
 #include "../app_log.hpp"
 #include "../../backend/mavlink_sender.hpp"
@@ -55,8 +56,11 @@ static char s_url_buf[512] = "rtsp://";
 static int  s_proto_sel    = 0;   // 0 = RTSP, 1 = UDP
 
 // Centre view display mode
-enum class CenterMode { MapAndVideo, VideoOnly, MapOnly };
+enum class CenterMode { MapAndVideo, VideoOnly, MapOnly, Swarm };
 static CenterMode s_mode = CenterMode::MapAndVideo;
+
+// What SWARM was pressed from, so a second press of SWARM goes back to it.
+static CenterMode s_pre_swarm_mode = CenterMode::MapAndVideo;
 
 // Fullscreen feed: the second press of VIDEO, when VIDEO is already the mode.
 // Only the topbar and this view's own header survive it — the sidebars are the
@@ -76,7 +80,7 @@ static bool s_map_full = false;
 // this is the one place that computes it.
 static float s_map_x = 0.0f, s_map_y = 0.0f, s_map_w = 0.0f, s_map_h = 0.0f;
 
-static constexpr float HEADER_H = 30.0f;
+static constexpr float HEADER_H = CENTER_HEADER_H;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -275,11 +279,15 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     const bool  full     = center_view_video_fullscreen();
     const bool  map_full = center_view_map_fullscreen();
 
+    // SWARM takes the whole window below the topbar; this view keeps only its
+    // header, stretched across it, and the map in the swarm layout's corner.
+    const bool  swarm    = center_view_swarm();
+
     // Map fullscreen takes the right sidebar's width and the rail's column and
     // gives both to the map, leaving the left sidebar where it is. So the band
     // starts where it always did and runs to the right edge of the screen.
-    const float band_x = full ? 0.0f : l.center_x;
-    const float band_w = full     ? ImGui::GetIO().DisplaySize.x
+    const float band_x = (full || swarm) ? 0.0f : l.center_x;
+    const float band_w = (full || swarm) ? ImGui::GetIO().DisplaySize.x
                        : map_full ? ImGui::GetIO().DisplaySize.x - l.left_w
                                   : l.band_w;
     const float vid_w  = (full || map_full) ? band_w : l.center_w;
@@ -314,7 +322,8 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             ImDrawList*  dl = ImGui::GetWindowDrawList();
             const ImVec2 wp = ImGui::GetWindowPos();
             const char*  title =
-                full                              ? "SENSOR FEED \xe2\x80\x94 FULLSCREEN  [ESC]"
+                swarm                             ? "SWARM \xe2\x80\x94 FLEET CONTROL"
+              : full                              ? "SENSOR FEED \xe2\x80\x94 FULLSCREEN  [ESC]"
               : map_full                          ? "CARTOGRAPH \xe2\x80\x94 FULLSCREEN  [ESC]"
               : (s_mode == CenterMode::VideoOnly) ? "SENSOR FEED"
               : (s_mode == CenterMode::MapOnly)   ? "CARTOGRAPH \xe2\x80\x94 2D / NORTH-UP"
@@ -340,11 +349,13 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
             map_full                          ? "EXIT FULL###m1"
           : (s_mode == CenterMode::MapOnly)   ? "MAP FULL###m1"
                                               : "MAP###m1";
-        const char*  btn_labels[] = { video_label, map_label, "MAP + VIDEO###m2" };
+        const char*  btn_labels[] = { video_label, map_label, "MAP + VIDEO###m2",
+                                      swarm ? "EXIT SWARM###m3" : "SWARM###m3" };
         const CenterMode btn_modes[] = {
-            CenterMode::VideoOnly, CenterMode::MapOnly, CenterMode::MapAndVideo };
+            CenterMode::VideoOnly, CenterMode::MapOnly, CenterMode::MapAndVideo,
+            CenterMode::Swarm };
         constexpr float BTN_W = 108.f, BTN_H = 22.f, BTN_GAP = 3.f;
-        constexpr int   N = 3;
+        constexpr int   N = 4;
         const float     btns_total = BTN_W * N + BTN_GAP * (N - 1);
         const float     btns_x     = band_w - btns_total - 8.f;
 
@@ -365,7 +376,18 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                     s_video_full = false;
                     s_map_full   = false;
                 }
-                s_mode = btn_modes[i];
+                if (btn_modes[i] == CenterMode::Swarm) {
+                    // SWARM is a place to go and come back from: a second
+                    // press returns to whichever view it was entered from.
+                    if (second_press) {
+                        s_mode = s_pre_swarm_mode;
+                    } else {
+                        s_pre_swarm_mode = s_mode;
+                        s_mode = CenterMode::Swarm;
+                    }
+                } else {
+                    s_mode = btn_modes[i];
+                }
             }
         }
     }
@@ -387,7 +409,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     if (s_mode == CenterMode::MapOnly)   { map_h = content_h; vid_h = 0.f; }
 
     // ── Video window ──────────────────────────────────────────────────────────
-    if (s_mode != CenterMode::MapOnly) {
+    if (s_mode != CenterMode::MapOnly && !swarm) {
     ImGui::SetNextWindowPos ({ band_x, content_top }, ImGuiCond_Always);
     ImGui::SetNextWindowSize({ vid_w,  vid_h       }, ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_video());
@@ -592,11 +614,18 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
         s_map_y = content_top + vid_h;
         s_map_w = vid_w;
         s_map_h = map_h;
+        if (swarm) {
+            const SwarmLayout& sl = swarm_layout();
+            s_map_x = sl.right_x;
+            s_map_y = sl.map_y;
+            s_map_w = sl.right_w;
+            s_map_h = sl.map_h;
+        }
 
         draw_map_view(vs.lat, vs.lon, vs.has_global_pos,
                       (float)vs.heading, vs.has_vfr,
-                      band_x, content_top + vid_h,
-                      vid_w, map_h,
+                      s_map_x, s_map_y,
+                      s_map_w, s_map_h,
                       map_mission, pick,
                       vs.alt_rel, vs.groundspeed, &s_goto, fleet);
 
@@ -628,7 +657,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     // puts it on top, and what keeps the buttons reachable without dropping out
     // of fullscreen first.
     // The rail is one of the things map-fullscreen trades away for map width.
-    if (!map_full)
+    if (!map_full && !swarm)
         draw_plugin_rail(vs, sender, rail_x, content_top, l.plugin_w, content_h,
                          full);
 }
@@ -645,6 +674,11 @@ void center_view_shutdown()
 bool center_view_video_fullscreen()
 {
     return s_video_full && s_mode == CenterMode::VideoOnly;
+}
+
+bool center_view_swarm()
+{
+    return s_mode == CenterMode::Swarm;
 }
 
 bool center_view_map_fullscreen()

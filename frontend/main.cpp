@@ -78,6 +78,7 @@
 #include "widgets/sidebar_left.hpp"
 #include "widgets/center_view.hpp"
 #include "widgets/sidebar_right.hpp"
+#include "widgets/swarm_view.hpp"
 #include "widgets/map_view.hpp"
 #include "widgets/bottombar.hpp"
 #include "widgets/video_player.hpp"
@@ -183,6 +184,10 @@ static MissionPickState  g_mission_pick{};
 // loop below. File scope only so the vector keeps its capacity across frames.
 static std::vector<MapVehicle> g_map_fleet;
 
+// The same fleet as the SWARM view draws it, filled only while that view is
+// up — it holds a copy of every vehicle's state, which nothing else needs.
+static std::vector<SwarmVehicle> g_swarm_fleet;
+
 // ── Splash screen ─────────────────────────────────────────────────────────────
 static ImFont* g_font_splash_title = nullptr;
 static bool    g_splash_done       = false;
@@ -278,6 +283,10 @@ static void render_ui()
     // takes effect on the next frame, not halfway through this one.
     const bool map_full = center_view_map_fullscreen();
 
+    // SWARM replaces both sidebars with the fleet view; read here for the same
+    // reason as the two above.
+    const bool swarm = center_view_swarm();
+
     // Before any panel draws: a calibration sweep records from the live stream,
     // not from whether its tab happens to be visible — and now, not from whether
     // its aircraft is the one on screen. Every vehicle is pumped, so a compass
@@ -286,6 +295,7 @@ static void render_ui()
         const double now_s = ImGui::GetTime();
         const std::vector<LinkInfo> links_now = g_fleet.links();
         g_map_fleet.clear();
+        g_swarm_fleet.clear();
         for (const auto& v : g_fleet.vehicles()) {
             VehicleSnapshot vsnap;
             v->snapshot(vsnap);
@@ -321,7 +331,12 @@ static void render_ui()
             mv.home_lat = vsnap.state.home_lat;
             mv.home_lon = vsnap.state.home_lon;
             mv.has_home = vsnap.state.has_home;
+            mv.checked  = swarm && swarm_is_checked(v->id());
             g_map_fleet.push_back(mv);
+
+            if (swarm)
+                g_swarm_fleet.push_back({ v, std::move(vsnap.state), v->number(),
+                                          link_up && !v->stale() });
         }
 
         // Fleet::vehicles() comes out of a hash map, so the order changes as
@@ -329,6 +344,10 @@ static void render_ui()
         // labels stacked the same way from frame to frame.
         std::sort(g_map_fleet.begin(), g_map_fleet.end(),
                   [](const MapVehicle& a, const MapVehicle& b) {
+                      return a.number < b.number;
+                  });
+        std::sort(g_swarm_fleet.begin(), g_swarm_fleet.end(),
+                  [](const SwarmVehicle& a, const SwarmVehicle& b) {
                       return a.number < b.number;
                   });
     }
@@ -363,18 +382,32 @@ static void render_ui()
     const std::vector<VehicleChip> chips  = g_fleet.chips();
     VehicleId                      picked{};
 
+    // In SWARM the topbar's ARM and INTERLOCK act on the checked vehicles; every
+    // other number on it stays the focused vehicle's.
+    const std::vector<FlightTarget> swarm_targets =
+        swarm ? swarm_checked_targets(g_swarm_fleet) : std::vector<FlightTarget>{};
+
     draw_topbar(vs, stats, total_msg, total_bytes, errors, sender,
-                link_status, &g_close_req, chips, g_fleet.active_id(), &picked);
+                link_status, &g_close_req, chips, g_fleet.active_id(), &picked,
+                swarm ? &swarm_targets : nullptr);
     if (picked.valid()) g_fleet.set_active(picked);
 
-    if (!video_full)
+    if (!video_full && !swarm)
         draw_sidebar_left(sender, &vs, &g_conn_req, link_status, &params, &g_settings,
                           &stats, total_msg, total_bytes, errors,
                           g_fleet.links(), chips, g_fleet.active_id(),
                           &g_mission_pick);
+    if (swarm) swarm_view_layout(g_swarm_fleet);
     draw_center_view(vs, sender, &g_mission_pick, &g_map_fleet);
-    if (!video_full && !map_full)
+    if (!video_full && !map_full && !swarm)
         draw_sidebar_right(vs, sender, &g_settings);
+
+    if (swarm) {
+        VehicleId focus{};
+        draw_swarm_view(g_swarm_fleet, vs, sender, g_fleet.active_id(),
+                        &g_settings, &focus);
+        if (focus.valid()) g_fleet.set_active(focus);
+    }
 
     // After the centre view, which is what puts it over the map.
     if (map_full)

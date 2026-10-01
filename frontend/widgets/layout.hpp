@@ -18,6 +18,7 @@
 
 #pragma once
 #include "theme.hpp"
+#include <algorithm>
 
 // ── GCS screen layout ─────────────────────────────────────────────────────────
 //
@@ -96,6 +97,88 @@ struct GcsLayout {
             l.video_h = l.total_h - l.map_h;
         }
 
+        return l;
+    }
+};
+
+// The centre view's header strip — the title and the VIDEO / MAP / SWARM
+// buttons. Here rather than in center_view.cpp because the swarm layout sits
+// under it too.
+static constexpr float CENTER_HEADER_H = 30.0f;
+
+// ── SWARM screen layout ───────────────────────────────────────────────────────
+//
+//  ┌──────────────────────── TOPBAR ──────────────────────────────────────────┐
+//  ├──────────────────────── CENTRE HEADER (VIDEO / MAP / … / SWARM) ─────────┤
+//  │ VEHICLE  │ FLIGHT        │ TELEMETRY   │ EVENT LOG                       │
+//  │ CARDS    ├───────────────┴─────────────┴─────────────────────────────────┤
+//  │ (width   │ MAP                                                           │
+//  │  by fleet│                                                               │
+//  └──────────┴───────────────────────────────────────────────────────────────┘
+//
+// No sidebars, no video, no plugin rail: the screen belongs to the fleet.
+//
+// Nothing here is a fixed fraction. The card column is as wide as the fleet
+// needs (up to half the screen, then it scrolls); the band is as tall as the
+// FLIGHT section's mode grid needs; the map takes whatever is left. Both
+// inputs are worked out by the swarm view each frame — see
+// swarm_view_layout().
+static constexpr float SWARM_CARDS_MAX_FRAC = 0.5f;
+
+// The band never gets shorter than the telemetry grid, three 66 px rows under
+// a header, nor taller than two thirds of the screen: the map must survive.
+static constexpr float SWARM_BAND_MIN_H    = 250.0f;
+static constexpr float SWARM_BAND_MAX_FRAC = 0.67f;
+
+// FLIGHT's column: three mode buttons across, each wide enough for most names.
+static constexpr float SWARM_FLIGHT_W      = 390.0f;
+
+// The telemetry tiles stop getting wider past this; the log takes the rest.
+static constexpr float SWARM_GRID_MAX_W    = 480.0f;
+
+struct SwarmLayout {
+    float top, total_h;            // below the centre header
+
+    float cards_x, cards_w;
+    float right_x, right_w;
+
+    float band_h;                  // the FLIGHT | TELEMETRY | LOG band
+    float flight_x, flight_w;
+    float grid_x,   grid_w;
+    float log_x,    log_w;
+
+    float map_y, map_h;
+
+    // `cards_w`: the card column's width. `flight_h`: the height the FLIGHT
+    // section wants, padding included.
+    static SwarmLayout compute(float cards_w, float flight_h)
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const float sw = io.DisplaySize.x;
+        const float sh = io.DisplaySize.y;
+
+        SwarmLayout l;
+        l.top     = TOPBAR_H + CENTER_HEADER_H;
+        l.total_h = sh - l.top;
+
+        l.cards_x = 0.0f;
+        l.cards_w = std::min(cards_w, sw * SWARM_CARDS_MAX_FRAC);
+        l.right_x = l.cards_w;
+        l.right_w = sw - l.cards_w;
+
+        l.band_h = std::max(SWARM_BAND_MIN_H, flight_h);
+        l.band_h = std::min(l.band_h, l.total_h * SWARM_BAND_MAX_FRAC);
+
+        l.flight_x = l.right_x;
+        l.flight_w = std::min(SWARM_FLIGHT_W, l.right_w * 0.45f);
+        const float rest = l.right_w - l.flight_w;
+        l.grid_x   = l.flight_x + l.flight_w;
+        l.grid_w   = std::min(rest * 0.5f, SWARM_GRID_MAX_W);
+        l.log_x    = l.grid_x + l.grid_w;
+        l.log_w    = rest - l.grid_w;
+
+        l.map_y = l.top + l.band_h;
+        l.map_h = l.total_h - l.band_h;
         return l;
     }
 };

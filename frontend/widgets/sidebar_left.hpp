@@ -27,6 +27,7 @@
 #include "../../backend/link.hpp"
 #include "../settings.hpp"
 #include "../mission_pick.hpp"
+#include "flight_target.hpp"
 
 // Filled for one frame when the user presses Connect or Disconnect.
 //
@@ -90,3 +91,23 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
                        const std::vector<VehicleChip>& vehicles,
                        VehicleId active_vehicle,
                        MissionPickState* pick = nullptr);
+
+// ── Pieces of the FLIGHT tab the SWARM view reuses ────────────────────────────
+
+// TAKEOFF and the flight mode grid, sent to every target at once. Modes are
+// matched between vehicles by name and grouped by flight stack; each vehicle
+// gets its own mode number, encoded the way its stack expects.
+//
+// `name_targets` puts the target list in the heading and in the log, for a
+// caller where who the buttons reach is a choice rather than a given.
+void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_targets);
+
+// The height draw_flight_section() would take for these targets, from the top
+// of its heading to the bottom of its last mode row, at an item spacing of
+// `spacing_y`. Lets a layout size itself to the mode list before drawing it.
+float flight_section_height(const std::vector<FlightTarget>& targets, float spacing_y);
+
+// The six estimator bars. `bar_h` is the bar's height without its label;
+// `small_labels` draws the labels in the micro face for a narrow row.
+void draw_ekf_bars(const VehicleState& vs, float bar_h = 56.0f,
+                   bool small_labels = false);
