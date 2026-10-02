@@ -41,6 +41,27 @@ A modern, fast ground control station for ArduPilot and PX4 autopilots. Several 
 
 <table>
   <tr>
+    <td align="center" width="28%">
+      <a href="#screen-sizes"><img src="screens/variable/4k.png" alt="MAP + VIDEO stacked on a 3840×2160 screen" width="100%"></a><br>
+      <sub><b>4K</b> — stacked; the sidebars stop growing and the centre gets the rest</sub>
+    </td>
+    <td align="center" width="28%">
+      <a href="#screen-sizes"><img src="screens/variable/side_by_side.png" alt="MAP + VIDEO side by side on a 3440×1440 screen" width="100%"></a><br>
+      <sub><b>3440×1440</b> — side by side: map | video, halves</sub>
+    </td>
+    <td align="center" width="28%">
+      <a href="#screen-sizes"><img src="screens/variable/side_by_side_ultrawide.png" alt="MAP + VIDEO side by side on a 3840×1080 screen" width="100%"></a><br>
+      <sub><b>3840×1080</b> — side by side on 32:9</sub>
+    </td>
+    <td align="center" width="16%">
+      <a href="#screen-sizes"><img src="screens/variable/narrowest.png" alt="Narrow layout on a 1080×1920 portrait screen: map fullscreen beside the left sidebar" width="100%"></a><br>
+      <sub><b>1080×1920</b> — narrow: fullscreen only</sub>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <td align="center" width="20%">
       <a href="#flight-controls"><img src="screens/flight.png" alt="FLIGHT tab" width="100%"></a><br>
       <sub><b>FLIGHT</b></sub>
@@ -92,7 +113,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click waypoint editing**: click map to place waypoints during mission planning
 - **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
-- **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel
+- **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
 - **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
 - **Fullscreen map**: a second press of the map mode button (relabelled **MAP FULL**) gives the map the right sidebar's width and the plugin rail's column, keeping the left sidebar — the tabs are how a mission is planned and the map is what it is planned on. Attitude and the event log come back as a semi-transparent block in the map's top-right corner, small enough to read past — click either half and it grows back to the size it had in the sidebar, text and all, until you click somewhere else, and it comes back small every time the map goes fullscreen again; **ESC** or **EXIT FULL** restores
 - **Home**: each vehicle's `HOME_POSITION` drawn as a helipad — the H inside its circle, in green so it reads as neither the aircraft nor an instruction to it. Streamed at 0.5 Hz on connect rather than waited for: a vehicle announces home when it sets it, and that announcement is long gone by the time a GCS joins
@@ -122,6 +143,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Identified by link and sysid**: two airframes that both shipped as the factory default `SYSID_THISMAV` of 1 stay distinct instead of merging into one nonsensical vehicle; the switcher names the link so they can be told apart
 - **A number per vehicle**: the GCS hands each aircraft a short number on discovery, lowest free one first, and that number leads the callsign chip, the switcher rows and the label on every symbol on the map. It is the name a sysid cannot be, and it stays small — numbers are freed when a vehicle goes, so a fleet of three reads 1, 2, 3 rather than climbing all session
 - **The fleet on the map**: every vehicle with a position is drawn, each with its own trail and home pad. The panels still follow one aircraft, and the map says which by keeping it at full strength while the others are dimmed
+- **SWARM view**: a card per vehicle with its attitude, mode, battery, GPS and EKF health, and the one place commands go to several vehicles at once — check the ones you want, then switch modes, take off, arm or set the interlock across all of them. See [Swarm View](#swarm-view)
 
 ### Connection
 - **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
@@ -159,6 +181,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ### UI/UX
 - **Dear ImGui interface**: immediate-mode GUI with low latency
+- **Fits the screen it is on**: sidebars sized by their text rather than by a fraction of the window, the video and map stacked or side by side by the shape of the space left, and a narrow layout for laptops and portrait screens — see [Screen Sizes](#screen-sizes)
+- **Topbar that drops, never cuts**: when the readouts do not fit, whole ones go — least important first — rather than a value being clipped part way through
 - **Theme support**: Tactical (default), Retro Amber and Matrix built-ins, plus customizable color schemes
 - **Application log**: bottom-bar console with MAVLink events and system messages
 - **Splash screen**: dismissible startup overlay
@@ -427,6 +451,95 @@ mission you were editing stays with the aircraft it belongs to and is waiting
 when you switch back. Calibrations keep running on vehicles you are not looking
 at, and only the selected vehicle makes sound.
 
+### Swarm View
+**SWARM**, at the right end of the centre view's mode buttons, gives the whole
+window below the topbar to the fleet. It is the one place a command goes to
+several vehicles at once. Press it again — it reads **EXIT SWARM** — to go back
+to the view you came from.
+
+<p align="center">
+  <a href="screens/swarm.png"><img src="screens/swarm.png" alt="SWARM view: vehicle cards on the left, FLIGHT, telemetry and event log across the top, map and video below" width="100%"></a>
+</p>
+
+- **A card per vehicle**, down the left: its number and sysid, armed state,
+  attitude, MODE, BATT, GPS, ALT and GS, and the EKF variance bars beneath.
+  The column is as wide as the fleet needs — one column for a few aircraft,
+  more as the fleet grows, up to half the screen, after which it scrolls
+- **Checking and selecting are separate.** The checkbox in a card's corner
+  decides whether a command reaches that vehicle; **ALL**, **NONE** and
+  **INVERT** above the cards act on the checkboxes only. A click on the card
+  body selects the vehicle instead — green frame, and the topbar, telemetry
+  tiles and GO HERE follow it — so looking at an aircraft never adds it to a
+  batch command. A double click opens the card large, with ASL, airspeed,
+  throttle, flight stack and IDs added; a click on it, or **ESC**, puts it back
+- **FLIGHT acts on the checked vehicles.** Its header lists who it reaches
+  (`FLIGHT → #1 #2 #3`). **TAKEOFF** and the mode grid send to all of them; a
+  mode is lit when every checked vehicle is already in it, and a mixed
+  ArduPilot/PX4 set gets one grid per stack. Each card shows its own
+  vehicle's answer to the last command, so the one aircraft that refused is
+  easy to find
+- **The topbar's arming buttons act on the checked vehicles too**: **ILK
+  HIGH** / **ILK LOW** for motor interlock (PX4 vehicles in the set are skipped
+  and logged) and **ARM** / **DISARM**, which name every vehicle they will
+  reach and ask before sending
+- **Telemetry and event log** across the top: the telemetry tiles of the
+  selected vehicle, and the whole fleet's event log
+- **Map, and video beside it.** The map fills the space below, with checked
+  vehicles ringed. The **VIDEO** toggle at its top-right corner splits that
+  space into map and feed, while there is room for both — see
+  [Screen Sizes](#screen-sizes)
+
+### Screen Sizes
+The layout is worked out from the screen and the font each frame, not from
+fixed fractions of the window, so a laptop, a 4K screen and an ultrawide each
+get a layout that uses their space rather than a stretched copy of one.
+
+**Sidebars are as wide as their text.** The UI font is monospaced, so a column
+is measured in characters: each sidebar has a minimum — its widest row that
+cannot shrink, such as a parameter ID beside its value and WRITE — and a
+maximum, the width it has on a 1080p screen. Past the maximum they stop
+growing, and every extra pixel goes to the centre.
+
+**MAP + VIDEO picks its arrangement from the space left.** While the centre is
+no more than about one and a half times as wide as it is tall, the feed sits
+above the map and the two get equal areas. Wider than that — an ultrawide, or
+a wide screen with a short window — they go side by side and split the centre
+in half: map on the left beside the mission tabs, video on the right beside
+the plugin rail. The feed is always 16:9, so whatever its half does not fill
+is letterbox; the map is never cut down to fit the feed.
+
+| Screen          | MAP + VIDEO                         |
+|-----------------|-------------------------------------|
+| 1920×1080       | stacked                             |
+| 2560×1440, 4K   | stacked, the centre taking the gain |
+| 2560×1080       | side by side                        |
+| 3440×1440       | side by side                        |
+| 3840×1080 32:9  | side by side                        |
+
+**Narrow screens get the fullscreens only.** When there is no room for both
+sidebars at their minimum beside a usable centre — below about 1400 px wide,
+so 1366×768 laptops and portrait screens — the right sidebar and the plugin
+rail go and the mode buttons become **VIDEO FULL**, **MAP FULL** and **SWARM**.
+MAP FULL keeps the left sidebar and brings attitude and the event log back as
+the overlay in the map's corner; there is no windowed view to exit to, so ESC
+does nothing. Widen the window and the view you had comes back.
+
+**The topbar drops readouts rather than cutting them.** When the row does not
+fit, whole readouts go in this order: RX, POSITION, HDG, GNSS, SPEED, ALT AGL,
+then DATALINK; PWR and MODE stay longest. What is on the map or in a tab goes
+first; what you fly on stays.
+
+**SWARM can show the feed too.** A **VIDEO** toggle at the top-right of the
+swarm map splits it into map and video by the same rules. It is offered only
+while the map keeps a usable size beside it: on a 1080p screen that is up to
+two columns of vehicle cards, on wider screens all of them. With more cards
+than that the toggle disappears and the map has the space to itself; your
+choice is kept for when the column narrows again.
+
+On Wayland, sizes are in the desktop's scaled units, so a 4K screen at 200%
+gets the 1080p layout at twice the sharpness. Windows and X11 do not
+apply display scaling yet — see [Limitations](#limitations).
+
 ### Flight Controls
 1. Navigate to the **FLIGHT** tab. Everything on it is disabled until a vehicle
    is heard from, and says `(no link)` beside the header while it is
@@ -544,6 +657,11 @@ so a vehicle standing still does not smudge, and capped at 6000 — about 18 km 
 ground track. Each vehicle's **home**, from `HOME_POSITION`, is drawn as a
 helipad: an H inside its circle, in green so it reads as neither the aircraft
 nor an instruction to it.
+
+**CENTER** — the map follows the selected aircraft until you drag it. The
+**CENTER** button in the map's top-left corner, lit while following, puts the
+map back on the aircraft and keeps it there. It follows whichever vehicle is
+selected, so after switching vehicles it centres on the new one.
 
 **GO HERE** — right-click anywhere on the map for a guided position target. The
 menu shows the coordinates under the cursor and an altitude, which starts at the
@@ -739,6 +857,7 @@ the serial handle, drains them.
 - **param_file.cpp**: `.params` reader/writer (Mission Planner / QGroundControl format)
 - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
+  - **layout_rules.hpp**: The screen layout as plain arithmetic, free of ImGui — sidebar widths in glyphs, the narrow cutoff, and the stacked or side-by-side split of MAP + VIDEO and of the SWARM map. **layout.hpp** feeds it the live window and the measured width of a glyph
   - **goto_target.hpp** / **mission_pick.hpp**: The two-way state the map is driven through — a right-clicked position target and a waypoint being picked. The map never holds a sender; it reports what the operator asked for and the panel that owns the vehicle sends it
   - **vehicle_ui_state.hpp**: Panel state that belongs to a vehicle rather than a panel — a calibration in progress, staged parameter edits, the mission being planned — keyed by vehicle instead of held in a file-scope static, and dropped when that vehicle goes
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink, radio, sensors)
@@ -833,14 +952,16 @@ Example `settings.json`:
 - **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No geofence editor**: Geofence/rally point management not implemented yet
-- **One vehicle in the panels at a time**: the map draws the whole fleet, but every other panel — telemetry, parameters, mission, radio, sensors, the inspector — follows the selected vehicle only. No side-by-side view
+- **One vehicle in the tabs at a time**: the map draws the whole fleet and SWARM gives every vehicle a summary card, but the tabs — parameters, mission, radio, sensors, the inspector — and the telemetry tiles follow the selected vehicle only
 - **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
+- **Display scaling on Windows and X11**: the UI is drawn in physical pixels there, so at 150% or 200% desktop scaling it comes out smaller than intended. Wayland hands the app scaled sizes and is not affected
+- **Plugin rail on short screens**: below about 900 px of height the rail's ten buttons do not fit and the rail scrolls
 - **Fifteen vehicles**: each needs a MAVLink TX channel of its own so their sequence counters stay independent, and one of the sixteen is spent on the fallback used when nothing is connected. Past the cap a vehicle is logged and ignored rather than displacing one already there
 
 ## Future Plans
 
 - Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
-- Multi-vehicle UI: a way to watch more than one aircraft's telemetry without switching between them
+- Multi-vehicle UI: more of each aircraft's telemetry on the SWARM cards, so it can be watched without switching between them
 - PX4: mission, parameters, RC configuration and sensor calibration (telemetry and modes are done)
 - macOS Support
 - Video AI features

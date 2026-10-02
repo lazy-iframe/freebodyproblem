@@ -28,6 +28,8 @@
 #include <cctype>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 
@@ -413,26 +415,30 @@ void draw_topbar(const VehicleState& vs,
         }
 
         // ── Segmented telemetry cells ─────────────────────────────────────────
-        // Each cell: tracked micro label over a 15 px value, 1 px rule on the right.
+        // Each cell: tracked micro label over a 17 px value, 1 px rule on the
+        // right. Collected first and drawn after, because what is drawn depends
+        // on what fits: when the row is wider than the room before the clock,
+        // whole cells go, least important first, and the rest close up in
+        // their usual order. A value is never cut off part way through.
+        //
+        // `keep` ranks them — the lowest goes first. What the operator flies
+        // on outlasts what they can read elsewhere: MODE, PWR and the link stay
+        // longest; POSITION is on the map and RX in the MAVLINK tab, so they go
+        // first.
         const float cells_clip_x = clk_x0 - 6.0f;
         dl->PushClipRect({ wp.x, wp.y }, { wp.x + cells_clip_x, wp.y + TOPBAR_H }, true);
 
+        struct Cell {
+            const char* label;
+            std::string value;
+            ImU32       label_col, value_col;
+            int         keep;
+        };
+        std::vector<Cell> cells;
+        cells.reserve(10);
         auto cell = [&](const char* label, const char* value,
-                        ImU32 label_col, ImU32 value_col) {
-            const float lw = ui_tracked_width(fm, UI_SZ_MICRO, label);
-            const float vw = fu->CalcTextSizeA(17.0f, FLT_MAX, 0.0f, value).x;
-            const float cw = std::max(lw, vw) + CELL_PAD * 2.0f;
-
-            ui_tracked_text(dl, fm, UI_SZ_MICRO,
-                            { wp.x + x + CELL_PAD, wp.y + LABEL_Y }, label_col, label);
-            dl->AddText(fu, 17.0f,
-                        { wp.x + x + CELL_PAD, wp.y + VALUE_Y }, value_col, value);
-
-            // right-hand rule
-            dl->AddLine({ wp.x + x + cw, wp.y + 9.0f },
-                        { wp.x + x + cw, wp.y + TOPBAR_H - 9.0f },
-                        ui_col(g_theme.separator, 0.75f), 1.0f);
-            x += cw;
+                        ImU32 label_col, ImU32 value_col, int keep) {
+            cells.push_back({ label, value, label_col, value_col, keep });
         };
 
         // DATALINK
@@ -447,7 +453,7 @@ void draw_topbar(const VehicleState& vs,
                            : (link_status == LinkStatus::Connecting) ? C_AMBER
                            : (link_status == LinkStatus::Idle)       ? C_DIM
                                                                      : C_ERROR;
-            cell("DATALINK", v, C_LABEL, vc);
+            cell("DATALINK", v, C_LABEL, vc, 7);
         }
 
         // GNSS
@@ -458,7 +464,7 @@ void draw_topbar(const VehicleState& vs,
                          (int)vs.gps_fix_type, (int)vs.satellites_vis, (double)vs.hdop);
             else
                 snprintf(v, sizeof(v), "NO FIX");
-            cell("GNSS", v, C_LABEL, vs.has_gps_raw ? C_VALUE : C_DIM);
+            cell("GNSS", v, C_LABEL, vs.has_gps_raw ? C_VALUE : C_DIM, 4);
         }
 
         // POSITION
@@ -470,7 +476,7 @@ void draw_topbar(const VehicleState& vs,
                          vs.lon < 0 ? -vs.lon : vs.lon, vs.lon < 0 ? 'W' : 'E');
             else
                 snprintf(v, sizeof(v), "-- / --");
-            cell("POSITION", v, C_LABEL, vs.has_global_pos ? C_TEXT : C_DIM);
+            cell("POSITION", v, C_LABEL, vs.has_global_pos ? C_TEXT : C_DIM, 2);
         }
 
         // ALT AGL
@@ -478,7 +484,7 @@ void draw_topbar(const VehicleState& vs,
             char v[24];
             if (vs.has_global_pos) snprintf(v, sizeof(v), "%.1f m", (double)vs.alt_rel);
             else                   snprintf(v, sizeof(v), "--");
-            cell("ALT AGL", v, C_LABEL, vs.has_global_pos ? C_TEXT : C_DIM);
+            cell("ALT AGL", v, C_LABEL, vs.has_global_pos ? C_TEXT : C_DIM, 6);
         }
 
         // SPEED
@@ -489,7 +495,7 @@ void draw_topbar(const VehicleState& vs,
                          (double)vs.airspeed, (double)vs.groundspeed);
             else
                 snprintf(v, sizeof(v), "--");
-            cell("SPEED m/s", v, C_LABEL, vs.has_vfr ? C_TEXT : C_DIM);
+            cell("SPEED m/s", v, C_LABEL, vs.has_vfr ? C_TEXT : C_DIM, 5);
         }
 
         // HDG
@@ -497,7 +503,7 @@ void draw_topbar(const VehicleState& vs,
             char v[16];
             if (vs.has_vfr) snprintf(v, sizeof(v), "%03d\xc2\xb0", (int)vs.heading);
             else            snprintf(v, sizeof(v), "---");
-            cell("HDG", v, C_LABEL, vs.has_vfr ? C_TEXT : C_DIM);
+            cell("HDG", v, C_LABEL, vs.has_vfr ? C_TEXT : C_DIM, 3);
         }
 
         // PWR
@@ -515,14 +521,14 @@ void draw_topbar(const VehicleState& vs,
             }
             const ImU32 vc = vs.has_sys_status
                              ? ImGui::ColorConvertFloat4ToU32(col_battery(frac)) : C_DIM;
-            cell("PWR", v, C_LABEL, vc);
+            cell("PWR", v, C_LABEL, vc, 8);
         }
 
         // MODE
         const std::string mode_txt = vs.has_heartbeat ? mode_display_name(vs)
                                                       : std::string("--");
         cell("MODE", mode_txt.c_str(),
-             C_LABEL, vs.has_heartbeat ? C_AMBER : C_DIM);
+             C_LABEL, vs.has_heartbeat ? C_AMBER : C_DIM, 9);
 
         // LINK DATA / parse errors
         {
@@ -531,13 +537,59 @@ void draw_topbar(const VehicleState& vs,
                 snprintf(v, sizeof(v), "%.1f kB", total_bytes / 1024.0);
             else
                 snprintf(v, sizeof(v), "%llu B", (unsigned long long)total_bytes);
-            cell("RX", v, C_LABEL, C_LABEL);
+            cell("RX", v, C_LABEL, C_LABEL, 1);
 
             if (parse_errors > 0) {
                 char e[24];
                 snprintf(e, sizeof(e), "%llu", (unsigned long long)parse_errors);
-                cell("ERR", e, C_ERROR, C_ERROR);
+                cell("ERR", e, C_ERROR, C_ERROR, 7);
             }
+        }
+
+        // Widths: the widest each cell has been. A value that gains a digit —
+        // the message count, RX rolling over into kB — must not shuffle the row
+        // or flick a neighbour in and out at the edge.
+        static std::unordered_map<std::string, float> s_cell_w;
+        std::vector<float> widths(cells.size());
+        float total = 0.0f;
+        for (size_t i = 0; i < cells.size(); ++i) {
+            const float lw = ui_tracked_width(fm, UI_SZ_MICRO, cells[i].label);
+            const float vw = fu->CalcTextSizeA(17.0f, FLT_MAX, 0.0f,
+                                               cells[i].value.c_str()).x;
+            float& w = s_cell_w[cells[i].label];
+            w = std::max(w, std::max(lw, vw) + CELL_PAD * 2.0f);
+            widths[i] = w;
+            total    += w;
+        }
+
+        // Drop the least important until the row fits.
+        std::vector<bool> shown(cells.size(), true);
+        const float room = cells_clip_x - x;
+        while (total > room) {
+            int drop = -1;
+            for (size_t i = 0; i < cells.size(); ++i)
+                if (shown[i] && (drop < 0 || cells[i].keep < cells[drop].keep))
+                    drop = (int)i;
+            if (drop < 0) break;
+            shown[drop] = false;
+            total -= widths[drop];
+        }
+
+        for (size_t i = 0; i < cells.size(); ++i) {
+            if (!shown[i]) continue;
+            const Cell& c  = cells[i];
+            const float cw = widths[i];
+            ui_tracked_text(dl, fm, UI_SZ_MICRO,
+                            { wp.x + x + CELL_PAD, wp.y + LABEL_Y }, c.label_col, c.label);
+            dl->AddText(fu, 17.0f,
+                        { wp.x + x + CELL_PAD, wp.y + VALUE_Y }, c.value_col,
+                        c.value.c_str());
+
+            // right-hand rule
+            dl->AddLine({ wp.x + x + cw, wp.y + 9.0f },
+                        { wp.x + x + cw, wp.y + TOPBAR_H - 9.0f },
+                        ui_col(g_theme.separator, 0.75f), 1.0f);
+            x += cw;
         }
 
         dl->PopClipRect();

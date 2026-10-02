@@ -878,6 +878,15 @@ void draw_map_view(double lat, double lon, bool has_pos,
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2      wp = ImGui::GetWindowPos();
 
+    // CENTER, top-left: puts the map back on the active vehicle and keeps it
+    // there, which a drag gives up. Its rect is fixed so the input below can
+    // leave it alone — a press on it must not also pan, pick or open GO HERE.
+    constexpr float CTR_W = 64.0f, CTR_H = 40.0f, OVL_M = 8.0f;
+    const ImVec2 ctr0 = { wp.x + OVL_M, wp.y + OVL_M };
+    const ImVec2 ctr1 = { ctr0.x + CTR_W, ctr0.y + CTR_H };
+    const bool   map_hovered = ImGui::IsWindowHovered() &&
+                               !ImGui::IsMouseHoveringRect(ctr0, ctr1, false);
+
     // ── Keep centered on vehicle until user pans ───────────────────────────────
     if (has_pos && (!g_map.initialized || g_map.follow)) {
         g_map.center_lat = lat;
@@ -891,7 +900,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
     // ── Input ─────────────────────────────────────────────────────────────────
     const bool pick_active = pick && pick->active_index >= 0;
 
-    if (ImGui::IsWindowHovered()) {
+    if (map_hovered) {
         if (pick_active) {
             // Show a hand cursor so the user knows the map is clickable
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -933,7 +942,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
         double tl_py = cy * TILE_PX - win_h * 0.5;
 
         // ── Pick-mode click → lat/lon ─────────────────────────────────────────
-        if (pick_active && ImGui::IsWindowHovered() &&
+        if (pick_active && map_hovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             const ImVec2 mouse = ImGui::GetMousePos();
             double tx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
@@ -947,7 +956,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
         // ── Right-click → GO HERE menu ────────────────────────────────────────
         // Not while picking a waypoint: the mouse belongs to that gesture, and a
         // second target offered mid-pick is one the operator did not ask for.
-        if (go && !pick_active && ImGui::IsWindowHovered() &&
+        if (go && !pick_active && map_hovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             const ImVec2 mouse = ImGui::GetMousePos();
             double gx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
@@ -1200,7 +1209,20 @@ void draw_map_view(double lat, double lon, bool has_pos,
             const float w1 = ui_tracked_width(fm, UI_SZ_MICRO, l1);
             const float w2 = ui_tracked_width(fm, UI_SZ_MICRO, l2);
             const float bw = std::max(w1, w2) + 16.0f;
-            const ImVec2 b0 = { wp.x + 8.0f, wp.y + 8.0f };
+
+            // CENTER, lit while the map is following. Without a position there
+            // is nothing to centre on.
+            ImGui::SetCursorScreenPos(ctr0);
+            ImGui::BeginDisabled(!has_pos);
+            if (ui_tab_button("CENTER##map_center", { CTR_W, CTR_H }, g_map.follow) &&
+                has_pos) {
+                g_map.follow     = true;
+                g_map.center_lat = lat;
+                g_map.center_lon = lon;
+            }
+            ImGui::EndDisabled();
+
+            const ImVec2 b0 = { ctr1.x + 6.0f, wp.y + OVL_M };
             const ImVec2 b1 = { b0.x + bw,   b0.y + 40.0f };
             dl->AddRectFilled(b0, b1, ui_col(g_theme.bg_topbar, 0.78f));
             ui_frame(dl, b0, b1, ui_col(g_theme.separator, 0.7f));

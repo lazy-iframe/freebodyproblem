@@ -1368,7 +1368,7 @@ void draw_map_overlay(const VehicleState& vs)
     // "Normal size" is the size these had before the map went fullscreen, which
     // is the right sidebar's width — the width the map took in the first place.
     const GcsLayout l      = GcsLayout::compute();
-    const float     full_w = std::min(l.right_w, mw * 0.5f);
+    float           full_w = std::min(l.right_w, mw * 0.5f);
 
     // Resting width: the attitude ball sets it, rather than being fitted into a
     // box sized for something else — it is the widest thing in here, and a
@@ -1381,7 +1381,17 @@ void draw_map_overlay(const VehicleState& vs)
     // the block sane on a small window.
     const float ball_small = std::min(184.0f, (mw * 0.34f - PAD * 2.0f) * 0.605f);
 
-    const float w      = (hud_big || log_big) ? full_w : ball_small + PAD * 2.0f;
+    // But never narrower than its text: the ATTITUDE header with the widest
+    // R / P readout beside it, and the GND / HDG / CLB strip, in glyphs of the
+    // body font like the sidebars. On a small map the ball shrinks and sits in
+    // the middle of the wider block; the words do not shrink with it.
+    constexpr float OVERLAY_MIN_CH = 30.0f;
+    const float small_w = std::min(std::max(ball_small + PAD * 2.0f,
+                                            OVERLAY_MIN_CH * layout_glyph_w()),
+                                   mw - MARGIN * 2.0f);
+    full_w = std::max(full_w, small_w);
+
+    const float w      = (hud_big || log_big) ? full_w : small_w;
     const float ball_h = hud_big ? std::min(w - PAD * 2.0f, mh * 0.45f)
                                  : ball_small;
 

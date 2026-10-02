@@ -18,93 +18,101 @@
 
 #pragma once
 #include "theme.hpp"
+#include "ui_kit.hpp"
+#include "layout_rules.hpp"
 #include <algorithm>
+#include <cfloat>
 
 // ── GCS screen layout ─────────────────────────────────────────────────────────
 //
 //  ┌──────────────────────── TOPBAR (60px) ───────────────────────────────────┐
-//  ├────────────────────┬────────────────────┬────┬───────────────────────────┤
-//  │ LEFT SIDEBAR       │ VIDEO 16:9 (top)   │ PL │ RIGHT SIDEBAR             │
-//  │ (computed for 16:9)├────────────────────┤ UG │  HUD / Sys msgs / MAVLink │
-//  │                    │ MAP   (bot)        │ IN │                           │
-//  └────────────────────┴────────────────────┴────┴───────────────────────────┘
+//  ├────────────────────┬───── CENTRE HEADER ───────┬────┬────────────────────┤
+//  │ LEFT SIDEBAR       │ VIDEO 16:9 (top)          │ PL │ RIGHT SIDEBAR      │
+//  │ (sized by its text)├───────────────────────────┤ UG │  HUD / Sys msgs /  │
+//  │                    │ MAP   (bot)               │ IN │  MAVLink           │
+//  └────────────────────┴───────────────────────────┴────┴────────────────────┘
 //
-// The rail is a column of its own here, paid for out of the sidebars, so it
-// never covers the picture. Fullscreen is the exception: with the sidebars gone
-// there is nothing left to take the width from, so there the rail floats over
-// the feed's right edge instead.
+// On a wide screen the centre turns on its side: MAP | VIDEO, the feed against
+// the rail. On a narrow one the right sidebar and the rail go and the centre is
+// the feed or the map, fullscreen. The rules that decide all of this are in
+// layout_rules.hpp; this file feeds them the live window and font.
 //
-// LEFT_FRAC is fixed; center_w = remainder; video_h is derived for 16:9.
-// Adjust LEFT_FRAC / RIGHT_FRAC to reflow all panels simultaneously.
+// The rail is a column of its own here, paid for out of the centre, so it never
+// covers the picture. Fullscreen is the exception: with the sidebars gone there
+// is nothing left to take the width from, so there the rail floats over the
+// feed's right edge instead.
 
 static constexpr float TOPBAR_H    = 60.0f;
 
-// The centre column is sized so its 16:9 video box leaves roughly half the
-// column height for the map — widening the sidebars is what buys map height.
-//
-// Both fractions are trimmed by 2 points to pay for the plugin rail. The
-// sidebars are the right place to take it from: they are wide, and the video is
-// the one panel where covered pixels are information lost.
-static constexpr float LEFT_FRAC  = 0.24f;
-static constexpr float RIGHT_FRAC = 0.25f;
+// The centre view's header strip — the title and the VIDEO / MAP / SWARM
+// buttons. Here rather than in center_view.cpp because the swarm layout sits
+// under it too.
+static constexpr float CENTER_HEADER_H = 30.0f;
 
 // Plugin rail — the column of square user-function buttons down the right edge
 // of the centre band. Fixed pixels, not a fraction: the buttons are square and
 // a fixed size, so a proportional rail would only pad the margins.
 static constexpr float PLUGIN_RAIL_W = 92.0f;
 
+// The width of one glyph of the body font, which is what the sidebars are
+// measured in. Read off the font rather than assumed, so a different font or
+// size moves the whole layout with it.
+inline float layout_glyph_w()
+{
+    ImFont* f = ImGui::GetIO().FontDefault ? ImGui::GetIO().FontDefault
+                                           : ImGui::GetFont();
+    const float w = f ? f->CalcTextSizeA(UI_SZ_BODY, FLT_MAX, 0.0f, "0").x : 0.0f;
+    return w > 0.0f ? w : 7.0f;
+}
+
 struct GcsLayout {
     float top;       // y where panels start (= TOPBAR_H)
     float total_h;   // usable panel height
 
+    // Too narrow for both sidebars beside a centre: no right sidebar, no rail,
+    // and the centre is only ever the feed or the map, fullscreen.
+    bool  narrow;
+
     float left_x,   left_w;
-    float center_x, center_w;   // centre column: video over map
+    float center_x, center_w;   // centre column: video and map
     float plugin_x, plugin_w;   // rail column, right of the centre column
     float right_x,  right_w;
-
-    float video_h;   // top half of center
-    float map_h;     // bottom half of center
     float band_w;    // = center_w + plugin_w: the whole centre band
 
-    static GcsLayout compute()
+    // MAP + VIDEO, below the centre header.
+    CenterSplit split;
+
+    static GcsLayout compute(float sw, float sh, float ch)
     {
-        const ImGuiIO& io = ImGui::GetIO();
-        const float sw = io.DisplaySize.x;
-        const float sh = io.DisplaySize.y;
+        const LayoutColumns c = layout_columns(sw, ch, PLUGIN_RAIL_W);
 
         GcsLayout l;
         l.top     = TOPBAR_H;
         l.total_h = sh - TOPBAR_H;
+        l.narrow  = c.narrow;
 
-        l.left_w   = sw * LEFT_FRAC;
         l.left_x   = 0.0f;
-        l.right_w  = sw * RIGHT_FRAC;
-        l.right_x  = sw - l.right_w;
-
-        // The rail is carved out of the middle band and runs its full height,
-        // so video and map are both that much narrower than the band.
-        l.band_w   = sw - l.left_w - l.right_w;
-        l.plugin_w = PLUGIN_RAIL_W;
-        l.center_w = l.band_w - l.plugin_w;
-        l.center_x = l.left_w;
+        l.left_w   = c.left_w;
+        l.center_x = c.left_w;
+        l.center_w = c.center_w;
+        l.plugin_w = c.narrow ? 0.0f : PLUGIN_RAIL_W;
         l.plugin_x = l.center_x + l.center_w;
+        l.band_w   = l.center_w + l.plugin_w;
+        l.right_w  = c.right_w;
+        l.right_x  = c.narrow ? sw : sw - c.right_w;
 
-        // Derive video_h for the 16:9 aspect ratio; map gets the height left over.
-        l.video_h = l.center_w * (9.0f / 16.0f);
-        l.map_h   = l.total_h - l.video_h;
-        if (l.map_h < 80.0f) {        // clamp on very wide / short windows
-            l.map_h   = 80.0f;
-            l.video_h = l.total_h - l.map_h;
-        }
-
+        const float content_top = l.top + CENTER_HEADER_H;
+        l.split = split_center({ l.center_x, content_top,
+                                 l.center_w, sh - content_top });
         return l;
     }
-};
 
-// The centre view's header strip — the title and the VIDEO / MAP / SWARM
-// buttons. Here rather than in center_view.cpp because the swarm layout sits
-// under it too.
-static constexpr float CENTER_HEADER_H = 30.0f;
+    static GcsLayout compute()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        return compute(io.DisplaySize.x, io.DisplaySize.y, layout_glyph_w());
+    }
+};
 
 // ── SWARM screen layout ───────────────────────────────────────────────────────
 //
