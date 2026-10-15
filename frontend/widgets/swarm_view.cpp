@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <unordered_set>
@@ -201,8 +202,10 @@ static int card_readouts(const SwarmVehicle& v, Readout* out, bool expanded)
             snprintf(r.value, sizeof(r.value), "%.1f m", (double)vs.alt_asl);
     }
     {
-        Readout& r = row("AIRSPD", vs.has_vfr ? val : none);
-        if (vs.has_vfr)
+        // NaN from PX4 without an airspeed sensor: no reading, not "nan".
+        const bool has_as = vs.has_vfr && std::isfinite(vs.airspeed);
+        Readout& r = row("AIRSPD", has_as ? val : none);
+        if (has_as)
             snprintf(r.value, sizeof(r.value), "%.1f m/s", (double)vs.airspeed);
     }
     {

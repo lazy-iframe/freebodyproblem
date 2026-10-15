@@ -26,6 +26,7 @@
 #include "../../backend/timesync.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <unordered_map>
@@ -490,9 +491,14 @@ void draw_topbar(const VehicleState& vs,
         // SPEED
         {
             char v[32];
-            if (vs.has_vfr)
+            // PX4 sends airspeed as NaN when no airspeed sensor feeds it —
+            // every multicopter — and says so on purpose rather than
+            // passing off an estimate. Shown as a dash, not "nan".
+            if (vs.has_vfr && std::isfinite(vs.airspeed))
                 snprintf(v, sizeof(v), "A%.1f \xc2\xb7 G%.1f",
                          (double)vs.airspeed, (double)vs.groundspeed);
+            else if (vs.has_vfr)
+                snprintf(v, sizeof(v), "A-- \xc2\xb7 G%.1f", (double)vs.groundspeed);
             else
                 snprintf(v, sizeof(v), "--");
             cell("SPEED m/s", v, C_LABEL, vs.has_vfr ? C_TEXT : C_DIM, 5);

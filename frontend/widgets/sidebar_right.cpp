@@ -158,7 +158,11 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
 
     if (has_vfr) {
         char as_buf[16];
-        snprintf(as_buf, sizeof(as_buf), "%.1f m/s", (double)airspeed_ms);
+        // NaN from PX4 without an airspeed sensor.
+        if (std::isfinite(airspeed_ms))
+            snprintf(as_buf, sizeof(as_buf), "%.1f m/s", (double)airspeed_ms);
+        else
+            snprintf(as_buf, sizeof(as_buf), "-- m/s");
         const float tw = (float)strlen(as_buf) * 6.0f * k + 6.0f * k;
         const float bx = cx - r * 0.60f - tw * 0.5f;
         const float by = cy - r * 0.62f;

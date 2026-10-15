@@ -728,6 +728,18 @@ CmdFlashState MavlinkSender::query_flash(uint16_t cmd) const
     return CmdFlashState::Normal;
 }
 
+CmdFlashState MavlinkSender::query_flash(uint16_t cmd, float p1, float p2, float p3) const
+{
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = cmd_states_.find(cmd);
+        if (it == cmd_states_.end() ||
+            it->second.p1 != p1 || it->second.p2 != p2 || it->second.p3 != p3)
+            return CmdFlashState::Normal;
+    }
+    return query_flash(cmd);
+}
+
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 void MavlinkSender::enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
@@ -765,5 +777,5 @@ void MavlinkSender::enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t c
 
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
-    cmd_states_[cmd] = { CmdFlashState::Pending, Clock::now() };
+    cmd_states_[cmd] = { CmdFlashState::Pending, Clock::now(), p1, p2, p3 };
 }

@@ -445,12 +445,15 @@ void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_tar
                 if (target_connected(t)) reachable = true;
                 if (!target_connected(t) || t.vs->custom_mode != h.mode)
                     is_active_mode = false;
-                // Flash on whichever command this particular button sends: a
-                // standard mode goes out as DO_SET_STANDARD_MODE, not
-                // DO_SET_MODE, and keying every button to 176 would leave those
-                // with no ACK feedback.
-                fs = merge_flash(fs, t.sender->query_flash(
-                    grp.prof->encode_set_mode(h.mode, h.standard_mode).command));
+                // Flash on exactly what this button sends — command and
+                // parameters. A standard mode goes out as DO_SET_STANDARD_MODE,
+                // not DO_SET_MODE, so keying to 176 alone would leave those with
+                // no ACK feedback; and every mode shares one of those two
+                // commands, so keying to the command alone lit every button
+                // that shares it when any one of them was accepted.
+                const SetModeCommand c = grp.prof->encode_set_mode(h.mode, h.standard_mode);
+                fs = merge_flash(fs, t.sender->query_flash(c.command,
+                                                           c.param1, c.param2, c.param3));
             }
 
             // ##group/index keeps the ImGui ID unique when two modes truncate

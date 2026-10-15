@@ -159,8 +159,10 @@ public:
     void request_message_interval(uint8_t target_sysid, uint8_t target_compid,
                                   uint32_t message_id, int32_t interval_us);
 
-    // Request AUTOPILOT_VERSION (#148) — call once after first contact.
-    // Triggers a COMMAND_ACK then an AUTOPILOT_VERSION response.
+    // Request AUTOPILOT_VERSION (#148) through MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES
+    // (520). Deprecated in the common set in favour of request_message(148),
+    // which is what the connect burst sends first; PX4 after v1.17 no longer
+    // answers this one. Kept as the fallback for stacks that predate 512.
     void request_autopilot_capabilities(uint8_t target_sysid, uint8_t target_compid);
 
     // Ask for AVAILABLE_MODES (#435) at mode_index 0. The spec calls this the
@@ -382,6 +384,14 @@ public:
     // Flash duration: ~600 ms for Accepted/Rejected, then returns to Normal
     CmdFlashState query_flash(uint16_t cmd) const;
 
+    // The same, for a button that is one of several sending `cmd` with
+    // different parameters — one per flight mode. COMMAND_ACK names only the
+    // command, so the ACK is credited to the last `cmd` sent, and this answers
+    // Normal unless that one carried these first three parameters: pressing
+    // Hold must not light every other button that also goes out as
+    // DO_SET_STANDARD_MODE.
+    CmdFlashState query_flash(uint16_t cmd, float p1, float p2, float p3) const;
+
 private:
     // Takes an already-acquired channel index, or -1 when none was free. The
     // public constructor delegates here so both channel members are set from a
@@ -397,6 +407,7 @@ private:
     struct CmdState {
         CmdFlashState state = CmdFlashState::Normal;
         std::chrono::steady_clock::time_point changed_at{};
+        float p1 = 0.f, p2 = 0.f, p3 = 0.f;   // of the last one sent
     };
 
     // This sender's MAVLink TX channel.

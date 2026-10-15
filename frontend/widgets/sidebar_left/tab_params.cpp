@@ -233,29 +233,65 @@ static bool param_out_of_range(const ParamMeta* meta, ParamKind kind, float v)
            (v < meta->min_val || v > meta->max_val);
 }
 
+// "0 – 1", or "≥ 0" / "≤ 20" where the page leaves one end open.
+static void format_range(const ParamMeta* meta, char* out, size_t n)
+{
+    const bool lo = meta->min_val > -PARAM_RANGE_OPEN;
+    const bool hi = meta->max_val <  PARAM_RANGE_OPEN;
+    if (lo && hi)
+        snprintf(out, n, "%.7g \xe2\x80\x93 %.7g", (double)meta->min_val, (double)meta->max_val);
+    else if (lo)
+        snprintf(out, n, "\xe2\x89\xa5 %.7g", (double)meta->min_val);
+    else
+        snprintf(out, n, "\xe2\x89\xa4 %.7g", (double)meta->max_val);
+}
+
+// Which firmware's documentation fits a vehicle, or nullptr for none.
+//
+// ArduPilot's is Copter's only: Plane's and Rover's tables differ from it in
+// exactly the vehicle-specific entries an operator is likeliest to open. PX4
+// publishes one table for every airframe. A parameter one stack shares by
+// name with the other is a different parameter, so neither stands in for the
+// other.
+static const ParamDocSource* param_docs_for(const VehicleState* vs)
+{
+    if (!vs) return nullptr;
+    if (vs->autopilot == MAV_AUTOPILOT_PX4) return &param_docs_px4;
+    if (vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA &&
+        rc_firmware_for((MAV_TYPE)vs->type) == RcFirmware::Copter)
+        return &param_docs_arducopter;
+    return nullptr;
+}
+
 // The body of the "i" popup: everything the reference says about one
 // parameter, then the vehicle's side of it — how it stores the value and what
 // it holds now. `shown` is the row's value, staged edit included.
 //
-// `has_ref` says whether the vehicle is one the reference covers at all;
+// `docs` is the documentation that fits the vehicle, nullptr for none;
 // `fw_doc` is the release the vehicle runs (-1 unknown) and `doc` the one
 // `meta`'s text was published for.
 static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
-                            ParamKind kind, float shown, bool has_ref,
+                            ParamKind kind, float shown, const ParamDocSource* docs,
                             int fw_doc, int doc)
 {
     ui_dialog_title(p.param_id, INFO_W);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + INFO_W);
 
     if (!meta) {
-        ImGui::TextDisabled("%s", has_ref
-            ? "Not in any stable ArduPilot Copter parameter reference (V4.0.0 on)."
-            : "No parameter reference for this vehicle " "\xe2\x80\x94 "
-              "only ArduPilot Copter is covered.");
+        if (docs) {
+            char first[16], last[16];
+            param_doc_version_label(*docs, 0, first, sizeof(first));
+            param_doc_version_label(*docs, (int)docs->version_count - 1, last, sizeof(last));
+            ImGui::TextDisabled("Not in any %s parameter reference (%s to %s).",
+                                docs->name, first, last);
+        } else {
+            ImGui::TextDisabled("No parameter reference for this vehicle " "\xe2\x80\x94 "
+                                "only ArduPilot Copter and PX4 are covered.");
+        }
         ImGui::Spacing();
     } else {
         char doc_lbl[16];
-        param_doc_version_label(doc, doc_lbl, sizeof(doc_lbl));
+        param_doc_version_label(*docs, doc, doc_lbl, sizeof(doc_lbl));
 
         ImGui::TextColored(accent_col(), "%s", meta->display_name);
         if (meta->variant)
@@ -266,11 +302,11 @@ static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
         // documented only before or after it.
         if (fw_doc >= 0 && doc != fw_doc) {
             char fw_lbl[16];
-            param_doc_version_label(fw_doc, fw_lbl, sizeof(fw_lbl));
+            param_doc_version_label(*docs, fw_doc, fw_lbl, sizeof(fw_lbl));
             ImGui::TextColored(col_reboot(), "Not in the %s reference " "\xe2\x80\x94 "
                                "shown as documented for %s", fw_lbl, doc_lbl);
         } else {
-            ImGui::TextDisabled("Copter %s reference%s", doc_lbl,
+            ImGui::TextDisabled("%s %s reference%s", docs->name, doc_lbl,
                                 fw_doc < 0 ? " (firmware version not known yet)" : "");
         }
         ImGui::Spacing();
@@ -302,11 +338,28 @@ static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
                  param_kind_name(kind), param_mav_type_name(p.type));
         if (meta && meta->units)
             info_row("Units", "%s", meta->units);
-        if (meta && meta->has(PARAM_FLAG_HAS_RANGE))
-            info_row("Range", "%.7g \xe2\x80\x93 %.7g",
-                     (double)meta->min_val, (double)meta->max_val);
+        if (meta && meta->has(PARAM_FLAG_HAS_RANGE)) {
+            char rng[64];
+            format_range(meta, rng, sizeof(rng));
+            info_row("Range", "%s", rng);
+        }
         if (meta && meta->has(PARAM_FLAG_HAS_INCREMENT))
             info_row("Increment", "%.7g", (double)meta->increment);
+        if (meta && meta->has(PARAM_FLAG_HAS_DEFAULT)) {
+            const float d = meta->default_val;
+            const ParamEnumEntry* named = nullptr;
+            for (int i = 0; i < meta->enum_count; ++i)
+                if (meta->enum_entries[i].value == d) named = &meta->enum_entries[i];
+            if (kind == ParamKind::Bitmask) {
+                char hex[16];
+                bitmask_hex(hex, sizeof(hex), bitmask_from_value(d, p.type), p.type);
+                info_row("Default", "%s  (%.0f)", hex, (double)d);
+            } else if (named) {
+                info_row("Default", "%.7g  %s", (double)d, named->label);
+            } else {
+                info_row("Default", "%.7g", (double)d);
+            }
+        }
         if (meta && meta->group)
             info_row("Group", "%s", meta->group);
 
@@ -483,17 +536,12 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     // the *stale* value over the vehicle's newer one.
     auto& edited_vals = st().edited_vals;
 
-    // The reference is ArduPilot Copter's, and only means anything against
-    // that: a PX4 parameter that happens to share a name is a different
-    // parameter, and Plane's and Rover's tables differ from Copter's in
-    // exactly the vehicle-specific entries an operator is likeliest to open.
-    const bool has_ref = vs && vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA &&
-                         rc_firmware_for((MAV_TYPE)vs->type) == RcFirmware::Copter;
+    const ParamDocSource* docs = param_docs_for(vs);
     const bool heli    = vs && vs->type == MAV_TYPE_HELICOPTER;
     // The release whose page fits the firmware, from AUTOPILOT_VERSION; until
     // that arrives, -1, which the lookup reads as the newest.
-    const int  fw_doc  = (has_ref && vs->has_fw_info)
-                       ? param_doc_version_for(vs->fw_version) : -1;
+    const int  fw_doc  = (docs && vs->has_fw_info)
+                       ? param_doc_version_for(*docs, vs->fw_version) : -1;
 
     // Rows the operator has moved away from the vehicle's value, in name order
     // so the write goes out and logs in the same order the list shows.
@@ -513,7 +561,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     // Staged values outside their documented range, for WRITE ALL to mention.
     int dirty_oor = 0;
     for (const ParamEntry* p : dirty) {
-        const ParamMeta* meta = has_ref ? get_param_meta(p->param_id, heli, fw_doc) : nullptr;
+        const ParamMeta* meta = docs ? get_param_meta(*docs, p->param_id, heli, fw_doc) : nullptr;
         if (param_out_of_range(meta, param_effective_kind(meta, p->type),
                                edited_vals[p->param_id]))
             ++dirty_oor;
@@ -845,17 +893,18 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
     // Which page the rows are read against, so a mismatch is visible before
     // anyone opens an "i".
-    if (has_ref) {
-        size_t n_docs = 0;
-        param_doc_versions(&n_docs);
+    if (docs) {
         char lbl[16];
-        param_doc_version_label(fw_doc >= 0 ? fw_doc : (int)n_docs - 1, lbl, sizeof(lbl));
+        param_doc_version_label(*docs, fw_doc >= 0 ? fw_doc : (int)docs->version_count - 1,
+                                lbl, sizeof(lbl));
         if (fw_doc >= 0)
-            ImGui::TextDisabled("Docs: Copter %s reference (firmware %s)", lbl, vs->fw_version);
+            ImGui::TextDisabled("Docs: %s %s reference (firmware %s)",
+                                docs->name, lbl, vs->fw_version);
         else
-            ImGui::TextDisabled("Docs: Copter %s reference until the firmware reports its version", lbl);
+            ImGui::TextDisabled("Docs: %s %s reference until the firmware reports its version",
+                                docs->name, lbl);
     } else if (vs && vs->has_heartbeat) {
-        ImGui::TextDisabled("Docs: none for this vehicle (ArduPilot Copter only)");
+        ImGui::TextDisabled("Docs: none for this vehicle (ArduPilot Copter and PX4 only)");
     }
     ImGui::Spacing();
 
@@ -901,8 +950,8 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             ImGui::PushID(p.param_id);
 
             int doc = -1;
-            const ParamMeta* meta = has_ref
-                ? get_param_meta(p.param_id, heli, fw_doc, &doc) : nullptr;
+            const ParamMeta* meta = docs
+                ? get_param_meta(*docs, p.param_id, heli, fw_doc, &doc) : nullptr;
             const ParamKind  kind = param_effective_kind(meta, p.type);
             const bool       ro   = meta && meta->has(PARAM_FLAG_READONLY);
 
@@ -1053,9 +1102,11 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 }
                 if (oor) {
                     ImGui::PopStyleColor(2);
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Outside the documented range %.7g \xe2\x80\x93 %.7g",
-                                          (double)meta->min_val, (double)meta->max_val);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        char rng[64];
+                        format_range(meta, rng, sizeof(rng));
+                        ImGui::SetTooltip("Outside the documented range %s", rng);
+                    }
                 }
             }
             ImGui::EndDisabled();
@@ -1100,7 +1151,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             ui_push_dialog_style();
             if (ImGui::BeginPopup("##param_info")) {
-                draw_param_info(p, meta, kind, edit_val, has_ref, fw_doc, doc);
+                draw_param_info(p, meta, kind, edit_val, docs, fw_doc, doc);
                 ImGui::EndPopup();
             }
             ui_pop_dialog_style();
@@ -1116,11 +1167,12 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                 : ui_grid_button("WRITE", { write_w, 0.0f });
             if (wrote) {
                 sender->set_param(tsys, tcomp, p.param_id, edit_val, p.type);
-                if (param_out_of_range(meta, kind, edit_val))
-                    gcs_log("writing %s = %.6g (outside documented range %.6g \xe2\x80\x93 %.6g)",
-                            p.param_id, (double)edit_val,
-                            (double)meta->min_val, (double)meta->max_val);
-                else
+                if (param_out_of_range(meta, kind, edit_val)) {
+                    char rng[64];
+                    format_range(meta, rng, sizeof(rng));
+                    gcs_log("writing %s = %.6g (outside documented range %s)",
+                            p.param_id, (double)edit_val, rng);
+                } else
                     gcs_log("writing %s = %.6g", p.param_id, (double)edit_val);
             }
             ImGui::EndDisabled();

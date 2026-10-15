@@ -23,26 +23,32 @@
 
 // ── Parameter metadata ───────────────────────────────────────────────────────
 //
-// What ArduPilot documents about each parameter: what it is, its units and
-// range, the values it accepts. The table itself is param_meta_generated.cpp,
-// produced by scripts/gen_param_meta.py from the published Copter parameter
-// list of every stable release from 4.0.0 on
-// (https://ardupilot.org/copter/docs/parameters.html, "another version") and
-// checked in — rerun the script when a new stable release appears.
+// What a firmware's documentation says about each parameter: what it is, its
+// units and range, the values it accepts. One table per documented firmware,
+// each a ParamDocSource generated from that firmware's published reference
+// for every release and checked in — rerun the script when a release appears:
+//
+//   param_docs_arducopter   param_meta_arducopter.cpp, scripts/gen_param_meta_arducopter.py
+//                           https://ardupilot.org/copter/docs/parameters.html,
+//                           every stable release from 4.0.0
+//   param_docs_px4          param_meta_px4.cpp, scripts/gen_param_meta_px4.py
+//                           https://docs.px4.io/main/en/advanced_config/parameter_reference,
+//                           every release from v1.12 ("main" left out)
 //
 // Parameters come and go between releases and their documentation changes —
 // ARMING_CHECK became ARMING_SKIPCHK, WPNAV_SPEED in cm/s became WP_SPD in
-// m/s — so the table is the superset of all of them. Each record carries the
+// m/s — so a table is the superset of all of them. Each record carries the
 // releases it was published for, and the lookup takes the release the
 // vehicle runs.
 
 // What kind of value a parameter holds, and so which widget edits it.
 //
 // Bitmask is the page's own word. Enum nearly is: the page's Values list,
-// unless it also gives a Range or a fractional value — then the values are
-// landmarks on a continuum (ATC_INPUT_TC's 0.5 "Very Soft" in 0 to 1), the
-// parameter is a plain number, and enum_entries holds them as suggestions.
-// Int and Float are not the page's word at all: the page
+// unless the range admits values the list does not name or a value is
+// fractional — then the values are landmarks on a continuum (ATC_INPUT_TC's
+// 0.5 "Very Soft" in 0 to 1), the parameter is a plain number, and
+// enum_entries holds them as suggestions. A PX4 boolean is an Enum of
+// Disabled/Enabled. Int and Float are PX4's word; ArduPilot's page
 // never names a storage type, so the generator calls a plain number an Int
 // when its step and range are whole. The vehicle does know — PARAM_VALUE
 // carries the type — and param_effective_kind() prefers that.
@@ -59,7 +65,11 @@ enum : uint8_t {
     PARAM_FLAG_VOLATILE      = 1 << 4,   // changed by the firmware itself
     PARAM_FLAG_HAS_RANGE     = 1 << 5,
     PARAM_FLAG_HAS_INCREMENT = 1 << 6,
+    PARAM_FLAG_HAS_DEFAULT   = 1 << 7,   // PX4 documents defaults, ArduPilot does not
 };
+
+// A range end the page leaves open ("[0, ?]") is stored as ±FLT_MAX.
+constexpr float PARAM_RANGE_OPEN = 3.4028234663852886e38f;
 
 struct ParamMeta {
     const char*            name;
@@ -73,13 +83,14 @@ struct ParamMeta {
     float                  min_val;        // valid with PARAM_FLAG_HAS_RANGE
     float                  max_val;
     float                  increment;      // valid with PARAM_FLAG_HAS_INCREMENT
+    float                  default_val;    // valid with PARAM_FLAG_HAS_DEFAULT
     uint8_t                flags;
     ParamKind              kind;
     const ParamEnumEntry*  enum_entries;   // Enum's values, or a number's suggested ones
     int                    enum_count;
     const ParamBitmaskBit* bitmask_bits;   // set for Bitmask, else nullptr
     int                    bitmask_count;
-    // Bit i set: release i of param_doc_versions() documents this parameter
+    // Bit i set: release i of its source's versions documents this parameter
     // with exactly this text.
     uint64_t               versions;
 
@@ -88,28 +99,38 @@ struct ParamMeta {
 
 struct ParamDocVersion { uint8_t major, minor, patch; };
 
-// The whole table, sorted by name; a name's variants and per-release
-// revisions sit together. Defined in param_meta_generated.cpp.
-const ParamMeta* param_meta_table(size_t* count);
+// One firmware's documentation.
+struct ParamDocSource {
+    const char*            name;           // "Copter", "PX4"
+    // Sorted by name; a name's variants and per-release revisions sit together.
+    const ParamMeta*       params;
+    size_t                 param_count;
+    // The releases documented, oldest first.
+    const ParamDocVersion* versions;
+    size_t                 version_count;
+    // One page per minor release (PX4): labelled "v1.15", and a 1.15.4
+    // vehicle reads it. Otherwise one per patch release, "V4.5.7".
+    bool                   minor_releases;
+};
 
-// The stable releases the table was built from, oldest first.
-const ParamDocVersion* param_doc_versions(size_t* count);
+extern const ParamDocSource param_docs_arducopter;
+extern const ParamDocSource param_docs_px4;
 
-// Index into param_doc_versions() of the reference that fits a firmware
-// version string such as "4.5.7": the newest documented release not newer
-// than it, so a 4.5.8 that has no page of its own reads 4.5.7's. Firmware
-// older than every page gets the oldest. -1 when the string is not a version
-// (no AUTOPILOT_VERSION yet).
-int param_doc_version_for(const char* fw_version);
+// Index into src.versions of the reference that fits a firmware version
+// string such as "4.5.7": the newest documented release not newer than it,
+// so a 4.5.8 that has no page of its own reads 4.5.7's. Firmware older than
+// every page gets the oldest. -1 when the string is not a version (no
+// AUTOPILOT_VERSION yet).
+int param_doc_version_for(const ParamDocSource& src, const char* fw_version);
 
-// "V4.5.7" for a param_doc_versions() index.
-void param_doc_version_label(int index, char* out, size_t n);
+// "V4.5.7" or "v1.15" for a src.versions index.
+void param_doc_version_label(const ParamDocSource& src, int index, char* out, size_t n);
 
-// Metadata for a parameter ID, or nullptr if no stable release documents it.
+// Metadata for a parameter ID, or nullptr if no release documents it.
 //
-// `version` is a param_doc_versions() index, or -1 for unknown, which reads
-// as the newest. The record published for that release wins; failing that —
-// a parameter the vehicle has but its release's page left out — the one
+// `version` is a src.versions index, or -1 for unknown, which reads as the
+// newest. The record published for that release wins; failing that — a
+// parameter the vehicle has but its release's page left out — the one
 // published nearest to it. `*doc_version`, when given, receives the release
 // whose text was returned, which differs from `version` exactly when the
 // match was not exact.
@@ -119,12 +140,12 @@ void param_doc_version_label(int index, char* out, size_t n);
 //
 // A numbered instance no page lists on its own falls back to the first
 // instance's entry: indexed families share their documentation.
-const ParamMeta* get_param_meta(const char* param_id, bool heli, int version,
-                                int* doc_version = nullptr);
+const ParamMeta* get_param_meta(const ParamDocSource& src, const char* param_id,
+                                bool heli, int version, int* doc_version = nullptr);
 
 // The kind to edit a parameter as: the page's Enum/Bitmask as they are, a
 // plain number as Int or Float by what the vehicle says it stores
-// (MAV_PARAM_TYPE), the page's guess only when the vehicle has not said.
+// (MAV_PARAM_TYPE), the page's word only when the vehicle has not said.
 // Works without metadata too, for parameters the page does not list.
 ParamKind param_effective_kind(const ParamMeta* meta, uint8_t mav_param_type);
 

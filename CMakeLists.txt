@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.6.0 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.6.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -373,7 +373,8 @@ add_executable(freebodyproblem
     frontend/widgets/ui_kit.cpp
     frontend/widgets/vehicle_ui_state.cpp
     frontend/widgets/param_meta.cpp
-    frontend/widgets/param_meta_generated.cpp
+    frontend/widgets/param_meta_arducopter.cpp
+    frontend/widgets/param_meta_px4.cpp
     backend/mavlink_parser.cpp
 )
 target_include_directories(freebodyproblem PRIVATE

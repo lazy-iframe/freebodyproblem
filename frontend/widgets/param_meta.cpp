@@ -26,37 +26,28 @@
 #include <initializer_list>
 #include <string>
 
-static int newest_doc_version()
-{
-    size_t n = 0;
-    param_doc_versions(&n);
-    return (int)n - 1;
-}
-
-int param_doc_version_for(const char* fw_version)
+int param_doc_version_for(const ParamDocSource& src, const char* fw_version)
 {
     unsigned ma = 0, mi = 0, pa = 0;
     if (!fw_version || std::sscanf(fw_version, "%u.%u.%u", &ma, &mi, &pa) != 3)
         return -1;
     const uint32_t fw = (ma << 16) | (mi << 8) | pa;
 
-    size_t n = 0;
-    const ParamDocVersion* v = param_doc_versions(&n);
     int best = 0;
-    for (size_t i = 0; i < n; ++i) {
-        const uint32_t doc = ((uint32_t)v[i].major << 16) |
-                             ((uint32_t)v[i].minor << 8) | v[i].patch;
+    for (size_t i = 0; i < src.version_count; ++i) {
+        const ParamDocVersion& v = src.versions[i];
+        const uint32_t doc = ((uint32_t)v.major << 16) | ((uint32_t)v.minor << 8) | v.patch;
         if (doc <= fw) best = (int)i;
     }
     return best;
 }
 
-void param_doc_version_label(int index, char* out, size_t n)
+void param_doc_version_label(const ParamDocSource& src, int index, char* out, size_t n)
 {
-    size_t count = 0;
-    const ParamDocVersion* v = param_doc_versions(&count);
-    if (index < 0 || (size_t)index >= count) { std::snprintf(out, n, "?"); return; }
-    std::snprintf(out, n, "V%u.%u.%u", v[index].major, v[index].minor, v[index].patch);
+    if (index < 0 || (size_t)index >= src.version_count) { std::snprintf(out, n, "?"); return; }
+    const ParamDocVersion& v = src.versions[index];
+    if (src.minor_releases) std::snprintf(out, n, "v%u.%u", v.major, v.minor);
+    else                    std::snprintf(out, n, "V%u.%u.%u", v.major, v.minor, v.patch);
 }
 
 // Releases between `version` and the nearest one in `mask`, and which that is.
@@ -78,11 +69,11 @@ static int nearest_in(uint64_t mask, int version, int* at)
 // for a heli and a non-heli one otherwise; how near its releases come to the
 // vehicle's. Ties keep table order, which puts the generator's preferred
 // variant first.
-static const ParamMeta* find_exact(const char* id, bool heli, int version, int* doc_version)
+static const ParamMeta* find_exact(const ParamDocSource& src, const char* id, bool heli,
+                                   int version, int* doc_version)
 {
-    size_t n = 0;
-    const ParamMeta* tab = param_meta_table(&n);
-    const ParamMeta* end = tab + n;
+    const ParamMeta* tab = src.params;
+    const ParamMeta* end = tab + src.param_count;
 
     const ParamMeta* lo = std::lower_bound(tab, end, id,
         [](const ParamMeta& m, const char* key) { return std::strcmp(m.name, key) < 0; });
@@ -105,15 +96,16 @@ static const ParamMeta* find_exact(const char* id, bool heli, int version, int* 
     return best;
 }
 
-const ParamMeta* get_param_meta(const char* param_id, bool heli, int version,
-                                int* doc_version)
+const ParamMeta* get_param_meta(const ParamDocSource& src, const char* param_id,
+                                bool heli, int version, int* doc_version)
 {
-    if (version < 0) version = newest_doc_version();
+    if (version < 0) version = (int)src.version_count - 1;
 
-    if (const ParamMeta* m = find_exact(param_id, heli, version, doc_version)) return m;
+    if (const ParamMeta* m = find_exact(src, param_id, heli, version, doc_version)) return m;
 
-    // Numbered instance no page lists: try each digit run as "1", then
-    // dropped — SERIAL9_BAUD → SERIAL1_BAUD, BATT9_MONITOR → BATT_MONITOR.
+    // Numbered instance no page lists: try each digit run as "1", "0" (PX4
+    // counts from 0), then dropped — SERIAL9_BAUD → SERIAL1_BAUD,
+    // CAL_ACC3_ID → CAL_ACC0_ID, BATT9_MONITOR → BATT_MONITOR.
     // One run at a time, so RC12_OPTION does not also renumber something else.
     const std::string id = param_id;
     for (size_t i = 0; i < id.size(); ) {
@@ -121,10 +113,10 @@ const ParamMeta* get_param_meta(const char* param_id, bool heli, int version,
         size_t j = i;
         while (j < id.size() && std::isdigit((unsigned char)id[j])) ++j;
 
-        for (const char* repl : { "1", "" }) {
+        for (const char* repl : { "1", "0", "" }) {
             const std::string alt = id.substr(0, i) + repl + id.substr(j);
             if (alt == id) continue;
-            if (const ParamMeta* m = find_exact(alt.c_str(), heli, version, doc_version))
+            if (const ParamMeta* m = find_exact(src, alt.c_str(), heli, version, doc_version))
                 return m;
         }
         i = j;

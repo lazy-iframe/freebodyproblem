@@ -102,7 +102,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
-- **Parameter management**: fetch, search, edit, and write parameters, each with ArduPilot's documentation for it one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
+- **Parameter management**: fetch, search, edit, and write parameters, each with its ArduPilot Copter or PX4 documentation one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
 - **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
 - **Flight modes**: quick mode switching with visual feedback (ArduCopter/Plane/Rover/Sub)
 - **EKF status**: variance bars for velocity, horizontal/vertical position, compass, terrain, and airspeed
@@ -595,23 +595,35 @@ nor writes anything until a file has been named, and the browser opens where
 the last one left off, so a save after a load lands beside what was loaded.
 SAVE asks before overwriting; LOAD does not, having nothing to overwrite.
 
-The documentation comes from ArduPilot's Copter parameter reference — the
-page for every stable release from 4.0.0 on
-([latest](https://ardupilot.org/copter/docs/parameters.html), with the others
-under its version picker) — merged by `scripts/gen_param_meta.py` into
-`frontend/widgets/param_meta_generated.cpp`, which is checked in; rerun the
-script when a new stable release comes out. Parameters are renamed and
-re-documented between releases (`ARMING_CHECK` became `ARMING_SKIPCHK`,
-`WPNAV_SPEED` in cm/s became `WP_SPD` in m/s), so once the vehicle reports its
-firmware version every row is read against that release's page, and the tab
-says which one. A parameter that release's page leaves out is shown as the
-nearest release documents it, and **i** says so. The pages name enums and
-bitmasks but not storage types, so a plain number is edited as an integer or
-a float by the type the vehicle reports. A list of values counts as an enum
-only when the page gives no range and every value is whole. Otherwise the
-values are named points within a range (`ATC_INPUT_TC`'s 0.5 "Very Soft",
-0.2 "Soft", … anywhere from 0 to 1), so the field stays free and **i** lists
-them as suggested values. Applied to ArduPilot Copter only.
+The documentation comes from each firmware's published parameter reference,
+one page per release, merged into a checked-in table. Rerun the script when a
+new release comes out:
+
+| Firmware | Releases | Source | Script → table |
+|---|---|---|---|
+| ArduPilot Copter | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/copter/docs/parameters.html) and its version picker | `scripts/gen_param_meta_arducopter.py` → `frontend/widgets/param_meta_arducopter.cpp` |
+| PX4 | every release from v1.12 (`main` left out) | [parameter_reference](https://docs.px4.io/main/en/advanced_config/parameter_reference) and its version dropdown | `scripts/gen_param_meta_px4.py` → `frontend/widgets/param_meta_px4.cpp` |
+
+Both scripts take `<out_cpp> [<cache_dir>]`; pages already in the cache are not
+fetched again.
+
+Parameters are renamed and re-documented between releases (`ARMING_CHECK`
+became `ARMING_SKIPCHK`, `WPNAV_SPEED` in cm/s became `WP_SPD` in m/s), so once
+the vehicle reports its firmware version every row is read against that
+release's page, and the tab says which one. PX4 publishes a page per minor
+release, so a 1.15.4 vehicle reads v1.15's. A parameter that release's page
+leaves out is shown as the nearest release documents it, and **i** says so.
+PX4's pages also give each parameter's default, which **i** shows.
+
+ArduPilot's pages name enums and bitmasks but not storage types, so a plain
+number is edited as an integer or a float by the type the vehicle reports.
+PX4's name the type. A list of values counts as an enum only when every value
+is whole and the documented range admits nothing the list leaves out.
+Otherwise the values are named points within a range (`ATC_INPUT_TC`'s 0.5
+"Very Soft", 0.2 "Soft", … anywhere from 0 to 1; PX4's `GPS_1_PROTOCOL`, whose
+range runs past its list), so the field stays free and **i** lists them as
+suggested values. A PX4 boolean is a Disabled/Enabled dropdown. ArduPilot's
+documentation applies to Copter only; PX4's to every airframe.
 
 **DISCARD** asks for confirmation because a loaded parameter file can put
 hundreds of edits behind it and there is no undo. The per-row **×** does not:

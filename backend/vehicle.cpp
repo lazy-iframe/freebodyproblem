@@ -233,6 +233,18 @@ void Vehicle::loop()
     constexpr double MODES_REQ_S      = 0.10;  // pacing between index requests
     constexpr double MODES_PROBE_S    = 2.0;   // retry interval for the probe
 
+    // AUTOPILOT_VERSION — the firmware version the parameter reference is
+    // matched against, and the board the connection tab names. Neither stack
+    // streams it, and one request is easily lost, so it is asked for until it
+    // arrives. Through MAV_CMD_REQUEST_MESSAGE first: the common set marks
+    // REQUEST_AUTOPILOT_CAPABILITIES deprecated in its favour, and PX4 after
+    // v1.17 no longer answers the old command. The old one goes out on
+    // alternate retries for a stack that predates the new.
+    auto     version_last_req = Clock::now();
+    int      version_probes   = 0;
+    constexpr int    VERSION_MAX_PROBES = 6;
+    constexpr double VERSION_PROBE_S    = 2.0;
+
     uint32_t last_params_gen       = 0;
     uint32_t known_params_gen      = 0;   // thread-local; avoids shared reads
     bool     params_complete_latch = false;
@@ -331,11 +343,27 @@ void Vehicle::loop()
             // sampled, and that the RC panel's bars track the sticks instead of
             // stepping after them.
             sender_.request_message_interval(tsys, tcomp,  65, 100000); // RC_CHANNELS         @ 10 Hz
-            sender_.request_autopilot_capabilities(tsys, tcomp);
+            sender_.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+            version_last_req = Clock::now();
+            version_probes   = 1;
             sender_.request_available_modes(tsys, tcomp);
             modes_last_req = Clock::now();
             ++modes_probes;
             gcs_log("[sys%u] telemetry rates configured (%s)", tsys, prof.name());
+        }
+
+        // Firmware version, until it is in hand. A reboot reruns the burst
+        // above, which starts the count again.
+        if (rates_requested && !parser_.state().has_fw_info &&
+            version_probes < VERSION_MAX_PROBES &&
+            std::chrono::duration<double>(Clock::now() - version_last_req).count()
+                >= VERSION_PROBE_S) {
+            if (version_probes % 2 == 0)
+                sender_.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+            else
+                sender_.request_autopilot_capabilities(tsys, tcomp);
+            version_last_req = Clock::now();
+            ++version_probes;
         }
 
         // ── Command ACKs ──────────────────────────────────────────────────────
