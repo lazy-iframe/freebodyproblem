@@ -69,6 +69,12 @@ struct AppSettings {
     bool  audio_enabled = true;
     float audio_volume  = 0.7f;   // linear 0..1
 
+    // ── HUD style ─────────────────────────────────────────────────────────────
+    // true: the full-panel HUD with speed / heading / altitude tapes.
+    // false: the classic round attitude ball.
+    bool hud_tapes_main  = true;    // right sidebar and fullscreen-map overlay
+    bool hud_tapes_swarm = false;   // swarm cards
+
     // ── Map tile source ───────────────────────────────────────────────────────
     std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     std::string tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";

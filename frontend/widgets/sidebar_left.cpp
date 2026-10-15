@@ -96,6 +96,14 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
         }
     }
 
+    // A map click armed by the mission tab, or its EDIT, outlives the tab only
+    // to confuse: nothing would consume the click, and the map would keep
+    // swallowing presses meant for panning. Leaving the tab ends both.
+    if (pick && selected != Tab::Mission) {
+        pick->add_command  = 0;
+        pick->drag_edit    = false;
+    }
+
     // ── Dispatch to per-tab panels ────────────────────────────────────────────
     switch (selected) {
     case Tab::Connection: draw_tab_connection(sender, vs, conn_out, link_status,

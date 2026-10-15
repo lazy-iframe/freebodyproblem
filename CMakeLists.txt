@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.6.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.6.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -400,6 +400,7 @@ target_link_libraries(freebodyproblem PRIVATE
 )
 target_compile_definitions(freebodyproblem PRIVATE
     GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
+    GCS_FONT_BOLD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Bold.ttf"
     GCS_FONT_FALLBACK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
     GCS_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
 )
@@ -433,6 +434,7 @@ install(TARGETS freebodyproblem
 
 install(FILES
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Bold.ttf"
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
         DESTINATION share/freebodyproblem/fonts)
 

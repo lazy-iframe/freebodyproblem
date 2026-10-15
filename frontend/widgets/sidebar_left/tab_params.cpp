@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // ── Parameter files ───────────────────────────────────────────────────────────
@@ -158,6 +159,10 @@ struct ParamsTabState {
     size_t                   last_param_count = 0;
 
     std::unordered_map<std::string, float> edited_vals;
+
+    // Enums and bitmasks switched to a typed number from their info popup:
+    // for a value the reference does not list, or one known by heart.
+    std::unordered_set<std::string> manual;
 };
 
 static VehicleUiState<ParamsTabState> s_state;
@@ -270,9 +275,11 @@ static const ParamDocSource* param_docs_for(const VehicleState* vs)
 // `docs` is the documentation that fits the vehicle, nullptr for none;
 // `fw_doc` is the release the vehicle runs (-1 unknown) and `doc` the one
 // `meta`'s text was published for.
+// `manual` is the row's manual-entry switch, offered with the flags for an
+// enum or a bitmask; null leaves it out.
 static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
                             ParamKind kind, float shown, const ParamDocSource* docs,
-                            int fw_doc, int doc)
+                            int fw_doc, int doc, bool* manual)
 {
     ui_dialog_title(p.param_id, INFO_W);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + INFO_W);
@@ -322,6 +329,23 @@ static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
             ImGui::TextColored(col_reboot(), "! Read-only");
         if (meta->has(PARAM_FLAG_ADVANCED))
             ImGui::TextDisabled("For advanced users");
+
+        // Manual entry: the list and the checkboxes only offer what the
+        // reference documents, so an enum or a bitmask can be switched to a
+        // plain number field on its row — firmware newer than the reference,
+        // a value read off a log, a mask known by heart.
+        if (manual && (kind == ParamKind::Enum || kind == ParamKind::Bitmask)) {
+            if (ui_grid_button(*manual ? "MANUAL ENTRY: ON###manual" : "MANUAL ENTRY###manual",
+                               { INFO_W, 0.0f }, *manual))
+                *manual = !*manual;
+            const char* editor = kind == ParamKind::Enum ? "list" : "checkboxes";
+            if (*manual)
+                ImGui::TextDisabled("This row takes a typed number. Press again for the %s.",
+                                    editor);
+            else
+                ImGui::TextDisabled("Type the value as a number instead of using the %s.",
+                                    editor);
+        }
         if (meta->has(PARAM_FLAG_CALIBRATION))
             ImGui::TextDisabled("Set by a calibration routine");
         if (meta->has(PARAM_FLAG_VOLATILE))
@@ -955,6 +979,13 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             const ParamKind  kind = param_effective_kind(meta, p.type);
             const bool       ro   = meta && meta->has(PARAM_FLAG_READONLY);
 
+            // The editor drawn: the parameter's own, unless it was switched to
+            // manual entry, which edits an enum or bitmask as the plain number
+            // the vehicle stores.
+            bool manual = (kind == ParamKind::Enum || kind == ParamKind::Bitmask) &&
+                          st().manual.count(id) > 0;
+            const ParamKind ui_kind = manual ? param_effective_kind(nullptr, p.type) : kind;
+
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(p.param_id);
 
@@ -978,7 +1009,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             bool  edited   = false;
 
             ImGui::BeginDisabled(ro);
-            if (kind == ParamKind::Enum) {
+            if (ui_kind == ParamKind::Enum) {
                 // A value the reference does not list still shows as its
                 // number rather than a blank — firmware newer than the table,
                 // or a value set by hand.
@@ -1010,7 +1041,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                     ImGui::EndCombo();
                 }
 
-            } else if (kind == ParamKind::Bitmask) {
+            } else if (ui_kind == ParamKind::Bitmask) {
                 // Shown as hex, edited as checkboxes — one per documented bit,
                 // plus any set bit the reference has no name for, so nothing
                 // the vehicle holds is invisible here or impossible to clear.
@@ -1082,13 +1113,13 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             } else {
                 // A plain number takes any value, whatever the reference
                 // lists — its range is a warning, drawn in amber, not a limit.
-                const bool oor = param_out_of_range(meta, kind, edit_val);
+                const bool oor = param_out_of_range(meta, ui_kind, edit_val);
                 if (oor) {
                     ImGui::PushStyleColor(ImGuiCol_Border, col_warning());
                     ImGui::PushStyleColor(ImGuiCol_Text,   col_warning());
                 }
                 ImGui::SetNextItemWidth(in_w);
-                if (kind == ParamKind::Int) {
+                if (ui_kind == ParamKind::Int) {
                     // 64-bit so a uint32 above INT32_MAX still round-trips.
                     int64_t iv = (int64_t)edit_val;
                     if (ImGui::InputScalar("##v", ImGuiDataType_S64, &iv,
@@ -1106,6 +1137,22 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                         char rng[64];
                         format_range(meta, rng, sizeof(rng));
                         ImGui::SetTooltip("Outside the documented range %s", rng);
+                    }
+                } else if (manual && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    // What the typed number means, since the list is not there
+                    // to say.
+                    if (kind == ParamKind::Enum) {
+                        const char* label = nullptr;
+                        for (int e = 0; e < meta->enum_count; ++e)
+                            if (meta->enum_entries[e].value == edit_val)
+                                label = meta->enum_entries[e].label;
+                        ImGui::SetTooltip("Manual entry \xe2\x80\x94 %s",
+                                          label ? label : "not a listed value");
+                    } else {
+                        char hex[16];
+                        bitmask_hex(hex, sizeof(hex),
+                                    bitmask_from_value(edit_val, p.type), p.type);
+                        ImGui::SetTooltip("Manual entry \xe2\x80\x94 %s", hex);
                     }
                 }
             }
@@ -1151,7 +1198,14 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             ui_push_dialog_style();
             if (ImGui::BeginPopup("##param_info")) {
-                draw_param_info(p, meta, kind, edit_val, docs, fw_doc, doc);
+                const bool was = manual;
+                draw_param_info(p, meta, kind, edit_val, docs, fw_doc, doc,
+                                (kind == ParamKind::Enum || kind == ParamKind::Bitmask)
+                                    ? &manual : nullptr);
+                if (manual != was) {
+                    if (manual) st().manual.insert(id);
+                    else        st().manual.erase(id);
+                }
                 ImGui::EndPopup();
             }
             ui_pop_dialog_style();

@@ -841,6 +841,11 @@ void map_view_shutdown()
     g_pending.clear();
 }
 
+// The waypoint being dragged in the mission tab's EDIT, as an index into
+// MissionPickState::edit_mission; -1 when none. Set on the press, followed
+// while the button is held, dropped on release.
+static int s_drag_wp = -1;
+
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
@@ -898,14 +903,21 @@ void draw_map_view(double lat, double lon, bool has_pos,
     }
 
     // ── Input ─────────────────────────────────────────────────────────────────
-    const bool pick_active = pick && pick->active_index >= 0;
+    const bool pick_active = pick && pick->picking();
+
+    // EDIT ends with the mode, or with the mission it was editing.
+    std::vector<MissionItem>* drag_mission =
+        (pick && pick->drag_edit && !pick_active) ? pick->edit_mission : nullptr;
+    if (!drag_mission || s_drag_wp >= (int)drag_mission->size())
+        s_drag_wp = -1;
 
     if (map_hovered) {
         if (pick_active) {
             // Show a hand cursor so the user knows the map is clickable
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        } else {
-            // Pan: left-drag (suppressed during pick mode)
+        } else if (s_drag_wp < 0) {
+            // Pan: left-drag (suppressed during pick mode, and while a
+            // waypoint is being dragged — the gesture is the waypoint's)
             if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 ImVec2 d = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
                 ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
@@ -950,7 +962,51 @@ void draw_map_view(double lat, double lon, bool has_pos,
             tile_frac_to_lat_lon(tx, ty, g_map.zoom,
                                  pick->picked_lat, pick->picked_lon);
             pick->pick_done = true;
-            // active_index intentionally left set; tab_mission clears it after consuming
+            // add_command intentionally left set; tab_mission clears it
+            // after consuming
+        }
+
+        // ── EDIT: drag a waypoint ─────────────────────────────────────────────
+        // Picked up by a press within a marker's reach, the nearest if several,
+        // and moved with the pointer until the button comes up. Written into
+        // the editor's own vector, so the list and the line follow the drag.
+        if (drag_mission) {
+            auto screen_of = [&](double wlat, double wlon) -> ImVec2 {
+                double vx, vy;
+                lat_lon_to_tile_frac(wlat, wlon, g_map.zoom, vx, vy);
+                return { wp.x + (float)(vx * TILE_PX - tl_px),
+                         wp.y + (float)(vy * TILE_PX - tl_py) };
+            };
+            const ImVec2 mouse = ImGui::GetMousePos();
+
+            int   under  = -1;
+            float best_d = 12.0f * 12.0f;   // marker radius plus a little slack
+            for (int i = 0; i < (int)drag_mission->size(); ++i) {
+                const MissionItem& it = (*drag_mission)[i];
+                if (it.lat == 0.0 && it.lon == 0.0) continue;
+                const ImVec2 sp = screen_of(it.lat, it.lon);
+                const float  dx = sp.x - mouse.x, dy = sp.y - mouse.y;
+                if (dx * dx + dy * dy <= best_d) { best_d = dx * dx + dy * dy; under = i; }
+            }
+
+            if (s_drag_wp < 0 && map_hovered && under >= 0) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    s_drag_wp = under;
+                    g_map.follow = false;   // the map must hold still under the drag
+                }
+            }
+            if (s_drag_wp >= 0) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                    MissionItem& it = (*drag_mission)[s_drag_wp];
+                    const double mx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
+                    const double my = ((double)(mouse.y - wp.y) + tl_py) / TILE_PX;
+                    tile_frac_to_lat_lon(mx, my, g_map.zoom, it.lat, it.lon);
+                } else {
+                    s_drag_wp = -1;
+                }
+            }
         }
 
         // ── Right-click → GO HERE menu ────────────────────────────────────────
@@ -1114,11 +1170,12 @@ void draw_map_view(double lat, double lon, bool has_pos,
 
             // Waypoint circles with sequence number labels
             constexpr float R = 8.0f;
-            for (const auto& wpi : *display_mission) {
+            for (size_t wi = 0; wi < display_mission->size(); ++wi) {
+                const MissionItem& wpi = (*display_mission)[wi];
                 if (wpi.lat == 0.0 && wpi.lon == 0.0) continue;
                 const ImVec2 sp = to_screen(wpi.lat, wpi.lon);
-                // Yellow ring when this is the waypoint being picked
-                const bool being_picked = pick_active && ((int)wpi.seq == pick->active_index);
+                // Yellow ring on the waypoint being dragged
+                const bool being_picked = drag_mission && (int)wi == s_drag_wp;
                 const ImU32 fill = being_picked
                     ? IM_COL32(255, 240,  0, 240)    // yellow  — awaiting map click
                     : wpi.is_current
@@ -1132,6 +1189,18 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 const ImVec2 tsz = ImGui::CalcTextSize(seq_str);
                 dl->AddText({ sp.x - tsz.x * 0.5f, sp.y - tsz.y * 0.5f },
                             IM_COL32(255, 255, 255, 255), seq_str);
+
+                // Where it is going, while it is being dragged.
+                if (drag_mission && (int)wi == s_drag_wp) {
+                    char ll[48];
+                    snprintf(ll, sizeof(ll), "%.6f, %.6f", wpi.lat, wpi.lon);
+                    const ImVec2 lsz = ImGui::CalcTextSize(ll);
+                    const ImVec2 lp  = { sp.x + R + 6.0f, sp.y - lsz.y * 0.5f };
+                    dl->AddRectFilled({ lp.x - 3.0f, lp.y - 1.0f },
+                                      { lp.x + lsz.x + 3.0f, lp.y + lsz.y + 1.0f },
+                                      IM_COL32(0, 0, 0, 180), 3.0f);
+                    dl->AddText(lp, IM_COL32(255, 230, 60, 255), ll);
+                }
             }
         }
 
@@ -1171,12 +1240,16 @@ void draw_map_view(double lat, double lon, bool has_pos,
             }
         }
 
-        // ── Pick-mode hint banner ─────────────────────────────────────────────
-        if (pick_active) {
-            char hint[56];
-            snprintf(hint, sizeof(hint),
-                     "  Click to place WP #%d  —  Esc to cancel  ",
-                     pick->active_index);
+        // ── Pick-mode / EDIT hint banner ──────────────────────────────────────
+        if (pick_active || drag_mission) {
+            char hint[80];
+            if (pick_active)
+                snprintf(hint, sizeof(hint),
+                         "  Click to place %s  \xe2\x80\x94  Esc to cancel  ",
+                         pick->add_label ? pick->add_label : "item");
+            else
+                snprintf(hint, sizeof(hint),
+                         "  EDIT  \xe2\x80\x94  drag a waypoint to move it  ");
             const ImVec2 hsz = ImGui::CalcTextSize(hint);
             const float  hx  = wp.x + (win_w - hsz.x) * 0.5f;
             const float  hy  = wp.y + 8.0f;

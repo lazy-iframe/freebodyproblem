@@ -24,6 +24,7 @@
 
 ImFont* g_font_ui    = nullptr;
 ImFont* g_font_micro = nullptr;
+ImFont* g_font_mono_bold = nullptr;
 ImFont* g_font_value = nullptr;
 
 // ── Tracked text ─────────────────────────────────────────────────────────────

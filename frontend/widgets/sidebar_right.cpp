@@ -30,6 +30,7 @@
 #include <cstring>
 #include <cmath>
 #include <limits>
+#include <cfloat>
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,16 +46,20 @@ static constexpr float GRID_CELL_H = 66.0f;
 #define _USE_MATH_DEFINES
 #include <cmath>
 
-// ── Artificial horizon (local to this TU) ────────────────────────────────────
+// ── Classic attitude ball (local to this TU) ─────────────────────────────────
+//
+// The round instrument the HUD below replaced, kept as the alternative the
+// SETTINGS tab offers: a ball reads at a glance where a full display is too
+// much, which is why the swarm cards default to it.
 
 // `text_size` overrides the size the labels are drawn at; 0 keeps the current
 // font's own. The ball scales with `size` but its lettering does not, so at the
 // diameter the fullscreen map's overlay asks for, sidebar-sized text fills the
 // instrument instead of labelling it. Everything is drawn through the draw
 // list anyway, so an arbitrary size costs nothing but the argument.
-static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_deg,
-                                     float airspeed_ms, int throttle_pct, bool has_vfr,
-                                     float size, float text_size = 0.0f)
+static void draw_classic_horizon(float roll_deg, float pitch_deg, float yaw_deg,
+                                  float airspeed_ms, int throttle_pct, bool has_vfr,
+                                  float size, float text_size = 0.0f)
 {
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     const ImVec2 p0  = ImGui::GetCursorScreenPos();
@@ -257,6 +262,612 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
     ImGui::Dummy({ size, size });
 }
 
+// ── Head-up display (local to this TU) ───────────────────────────────────────
+//
+// Laid out the way a flight-deck PFD is. The horizon fills the whole square,
+// with three tapes over it: heading across the top, ground speed down the
+// left and altitude down the right. The roll scale, pitch ladder and aircraft
+// symbol sit in the middle, between the tapes.
+//
+// `text_size` overrides the size the labels are drawn at; 0 keeps the current
+// font's own. The instrument scales with `size` but its lettering does not, so
+// at the size the fullscreen map's overlay asks for, sidebar-sized text fills
+// the instrument instead of labelling it. Everything is drawn through the draw
+// list anyway, so an arbitrary size costs nothing but the argument.
+
+namespace {
+
+// Every number box and chip on the HUD is a plain dark wash at this opacity,
+// unframed: enough to lift white digits off a bright sky, light enough that
+// the horizon still reads through.
+constexpr float HUD_BOX_ALPHA = 0.55f;
+inline ImU32 hud_box_bg() { return ui_col(g_theme.bg_video, HUD_BOX_ALPHA); }
+
+struct HudText {
+    ImFont* font;
+    float   size;
+    float width(const char* s) const {
+        return font->CalcTextSizeA(size, FLT_MAX, 0.0f, s).x;
+    }
+};
+
+// Fills a convex polygon with a colour per vertex, interpolated across it —
+// AddConvexPolyFilled's one colour, made a gradient. No anti-aliased fringe:
+// the edges here are the clip rect's and the horizon's, which has its line.
+void hud_fill_gradient(ImDrawList* dl, const ImVec2* pts, const ImU32* cols, int n)
+{
+    if (n < 3) return;
+    const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    dl->PrimReserve((n - 2) * 3, n);
+    const ImDrawIdx base = (ImDrawIdx)dl->_VtxCurrentIdx;
+    for (int i = 0; i < n; ++i) dl->PrimWriteVtx(pts[i], uv, cols[i]);
+    for (int i = 2; i < n; ++i) {
+        dl->PrimWriteIdx(base);
+        dl->PrimWriteIdx((ImDrawIdx)(base + i - 1));
+        dl->PrimWriteIdx((ImDrawIdx)(base + i));
+    }
+}
+
+// Keeps the part of a convex polygon on the ground side of the horizon: the
+// side opposite `up` from the point `h`. Order (and so winding) is preserved.
+int hud_clip_ground(const ImVec2* in, int n, ImVec2 h, float ux, float uy,
+                    ImVec2* out)
+{
+    int m = 0;
+    for (int i = 0; i < n; ++i) {
+        const ImVec2 a  = in[i], b = in[(i + 1) % n];
+        const float  da = -((a.x - h.x) * ux + (a.y - h.y) * uy);
+        const float  db = -((b.x - h.x) * ux + (b.y - h.y) * uy);
+        if (da >= 0.0f) out[m++] = a;
+        if ((da >= 0.0f) != (db >= 0.0f)) {
+            const float t = da / (da - db);
+            out[m++] = { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+        }
+    }
+    return m;
+}
+
+// How far a value box's arrow reaches past the box.
+inline float hud_arrow(const HudText& t) { return std::max(4.0f, t.size * 0.5f); }
+
+// The value box a tape reads off, with an arrow pointing at the scale.
+// `dir` is where the arrow points: -1/+1 left/right for a vertical tape,
+// +2 down for the heading tape, 0 for none (a standalone readout).
+//
+// White digits on the HUD's dark wash, no frame; the arrow is the roll
+// pointer's yellow, so every "you are here" marker reads as one family.
+// `valid` false greys the text for a reading not yet received.
+void hud_value_box(ImDrawList* dl, const HudText& t, ImVec2 a, ImVec2 b, int dir,
+                   const char* text, bool valid)
+{
+    const ImU32 marker   = ah_roll_pointer();
+    const ImU32 text_col = valid ? ah_horizon_line() : ui_col(g_theme.col_no_link_muted);
+    const float mx = (a.x + b.x) * 0.5f, my = (a.y + b.y) * 0.5f;
+    const float n  = hud_arrow(t);
+
+    dl->AddRectFilled(a, b, hud_box_bg());
+    if (dir == -1)
+        dl->AddTriangleFilled({ a.x - n, my }, { a.x, my - n }, { a.x, my + n }, marker);
+    else if (dir == 1)
+        dl->AddTriangleFilled({ b.x + n, my }, { b.x, my + n }, { b.x, my - n }, marker);
+    else if (dir == 2)
+        dl->AddTriangleFilled({ mx, b.y + n }, { mx - n, b.y }, { mx + n, b.y }, marker);
+
+    const float tw = t.width(text);
+    dl->AddText(t.font, t.size, { mx - tw * 0.5f, my - t.size * 0.5f }, text_col, text);
+}
+
+// A text chip on the same dark wash as the value boxes, for labels and the
+// scale numbers.
+void hud_chip(ImDrawList* dl, const HudText& t, ImVec2 pos, const char* text,
+              ImU32 col)
+{
+    const float tw = t.width(text);
+    dl->AddRectFilled({ pos.x - 2.0f, pos.y - 1.0f },
+                      { pos.x + tw + 2.0f, pos.y + t.size + 1.0f }, hud_box_bg());
+    dl->AddText(t.font, t.size, pos, col, text);
+}
+
+// A vertical moving tape: the scale slides past a fixed box at its middle that
+// holds the value. `ticks_right` puts the graduations on the right edge (the
+// left tape, facing the centre) or the left edge (the right tape).
+struct VTape {
+    float minor;          // units between ticks
+    int   major_every;    // ticks between labelled ones
+    float span;           // units from the middle to either end
+    bool  non_negative;   // no scale below zero (speed)
+    const char* box_fmt;
+};
+
+void hud_vtape(ImDrawList* dl, const HudText& t, ImVec2 a, ImVec2 b,
+               bool ticks_right, const VTape& spec, bool valid, float value)
+{
+    const float w   = b.x - a.x;
+    const float h   = b.y - a.y;
+    const float mid = (a.y + b.y) * 0.5f;
+    const float ppu = (h * 0.5f) / spec.span;          // pixels per unit
+
+    // No fill and no backing for the numbers: the horizon runs on under the
+    // tape. The value box stops short of the graduations, its arrow tip on
+    // the major ticks' inner ends.
+    const float edge  = ticks_right ? b.x : a.x;
+    const float sgn   = ticks_right ? -1.0f : 1.0f;
+    const float t_maj = std::max(4.0f, w * 0.22f);
+    const float t_min = t_maj * 0.55f;
+    const float bh    = t.size + 6.0f;
+
+    if (valid) {
+        dl->PushClipRect(a, b, true);
+
+        // Thin the scale out where it is too small to read: ticks under 4 px
+        // apart blur into a bar, and labels closer than a line run together.
+        const bool  draw_minor = spec.minor * ppu >= 4.0f;
+        int label_every = spec.major_every;
+        while (label_every * spec.minor * ppu < t.size * 1.3f) label_every *= 2;
+
+        const int k0 = (int)floorf((value - spec.span) / spec.minor) - 1;
+        const int k1 = (int)ceilf ((value + spec.span) / spec.minor) + 1;
+        for (int k = k0; k <= k1; ++k) {
+            const float v = (float)k * spec.minor;
+            if (spec.non_negative && v < 0.0f) continue;
+            const bool major = ((k % spec.major_every) + spec.major_every)
+                               % spec.major_every == 0;
+            if (!major && !draw_minor) continue;
+
+            const float y   = mid - (v - value) * ppu;
+            const float len = major ? t_maj : t_min;
+            dl->AddLine({ edge, y }, { edge + sgn * len, y }, ah_roll_tick(),
+                        major ? AH_THICK_PITCH_BOLD * 0.75f : AH_THICK_PITCH_THIN * 0.75f);
+
+            // Numbers that would show through the see-through value box
+            // are left out while they pass behind it.
+            if (((k % label_every) + label_every) % label_every == 0 &&
+                fabsf(y - mid) > (bh + t.size) * 0.5f) {
+                char buf[12];
+                snprintf(buf, sizeof(buf), "%.0f", (double)v);
+                const float tw = t.width(buf);
+                const float tx = ticks_right ? edge - t_maj - 3.0f - tw
+                                             : edge + t_maj + 3.0f;
+                dl->AddText(t.font, t.size, { tx, y - t.size * 0.5f },
+                            ah_horizon_line(), buf);
+            }
+        }
+        dl->PopClipRect();
+    }
+
+    char vbuf[16];
+    if (valid) snprintf(vbuf, sizeof(vbuf), spec.box_fmt, (double)value);
+    else       snprintf(vbuf, sizeof(vbuf), "--");
+    const float inner = edge + sgn * (t_maj + hud_arrow(t));   // box's tick-side edge
+    const float outer = ticks_right ? a.x + 1.0f : b.x - 1.0f;
+    hud_value_box(dl, t, { std::min(inner, outer), mid - bh * 0.5f },
+                  { std::max(inner, outer), mid + bh * 0.5f },
+                  ticks_right ? 1 : -1, vbuf, valid);
+
+}
+
+// The heading tape: a compass card read off a fixed box at its middle.
+// Graduated every 5°, labelled every 30° the way a compass card is: the
+// cardinals by letter, the rest in tens of degrees.
+void hud_heading_tape(ImDrawList* dl, const HudText& t, ImVec2 a, ImVec2 b,
+                      float hdg)
+{
+    const float w   = b.x - a.x;
+    const float mid = (a.x + b.x) * 0.5f;
+    const float ppd = w / 90.0f;                         // ±45° across the tape
+
+    dl->PushClipRect(a, b, true);
+
+    // The ticks rise from the foot; the value box sits above them, its arrow
+    // tip on the major ticks' tops, and the labels share its row.
+    const bool  draw_minor = 5.0f * ppd >= 4.0f;
+    const float box_h = t.size + 4.0f;
+    const float t_maj = std::max(4.0f, (b.y - a.y) - box_h - hud_arrow(t) - 1.0f);
+    const float t_min = t_maj * 0.55f;
+    const float bw    = t.width("000") + 8.0f;
+
+    const int k0 = (int)floorf((hdg - 50.0f) / 5.0f);
+    const int k1 = (int)ceilf ((hdg + 50.0f) / 5.0f);
+    for (int k = k0; k <= k1; ++k) {
+        const float d   = (float)k * 5.0f;
+        const int   deg = (((int)d % 360) + 360) % 360;
+        const bool  major = deg % 10 == 0;
+        if (!major && !draw_minor) continue;
+
+        const float x   = mid + (d - hdg) * ppd;
+        const float len = major ? t_maj : t_min;
+        dl->AddLine({ x, b.y }, { x, b.y - len }, ah_roll_tick(),
+                    major ? AH_THICK_PITCH_BOLD * 0.75f : AH_THICK_PITCH_THIN * 0.75f);
+
+        if (deg % 30 == 0 && fabsf(x - mid) > bw * 0.5f + t.size) {
+            char buf[4];
+            switch (deg) {
+            case 0:   snprintf(buf, sizeof(buf), "N"); break;
+            case 90:  snprintf(buf, sizeof(buf), "E"); break;
+            case 180: snprintf(buf, sizeof(buf), "S"); break;
+            case 270: snprintf(buf, sizeof(buf), "W"); break;
+            default:  snprintf(buf, sizeof(buf), "%d", deg / 10); break;
+            }
+            const ImU32 col = (deg % 90 == 0) ? ah_heading_text() : ah_horizon_line();
+            const float tw  = t.width(buf);
+            dl->AddText(t.font, t.size, { x - tw * 0.5f, b.y - t_maj - t.size - 1.0f },
+                        col, buf);
+        }
+    }
+    dl->PopClipRect();
+
+    char vbuf[8];
+    snprintf(vbuf, sizeof(vbuf), "%03d", ((int)lroundf(hdg)) % 360);
+    hud_value_box(dl, t, { mid - bw * 0.5f, b.y - t_maj - hud_arrow(t) - box_h },
+                  { mid + bw * 0.5f, b.y - t_maj - hud_arrow(t) }, 2, vbuf, true);
+
+}
+
+// A round gauge over the horizon: graduations and a needle only, no face, so
+// the attitude behind it stays readable. 270° of scale, open at the bottom.
+//
+// `bipolar` false: 0 at the lower left, clockwise to full scale at the lower
+// right (airspeed). true: 0 at the top, -full at the lower left and +full at
+// the lower right, so the needle leans the way the vehicle is going (vertical
+// speed). Full scale starts at `base_full` and steps up by `step` as the
+// reading nears it, so a fast vehicle never pins the needle. The label sits
+// above, the value in a chip below; `valid` false leaves the needle out and
+// the chip reads "--".
+void hud_dial(ImDrawList* dl, const HudText& t, ImVec2 c, float rad,
+              const char* label, bool bipolar, float base_full, float step,
+              const char* fmt, bool valid, float value)
+{
+    const float mag  = valid ? fabsf(value) : 0.0f;
+    const float full = std::max(base_full, ceilf((mag + step * 0.5f) / step) * step);
+
+    const float a0    = 0.75f * (float)M_PI;          // lower left
+    const float sweep = 1.5f  * (float)M_PI;          // 270° clockwise
+
+    // A tick every tenth of the sweep, longer at both ends and the middle.
+    for (int i = 0; i <= 10; ++i) {
+        const float a   = a0 + sweep * (float)i / 10.0f;
+        const float len = (i % 5 == 0) ? rad * 0.30f : rad * 0.16f;
+        dl->AddLine({ c.x + cosf(a) * rad,         c.y + sinf(a) * rad },
+                    { c.x + cosf(a) * (rad - len), c.y + sinf(a) * (rad - len) },
+                    ah_roll_tick(), (i % 5 == 0) ? 1.8f : 1.2f);
+    }
+
+    if (valid) {
+        const float f = bipolar ? std::clamp(0.5f + 0.5f * value / full, 0.0f, 1.0f)
+                                : std::clamp(value / full, 0.0f, 1.0f);
+        const float a = a0 + sweep * f;
+        dl->AddLine(c, { c.x + cosf(a) * rad * 0.85f, c.y + sinf(a) * rad * 0.85f },
+                    ah_roll_pointer(), 2.0f);
+        dl->AddCircleFilled(c, std::max(2.0f, rad * 0.08f), ah_roll_pointer());
+    }
+
+    hud_chip(dl, t, { c.x - t.width(label) * 0.5f, c.y - rad - t.size - 3.0f },
+             label, ah_roll_label());
+    char buf[16];
+    if (valid) snprintf(buf, sizeof(buf), fmt, (double)value);
+    else       snprintf(buf, sizeof(buf), "--");
+    hud_chip(dl, t, { c.x - t.width(buf) * 0.5f, c.y + rad + 3.0f }, buf,
+             valid ? ah_horizon_line() : ui_col(g_theme.col_no_link_muted));
+}
+
+} // namespace
+
+static void draw_artificial_horizon(const VehicleState& vs, ImVec2 sz,
+                                    float text_size = 0.0f)
+{
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1 = { p0.x + sz.x, p0.y + sz.y };
+    const float  size = std::min(sz.x, sz.y);
+
+    // Bold mono throughout: digits of one width keep the tape numbers from
+    // shuffling as they change, and the heavier stroke holds up over a busy
+    // sky. Falls back to the micro font, then the current one.
+    const HudText t = {
+        g_font_mono_bold ? g_font_mono_bold
+                         : (text_size > 0.0f && g_font_micro) ? g_font_micro
+                                                              : ImGui::GetFont(),
+        (text_size > 0.0f) ? text_size : ImGui::GetFontSize(),
+    };
+    const float fh = t.size;
+
+    // ── Layout ───────────────────────────────────────────────────────────────
+    // Room in each tape for its value box and arrow beside the ticks.
+    const float head_h = fh + 4.0f + hud_arrow(t) + 1.0f + std::max(6.0f, size * 0.045f);
+    const float tape_w = std::max(size * 0.15f,
+                                  (t.width("+00.0") + 8.0f + hud_arrow(t)) / 0.78f);
+
+    // The middle, between the tapes, where the attitude itself reads.
+    const ImVec2 c0 = { p0.x + tape_w, p0.y + head_h };
+    const ImVec2 c1 = { p1.x - tape_w, p1.y };
+    const float  cx = (c0.x + c1.x) * 0.5f;
+    const float  cy = (c0.y + c1.y) * 0.5f;
+
+    // The roll arc spans ±60° over the top of the middle, its labels clear of
+    // the heading tape above and the speed and altitude tapes either side. The
+    // pitch scale and the aircraft symbol are proportioned off it.
+    const float arc_r = std::max(8.0f, std::min(cy - c0.y - fh - 6.0f,
+                                                ((c1.x - c0.x) * 0.5f - fh * 1.5f)
+                                                / 0.866f));
+    const float r     = arc_r / 1.08f;
+
+    const float roll_rad = vs.roll  * (float)M_PI / 180.0f;
+    const float pitch_px = vs.pitch * (r / 45.0f);
+
+    const float ux  = -sinf(roll_rad);
+    const float uy  = -cosf(roll_rad);
+    const float ldx = -uy, ldy = ux;
+
+    const float hx = cx - ux * pitch_px;
+    const float hy = cy - uy * pitch_px;
+
+    dl->PushClipRect(p0, p1, true);
+
+    // ── Sky and ground, edge to edge ─────────────────────────────────────────
+    // Each a slight gradient, brightest at the horizon and dimming away from
+    // it, as a real sky and ground do. Measured from the horizon rather than
+    // the screen, so the shading banks and pitches with it.
+    {
+        const ImVec2 sq[4] = { p0, { p1.x, p0.y }, p1, { p0.x, p1.y } };
+        const float  span  = std::max(sz.x, sz.y);
+
+        auto shade = [](ImVec4 c, float k) {
+            return ui_col({ std::min(1.0f, c.x * k), std::min(1.0f, c.y * k),
+                            std::min(1.0f, c.z * k), c.w });
+        };
+        // `side` +1 for the sky, -1 for the ground: which way is away.
+        auto fill = [&](const ImVec2* poly, int n, ImVec4 c, float side) {
+            ImU32 cols[8];
+            for (int i = 0; i < n; ++i) {
+                const float d = side * ((poly[i].x - hx) * ux + (poly[i].y - hy) * uy);
+                // Darker with every pixel away from the horizon: 1.25× the
+                // theme colour on the line, 0.50× a display-and-a-bit away.
+                const float f = std::clamp(d / (span * 1.2f), 0.0f, 1.0f);
+                cols[i] = shade(c, 1.25f - 0.75f * f);
+            }
+            hud_fill_gradient(dl, poly, cols, n);
+        };
+
+        ImVec2 sky[8], ground[8];
+        const int ns = hud_clip_ground(sq, 4, { hx, hy }, -ux, -uy, sky);
+        const int n  = hud_clip_ground(sq, 4, { hx, hy },  ux,  uy, ground);
+        fill(sky,    ns, g_theme.ah_sky,     1.0f);
+        fill(ground, n,  g_theme.ah_ground, -1.0f);
+
+        // As thin as a 10° rung, and broken where it passes behind the
+        // aircraft symbol: a gap out past its wing tips, cut wherever the line
+        // crosses it, so the symbol reads clean at any pitch and roll.
+        const float L   = std::max(sz.x, sz.y) * 1.5f;
+        const float rg  = std::max(0.9f, r * 0.22f / 26.0f) * 30.0f;  // symbol units
+        const float tc  = (cx - hx) * ldx + (cy - hy) * ldy;  // nearest point to centre
+        const float d2  = pitch_px * pitch_px;                // its distance, squared
+        const ImU32 hc  = ah_horizon_line();
+        if (d2 < rg * rg) {
+            const float half = sqrtf(rg * rg - d2);
+            dl->AddLine({ hx - ldx * L, hy - ldy * L },
+                        { hx + ldx * (tc - half), hy + ldy * (tc - half) },
+                        hc, AH_THICK_PITCH_BOLD);
+            dl->AddLine({ hx + ldx * (tc + half), hy + ldy * (tc + half) },
+                        { hx + ldx * L, hy + ldy * L },
+                        hc, AH_THICK_PITCH_BOLD);
+        } else {
+            dl->AddLine({ hx - ldx * L, hy - ldy * L }, { hx + ldx * L, hy + ldy * L },
+                        hc, AH_THICK_PITCH_BOLD);
+        }
+    }
+
+    // ── Pitch ladder ─────────────────────────────────────────────────────────
+    dl->PushClipRect(c0, c1, true);
+    // The ladder moves with the vehicle: rungs every 5° in a window either side
+    // of the current pitch, rather than a fixed ±30°. The window stops short
+    // of the roll arc, so a steep attitude brings up the rungs around it
+    // (0 to -60 nose down at -30) instead of pushing one into the arc.
+    {
+    const float ppd    = r / 45.0f;
+    const float reach  = std::min(r * 0.70f, (c1.y - c0.y) * 0.45f);
+    const int   k_lo   = (int)ceilf ((vs.pitch - reach / ppd) / 5.0f);
+    const int   k_hi   = (int)floorf((vs.pitch + reach / ppd) / 5.0f);
+    for (int k = k_lo; k <= k_hi; ++k) {
+        const int deg = k * 5;
+        if (deg == 0 || deg < -90 || deg > 90) continue;   // 0 is the horizon line
+        const float disp  = ((float)deg - vs.pitch) * ppd;
+        const float mx    = cx + ux * disp;
+        const float my    = cy + uy * disp;
+        const bool  major = (deg % 10 == 0);
+        const bool  climb = deg > 0;
+        const float hl    = major ? r * 0.29f : r * 0.158f;
+        const float gap   = r * 0.07f;      // the gap the aircraft symbol reads through
+        const float thick = major ? AH_THICK_PITCH_BOLD : AH_THICK_PITCH_THIN;
+        const ImU32 col   = ah_roll_tick();
+
+        // Climb / dive notation, as a flight-deck ladder draws it: climb rungs
+        // solid, dive rungs dashed, and each end turned toward the horizon,
+        // so a single rung says which side of level the nose is on without
+        // its number.
+        for (int side = -1; side <= 1; side += 2) {
+            const ImVec2 in  = { mx + ldx * gap * side, my + ldy * gap * side };
+            const ImVec2 out = { mx + ldx * hl  * side, my + ldy * hl  * side };
+            if (climb) {
+                dl->AddLine(in, out, col, thick);
+            } else {
+                const float len  = hl - gap;
+                const float dash = std::max(3.0f, r * 0.045f);
+                for (float d = 0.0f; d < len; d += dash * 2.0f) {
+                    const float e = std::min(d + dash, len);
+                    dl->AddLine({ in.x + ldx * d * side, in.y + ldy * d * side },
+                                { in.x + ldx * e * side, in.y + ldy * e * side },
+                                col, thick);
+                }
+            }
+            if (major) {
+                // Toward the horizon: down the screen's "up" for a climb rung,
+                // up it for a dive rung.
+                const float tl = r * 0.05f * (climb ? -1.0f : 1.0f);
+                dl->AddLine(out, { out.x + ux * tl, out.y + uy * tl }, col, thick);
+
+                char buf[12];
+                snprintf(buf, sizeof(buf), "%d", deg);
+                const float tw  = t.width(buf);
+                const float off = hl + r * 0.04f + tw * 0.5f;
+                const float lx  = mx + ldx * off * side - tw * 0.5f;
+                const float ly  = my + ldy * off * side;
+                dl->AddRectFilled({ lx - 1, ly - fh * 0.5f }, { lx + tw + 1, ly + fh * 0.5f + 1 },
+                                  ah_pitch_label_bg());
+                dl->AddText(t.font, fh, { lx, ly - fh * 0.5f + 1 }, ah_roll_label(), buf);
+            }
+        }
+    }
+    }
+    dl->PopClipRect();
+
+    // ── Roll scale ───────────────────────────────────────────────────────────
+    // A fixed arc over the top, ±60°, ticked at 10, 20, 30, 45 and 60 as a
+    // flight-deck one is, with a pointer that turns with the vehicle. Past the
+    // end of the scale the pointer stops at it and turns to the warning colour,
+    // so a steep bank still reads as one rather than as a pointer gone missing.
+    {
+        const float base   = -(float)M_PI / 2.0f;
+        const float deg2r  = (float)M_PI / 180.0f;
+
+        dl->PathArcTo({ cx, cy }, arc_r, base - 60.0f * deg2r, base + 60.0f * deg2r, 48);
+        dl->PathStroke(ah_roll_arc(), 0, AH_THICK_ROLL_ARC);
+
+        static const int ticks[] = { -60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60 };
+        for (int deg : ticks) {
+            const bool  major = (deg % 30 == 0);
+            const float a     = base + (float)deg * deg2r;
+            const float len   = deg == 0 ? r * 0.13f : major ? r * 0.10f : r * 0.06f;
+            dl->AddLine({ cx + cosf(a) * arc_r,         cy + sinf(a) * arc_r },
+                        { cx + cosf(a) * (arc_r + len), cy + sinf(a) * (arc_r + len) },
+                        ah_roll_tick(), AH_THICK_ROLL_TICK);
+
+            if (major && deg != 0) {
+                const float label_r = arc_r + r * 0.10f + fh * 0.6f + 1.0f;
+                char buf[12];
+                snprintf(buf, sizeof(buf), "%d", abs(deg));
+                const float tw = t.width(buf);
+                dl->AddText(t.font, fh,
+                            { cx + cosf(a) * label_r - tw * 0.5f,
+                              cy + sinf(a) * label_r - fh * 0.5f },
+                            ah_roll_label(), buf);
+            }
+        }
+
+        const bool  over = fabsf(vs.roll) > 60.0f;
+        const float roll = std::clamp(vs.roll, -60.0f, 60.0f);
+        const float a  = base + roll * deg2r;
+        const float ca = cosf(a), sa = sinf(a);
+        const float cp = cosf(a + (float)M_PI / 2.0f);
+        const float sp = sinf(a + (float)M_PI / 2.0f);
+        const float tip = arc_r - 1.0f, br = arc_r - r * 0.11f, hw = r * 0.05f;
+        dl->AddTriangleFilled(
+            { cx + ca * tip,          cy + sa * tip          },
+            { cx + ca * br + cp * hw, cy + sa * br + sp * hw },
+            { cx + ca * br - cp * hw, cy + sa * br - sp * hw },
+            over ? ui_col(g_theme.col_warning) : ah_roll_pointer());
+    }
+
+    // ── Aircraft symbol ──────────────────────────────────────────────────────
+    {
+        // A single ring with a fin up from its top and a wing out from
+        // either side, in the horizon line's colour, which it is read
+        // against. The wings are the heavier strokes. Measured in units of
+        // which 26 reach the wing tips, the span the old wing symbol had.
+        const ImU32 col = ah_horizon_line();
+        const float u   = std::max(0.9f, r * 0.22f / 26.0f);
+        const float lw  = std::max(1.5f, u * 1.1f);
+        const float rr  = u * 8.0f;
+        dl->AddCircle({ cx, cy }, rr, col, 32, lw);
+        dl->AddLine({ cx, cy - rr },  { cx, cy - rr - u * 7.0f },   col, lw);
+        dl->AddLine({ cx - rr, cy },  { cx - u * 26.0f, cy },       col, lw * 2.0f);
+        dl->AddLine({ cx + rr, cy },  { cx + u * 26.0f, cy },       col, lw * 2.0f);
+    }
+
+    // ── Airspeed and vertical speed dials, either side of the ladder ─────────
+    // Sized to the room between a side tape and that side's rung labels, a
+    // well below the middle so the wings and the level rungs stay clear,
+    // and left out when that room is too small to read a needle in.
+    {
+        const float room = (cx - c0.x) - r * 0.33f - fh * 1.2f - 8.0f;
+        const float dr   = std::min(r * 0.24f, room * 0.5f);
+        if (dr >= 8.0f) {
+            const float dy = cy + r * 0.50f;
+            // NaN airspeed from PX4 without an airspeed sensor.
+            const bool as_ok = vs.has_vfr && std::isfinite(vs.airspeed);
+            const bool vs_ok = vs.has_vfr && std::isfinite(vs.climb);
+            hud_dial(dl, t, { c0.x + 4.0f + dr, dy }, dr, "AS", false, 20.0f, 10.0f,
+                     "%.1f", as_ok, as_ok ? vs.airspeed : 0.0f);
+            // Set in from the altitude tape a little more than the AS dial is
+            // from the speed tape: right against it, the dial's ticks run
+            // into the tape's own and read as one scale.
+            hud_dial(dl, t, { c1.x - 4.0f - dr * 1.4f, dy }, dr, "VS", true, 5.0f, 5.0f,
+                     "%+.1f", vs_ok, vs_ok ? vs.climb : 0.0f);
+        }
+    }
+
+    // ── Throttle, in the bottom-right corner of the middle ───────────────────
+    if (vs.has_vfr) {
+        char thr_buf[12];
+        snprintf(thr_buf, sizeof(thr_buf), "THR %u%%", (unsigned)vs.throttle);
+        hud_chip(dl, t, { c1.x - 4.0f - t.width(thr_buf), c1.y - fh - 5.0f },
+                 thr_buf, ah_horizon_line());
+    }
+
+    // ── Tapes ────────────────────────────────────────────────────────────────
+    static const VTape SPEED_TAPE = { 1.0f, 5, 10.0f, true,  "%.1f" };
+    static const VTape ALT_TAPE   = { 2.0f, 5, 20.0f, false, "%.0f" };
+
+    hud_vtape(dl, t, { p0.x, c0.y }, { c0.x, p1.y }, true, SPEED_TAPE,
+              vs.has_vfr, vs.groundspeed);
+    hud_vtape(dl, t, { c1.x, c0.y }, { p1.x, p1.y }, false, ALT_TAPE,
+              vs.has_global_pos, vs.alt_rel);
+
+    float hdg = fmodf(vs.yaw, 360.0f);
+    if (hdg < 0.0f) hdg += 360.0f;
+    hud_heading_tape(dl, t, p0, { p1.x, c0.y }, hdg);
+
+    // Units, in the corners the tapes leave free beneath the heading tape.
+    {
+        const ImU32 uc = ah_roll_label();
+        hud_chip(dl, t, { p0.x + 3.0f, c0.y + 2.0f }, "GS", uc);
+        hud_chip(dl, t, { p1.x - 3.0f - t.width("ALT"), c0.y + 2.0f }, "ALT", uc);
+    }
+
+    dl->PopClipRect();
+    dl->AddRect(p0, p1, ah_border(), 0.0f, 0, AH_THICK_BORDER);
+
+    ImGui::Dummy(sz);
+}
+
+// The attitude panel's body, below its header, in whichever style is set.
+// The tapes HUD fills `avail` and carries speed, heading and altitude itself;
+// the classic ball sits square in the middle with the GND / HDG / CLB strip
+// beneath it to carry them instead.
+static void draw_vfr_strip(const VehicleState& vs, float strip_h, float value_size);
+
+static void draw_hud_body(const VehicleState& vs, ImVec2 avail, bool tapes,
+                          float text_size, float strip_value_size)
+{
+    constexpr float STRIP_H = 40.0f;
+    if (tapes) {
+        if (vs.has_attitude && avail.x > 30.0f && avail.y > 30.0f)
+            draw_artificial_horizon(vs, avail, text_size);
+        else
+            ImGui::Dummy(avail);
+        return;
+    }
+    const float hs = std::min(avail.x, avail.y - STRIP_H);
+    if (vs.has_attitude && hs > 30.0f) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - hs) * 0.5f);
+        draw_classic_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
+                             vs.has_vfr ? (int)vs.throttle : -1,
+                             vs.has_vfr, hs, text_size);
+    } else {
+        ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - STRIP_H) });
+    }
+    draw_vfr_strip(vs, STRIP_H, strip_value_size);
+}
+
 // ── Shared HUD / log pieces ───────────────────────────────────────────────────
 //
 // The sidebar and the fullscreen-map overlay show the same two things in
@@ -270,7 +881,7 @@ static void draw_artificial_horizon(float roll_deg, float pitch_deg, float yaw_d
 // nearly meet across a block a third the sidebar's width, and a readout that
 // touches its neighbour reads as one long number.
 static void draw_vfr_strip(const VehicleState& vs, float strip_h,
-                           float value_size = UI_SZ_BODY + 2.0f)
+                           float value_size)
 {
     ImDrawList*  dl = ImGui::GetWindowDrawList();
     const ImVec2 s0 = ImGui::GetCursorScreenPos();
@@ -1252,7 +1863,7 @@ void draw_sidebar_right(const VehicleState& vs,
         const float avail_h = ImGui::GetContentRegionAvail().y;
         const float avail_w = ImGui::GetContentRegionAvail().x;
 
-        // HUD: ball + header + the readout strip beneath it
+        // HUD: the instrument + its header
         const float hud_h = std::min(avail_w + 46.0f, avail_h * 0.40f);
 
         // Data grid: 3 rows of tiles + header + spacing
@@ -1270,28 +1881,17 @@ void draw_sidebar_right(const VehicleState& vs,
                 snprintf(hud_meta, sizeof(hud_meta), "NO DATA");
             ui_panel_header("ATTITUDE \xc2\xb7 ROLL / PITCH", hud_meta);
 
-            const float strip_h = 40.0f;
-            if (vs.has_attitude) {
-                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                const float  hs    = std::min(avail.x, avail.y - strip_h);
-                if (hs > 30.0f) {
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - hs) * 0.5f);
-                    draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw,
-                                            vs.airspeed,
-                                            vs.has_vfr ? (int)vs.throttle : -1,
-                                            vs.has_vfr, hs);
-                }
+            const bool   tapes = !settings || settings->hud_tapes_main;
+            const ImVec2 avail = ImGui::GetContentRegionAvail();
+            if (vs.has_attitude || !tapes) {
+                draw_hud_body(vs, avail, tapes, 0.0f, UI_SZ_BODY + 2.0f);
             } else {
-                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - strip_h) });
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - avail.y * 0.5f);
-                ImGui::TextDisabled("   NO ATTITUDE DATA");
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail.y * 0.5f
-                                     - ImGui::GetTextLineHeight());
+                const char*  msg = "NO ATTITUDE DATA";
+                const ImVec2 ts  = ImGui::CalcTextSize(msg);
+                ImGui::SetCursorPos({ ImGui::GetCursorPosX() + (avail.x - ts.x) * 0.5f,
+                                      ImGui::GetCursorPosY() + (avail.y - ts.y) * 0.5f });
+                ImGui::TextDisabled("%s", msg);
             }
-
-            // ── GND / HDG / CLB strip ────────────────────────────────────
-            draw_vfr_strip(vs, strip_h);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1337,7 +1937,7 @@ void draw_sidebar_right(const VehicleState& vs,
 // over the map. The map window is NoBringToFrontOnFocus, so clicking the map
 // cannot raise it above this.
 
-void draw_map_overlay(const VehicleState& vs)
+void draw_map_overlay(const VehicleState& vs, bool hud_tapes)
 {
     float mx, my, mw, mh;
     center_view_map_rect(mx, my, mw, mh);
@@ -1386,7 +1986,7 @@ void draw_map_overlay(const VehicleState& vs)
     const float ball_small = std::min(184.0f, (mw * 0.34f - PAD * 2.0f) * 0.605f);
 
     // But never narrower than its text: the ATTITUDE header with the widest
-    // R / P readout beside it, and the GND / HDG / CLB strip, in glyphs of the
+    // R / P readout beside it, in glyphs of the
     // body font like the sidebars. On a small map the ball shrinks and sits in
     // the middle of the wider block; the words do not shrink with it.
     constexpr float OVERLAY_MIN_CH = 30.0f;
@@ -1407,14 +2007,15 @@ void draw_map_overlay(const VehicleState& vs)
     // which is what 0 asks for.
     const float hud_text_sz = hud_big ? 0.0f : 10.0f;
 
-    // The GND / HDG / CLB numbers under it. Three of them share a row a third
-    // of the sidebar's width, so the sidebar's 18 px leaves them nearly
-    // touching; 13 px puts air between the columns. Expanded, the row is the
-    // sidebar's width again and takes the sidebar's size back.
+    // The GND / HDG / CLB numbers under the classic ball. Three of them share
+    // a row a third of the sidebar's width, so the sidebar's 18 px leaves them
+    // nearly touching; 13 px puts air between the columns. Expanded, the row
+    // is the sidebar's width again and takes the sidebar's size back.
     const float strip_value_sz = hud_big ? UI_SZ_BODY + 2.0f : UI_SZ_MICRO;
 
-    // Attitude is that square plus its header and the readout strip.
-    const float hud_h  = ball_h + UI_HEADER_H + 40.0f + PAD;
+    // Attitude is that square plus its header; the tapes HUD fills all of it,
+    // the classic ball leaves room for the readout strip beneath.
+    const float hud_h  = ball_h + UI_HEADER_H + PAD + (hud_tapes ? 0.0f : 40.0f);
 
     // The log comes down with the ball, so the corner stays a corner block
     // rather than becoming a log with an instrument on top.
@@ -1459,21 +2060,8 @@ void draw_map_overlay(const VehicleState& vs)
                 snprintf(meta, sizeof(meta), "NO DATA");
             ui_panel_header("ATTITUDE", meta);
 
-            constexpr float STRIP_H = 40.0f;
-            if (vs.has_attitude) {
-                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                const float  hs    = std::min(avail.x, avail.y - STRIP_H);
-                if (hs > 30.0f) {
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - hs) * 0.5f);
-                    draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
-                                            vs.has_vfr ? (int)vs.throttle : -1,
-                                            vs.has_vfr, hs, hud_text_sz);
-                }
-            } else {
-                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                ImGui::Dummy({ avail.x, std::max(0.0f, avail.y - STRIP_H) });
-            }
-            draw_vfr_strip(vs, STRIP_H, strip_value_sz);
+            draw_hud_body(vs, ImGui::GetContentRegionAvail(), hud_tapes,
+                          hud_text_sz, strip_value_sz);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1534,19 +2122,26 @@ void draw_map_overlay(const VehicleState& vs)
 // The swarm screen shows the same instruments and the same log as the sidebar,
 // in its own arrangement. Wrappers rather than copies, so the two cannot drift.
 
-void draw_attitude_ball(const VehicleState& vs, float size, float text_size)
+void draw_attitude_ball(const VehicleState& vs, float size, float text_size,
+                        bool tapes)
 {
     if (vs.has_attitude) {
-        draw_artificial_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
-                                vs.has_vfr ? (int)vs.throttle : -1,
-                                vs.has_vfr, size, text_size);
+        if (tapes)
+            draw_artificial_horizon(vs, { size, size }, text_size);
+        else
+            draw_classic_horizon(vs.roll, vs.pitch, vs.yaw, vs.airspeed,
+                                 vs.has_vfr ? (int)vs.throttle : -1,
+                                 vs.has_vfr, size, text_size);
     } else {
-        // An outline where the ball would be, so a vehicle not yet sending
+        // An outline where the HUD would be, so a vehicle not yet sending
         // attitude leaves its card the same shape as the rest.
         ImDrawList*  dl = ImGui::GetWindowDrawList();
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const ImVec2 c  = { p0.x + size * 0.5f, p0.y + size * 0.5f };
-        dl->AddCircle(c, size * 0.45f, ui_col(g_theme.separator), 0, 1.0f);
+        if (tapes)
+            dl->AddRect(p0, { p0.x + size, p0.y + size }, ui_col(g_theme.separator), 0.0f, 0, 1.0f);
+        else
+            dl->AddCircle(c, size * 0.45f, ui_col(g_theme.separator), 0, 1.0f);
         ImFont*     fm = g_font_micro ? g_font_micro : ImGui::GetFont();
         const char* t  = "NO ATT";
         const float tw = ui_tracked_width(fm, UI_SZ_MICRO, t);
@@ -1554,11 +2149,6 @@ void draw_attitude_ball(const VehicleState& vs, float size, float text_size)
                         ui_col(g_theme.col_no_link_muted), t);
     }
     ImGui::Dummy({ size, size });
-}
-
-void draw_vfr_readouts(const VehicleState& vs, float strip_h, float value_size)
-{
-    draw_vfr_strip(vs, strip_h, value_size);
 }
 
 float telemetry_panel_height()

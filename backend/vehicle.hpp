@@ -176,6 +176,7 @@ public:
 private:
     void loop();
     void publish(bool param_fetch_active, bool republish_params);
+    void publish_attitude();
 
     const VehicleId id_;
     const uint32_t  number_;

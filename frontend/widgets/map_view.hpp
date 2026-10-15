@@ -80,8 +80,9 @@ void map_view_shutdown();
 //   has_hdg   – false when heading is unavailable (shows dot marker instead of arrow)
 //   win_*     – screen-space rectangle for the ImGui window slot
 //   mission   – fetched mission waypoint list; nullptr = no overlay
-//   pick      – optional shared pick state; when active_index >= 0 the map
-//               captures the next left-click as a lat/lon for that waypoint
+//   pick      – optional shared pick state; while add_command is set the map
+//               captures the next left-click as the new item's lat/lon, and
+//               with drag_edit on its waypoints can be dragged
 //   alt_rel   – altitude above home in metres, shown in the A/C overlay
 //   gs        – ground speed in m/s, shown in the A/C overlay
 //   go        – optional GO HERE state; when present a right-click opens the

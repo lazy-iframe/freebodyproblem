@@ -411,7 +411,7 @@ static void render_ui()
 
     // After the centre view, which is what puts it over the map.
     if (map_full)
-        draw_map_overlay(vs);
+        draw_map_overlay(vs, g_settings.hud_tapes_main);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -522,6 +522,12 @@ int main()
         g_font_value        = atlas->AddFontFromFileTTF(mono.c_str(), 26.0f,       nullptr, kGlyphRanges);
         g_font_splash_title = atlas->AddFontFromFileTTF(mono.c_str(), 38.0f,       nullptr, kGlyphRanges);
     }
+    // The HUD's lettering. Fonts scale freely in this ImGui, so one size
+    // serves every HUD size; without the file the HUD keeps the regular face.
+    const std::string mono_bold = find_asset("fonts/GeistMono-Bold.ttf", GCS_FONT_BOLD_PATH);
+    if (!mono_bold.empty())
+        g_font_mono_bold = atlas->AddFontFromFileTTF(mono_bold.c_str(), UI_SZ_MICRO,
+                                                     nullptr, kGlyphRanges);
     if (!g_font_ui) {   // font file missing — fall back to the bundled Roboto
         const std::string alt = find_asset("fonts/Roboto-Medium.ttf", GCS_FONT_FALLBACK_PATH);
         if (!alt.empty()) {

@@ -198,6 +198,36 @@ void draw_themes_panel(AppSettings& settings)
 
     themed_sep();
     ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "HUD");
+    themed_sep();
+    ImGui::Spacing();
+
+    // ── HUD style ─────────────────────────────────────────────────────────────
+    //
+    // Per view, since what suits a panel a third of the screen wide is not
+    // what suits a card in a grid of them. Saved on change, as the tones are.
+    {
+        auto style_row = [&](const char* label, const char* id, bool& tapes) {
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(110.0f);
+            int v = tapes ? 1 : 0;
+            ImGui::PushID(id);
+            bool changed = ImGui::RadioButton("Classic", &v, 0);
+            ImGui::SameLine(0, 12);
+            changed |= ImGui::RadioButton("Tapes", &v, 1);
+            ImGui::PopID();
+            if (changed) {
+                tapes = (v == 1);
+                settings_save(settings);
+            }
+        };
+        style_row("Main view", "hud_main",  settings.hud_tapes_main);
+        style_row("Swarm",     "hud_swarm", settings.hud_tapes_swarm);
+        ImGui::TextDisabled("Classic: attitude ball. Tapes: speed / heading / altitude.");
+    }
+
+    themed_sep();
+    ImGui::Spacing();
     ImGui::TextColored(accent_col(), "MAP SOURCE");
     themed_sep();
     ImGui::Spacing();

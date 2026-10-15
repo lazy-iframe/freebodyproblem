@@ -90,6 +90,32 @@ static const char* cmd_short(uint16_t cmd)
     return buf;
 }
 
+// ── Add grid ─────────────────────────────────────────────────────────────────
+//
+// The commands a mission is mostly made of, one button each. A command with a
+// position arms a map click — its button reads LOC? until the map is clicked
+// there — and one without is appended at once. MORE opens the rest of
+// CMD_TABLE as the same kind of grid.
+struct QuickCmd { uint16_t id; const char* label; };
+static constexpr QuickCmd QUICK_CMDS[] = {
+    {  16, "WAYPOINT"   }, {  22, "TAKEOFF"    }, {  21, "LAND"     },
+    {  20, "RTL"        }, {  17, "LOITER"     }, {  19, "LOIT TIME"},
+    {  18, "LOIT TURNS" }, { 201, "ROI"        }, { 178, "SPEED"    },
+    {  93, "DELAY"      }, { 177, "JUMP"       },
+};
+static constexpr int QUICK_COUNT = (int)(sizeof(QUICK_CMDS) / sizeof(QUICK_CMDS[0]));
+static constexpr int GRID_COLS   = 3;
+
+static bool is_quick(uint16_t cmd)
+{
+    for (const QuickCmd& q : QUICK_CMDS)
+        if (q.id == cmd) return true;
+    return false;
+}
+
+// Altitude for a new item: the last one given, else a safe default.
+static constexpr float DEFAULT_ALT_M = 20.0f;
+
 // ── Editor state ─────────────────────────────────────────────────────────────
 
 // Per vehicle, not per panel — see widgets/vehicle_ui_state.hpp.
@@ -247,6 +273,99 @@ static void draw_wp_fields(MissionItem& item)
     ImGui::Unindent(12.0f);
 }
 
+// Append a new item. `lat`/`lon` are where the map was clicked, or 0/0 for a
+// command that has no position.
+static void append_item(uint16_t cmd, double lat, double lon)
+{
+    MissionItem ni{};
+    ni.seq     = (uint16_t)st().edit.size();
+    ni.command = cmd;
+    ni.frame   = 3; // MAV_FRAME_GLOBAL_RELATIVE_ALT
+    ni.lat     = lat;
+    ni.lon     = lon;
+    ni.alt     = DEFAULT_ALT_M;
+    for (int k = (int)st().edit.size() - 1; k >= 0; --k) {
+        const MissionItem& prev = st().edit[k];
+        const CmdMeta* pm = find_meta(prev.command);
+        if (!pm || pm->show_alt || pm->show_latlon) { ni.alt = prev.alt; break; }
+    }
+    // The new item opens and every other one closes: what was just added is
+    // what is about to be filled in, and the list stays one item tall else.
+    st().edit.push_back(ni);
+    st().open.assign(st().edit.size() - 1, false);
+    st().open.push_back(true);
+    st().has_edit = true;      // protect manual edits from auto-sync
+    st().cleared  = false;
+}
+
+// One button of the add grid. A positional command arms the map and reads
+// LOC? on the active plate while it waits; pressing it again disarms.
+// Returns true when it closed over a popup's worth of choice.
+static bool add_button(MissionPickState* pick, uint16_t cmd, const char* label,
+                       ImVec2 size)
+{
+    const CmdMeta* m      = find_meta(cmd);
+    const bool     placed = m && m->show_latlon;
+    const bool     armed  = pick && pick->add_command == cmd;
+
+    char id[48];
+    snprintf(id, sizeof(id), "%s###add%u", armed ? "LOC?" : label, (unsigned)cmd);
+    if (!ui_grid_button(id, size, armed)) {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip(placed ? "%s \xe2\x80\x94 then click the map to place it"
+                                     : "%s \xe2\x80\x94 added to the end of the list",
+                              m ? m->name : label);
+        return false;
+    }
+
+    if (armed) {
+        pick->add_command = 0;
+    } else if (placed && pick) {
+        pick->add_command  = cmd;
+        pick->add_label    = m->name;
+    } else {
+        append_item(cmd, 0.0, 0.0);
+        if (pick) pick->add_command = 0;
+    }
+    return true;
+}
+
+static void draw_add_grid(MissionPickState* pick)
+{
+    const float gap   = 4.0f;
+    const float col_w = (ImGui::GetContentRegionAvail().x - gap * (GRID_COLS - 1)) / GRID_COLS;
+    const ImVec2 sz   = { col_w, 26.0f };
+
+    for (int i = 0; i < QUICK_COUNT; ++i) {
+        if (i % GRID_COLS != 0) ImGui::SameLine(0, gap);
+        add_button(pick, QUICK_CMDS[i].id, QUICK_CMDS[i].label, sz);
+    }
+
+    // MORE: everything else, lit while one of those waits for its LOC.
+    if (QUICK_COUNT % GRID_COLS != 0) ImGui::SameLine(0, gap);
+    const bool more_armed = pick && pick->add_command != 0 && !is_quick(pick->add_command);
+    if (ui_grid_button(more_armed ? "LOC?###more" : "MORE...###more", sz, more_armed)) {
+        if (more_armed) pick->add_command = 0;
+        else            ImGui::OpenPopup("##more_cmds");
+    }
+
+    ui_push_dialog_style();
+    if (ImGui::BeginPopup("##more_cmds")) {
+        constexpr float POP_W = 300.0f;
+        ui_dialog_title("ADD MISSION ITEM", POP_W);
+        const float pw = (POP_W - gap) * 0.5f;
+        int n = 0;
+        for (int c = 0; c < CMD_COUNT; ++c) {
+            if (is_quick(CMD_TABLE[c].id)) continue;
+            if (n++ % 2 != 0) ImGui::SameLine(0, gap);
+            if (add_button(pick, CMD_TABLE[c].id, CMD_TABLE[c].name, { pw, 24.0f }))
+                ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    ui_pop_dialog_style();
+}
+
 // ── Main draw function ────────────────────────────────────────────────────────
 
 void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
@@ -264,18 +383,20 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
     // ── Consume a completed map pick ──────────────────────────────────────────
     if (pick && pick->pick_done) {
-        const int idx = pick->active_index;
-        if (idx >= 0 && idx < (int)st().edit.size()) {
-            st().edit[idx].lat = pick->picked_lat;
-            st().edit[idx].lon = pick->picked_lon;
+        if (pick->add_command != 0) {
+            append_item(pick->add_command, pick->picked_lat, pick->picked_lon);
+            gcs_log("mission: added %s at %.6f, %.6f",
+                    cmd_short(pick->add_command), pick->picked_lat, pick->picked_lon);
         }
-        pick->pick_done    = false;
-        pick->active_index = -1;
+        pick->pick_done   = false;
+        pick->add_command = 0;
     }
 
-    // ── Cancel pick mode on Escape ────────────────────────────────────────────
-    if (pick && pick->active_index >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape))
-        pick->active_index = -1;
+    // ── Escape: cancel a pending pick, else leave EDIT ────────────────────────
+    if (pick && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (pick->picking()) pick->add_command = 0;
+        else                   pick->drag_edit = false;
+    }
 
     ImGui::Spacing();
     ImGui::TextColored(accent_col(), "MISSION");
@@ -297,7 +418,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         st().cleared           = false;
         st().fetching          = true;   // wait for fresh FC reply before syncing
         st().fetch_reset_seen  = false;
-        if (pick) { pick->active_index = -1; pick->pick_done = false; }
+        if (pick) { pick->add_command = 0; pick->pick_done = false; }
         gcs_log("requesting mission list");
     }
     ImGui::EndDisabled();
@@ -312,7 +433,10 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         st().has_edit    = false;
         st().cleared     = true;   // block auto-re-sync until user presses FETCH
         st().upload_done = false;
-        if (pick) { pick->active_index = -1; pick->pick_done = false; pick->edit_mission = nullptr; }
+        if (pick) {
+            pick->add_command = 0; pick->pick_done = false;
+            pick->drag_edit = false; pick->edit_mission = nullptr;
+        }
     }
     ImGui::EndDisabled();
 
@@ -329,16 +453,37 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("%d waypoints", (int)st().edit.size());
-    ImGui::Spacing();
     themed_sep();
     ImGui::Spacing();
 
+    // ── EDIT + add grid ───────────────────────────────────────────────────────
+    // EDIT hands the map's left button to the waypoints: press one and drag it.
+    // Off, the map pans as always. Lit on the active plate while on.
+    if (pick) {
+        const bool editing = pick->drag_edit;
+        ImGui::BeginDisabled(st().edit.empty() && !editing);
+        if (ui_grid_button(editing ? "EDITING \xe2\x80\x94 DRAG WAYPOINTS ON THE MAP###edit"
+                                   : "EDIT###edit",
+                           { -1.0f, 32.0f }, editing)) {
+            pick->drag_edit = !editing;
+            if (pick->drag_edit) pick->add_command = 0;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Drag any waypoint on the map to move it (Esc to stop)");
+        ImGui::Spacing();
+    }
+    draw_add_grid(pick);
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("%d items", (int)st().edit.size());
+    ImGui::Spacing();
+
     // ── Waypoint list ─────────────────────────────────────────────────────────
-    // Reserve: spacing(4) + add-combo(~28) + spacing(4) + upload-btn(26) +
-    //          spacing(4) + status-badge-line(~22) + bottom-padding(8) ≈ 96px
+    // Reserve: spacing(4) + upload-btn(26) + spacing(4) +
+    //          status-badge-line(~22) + bottom-padding(8) ≈ 64px
     const float list_h = std::max(80.0f,
-                                  ImGui::GetContentRegionAvail().y - 96.0f);
+                                  ImGui::GetContentRegionAvail().y - 64.0f);
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_dark());
     if (ImGui::BeginChild("##wp_list", { -1.0f, list_h }, false)) {
@@ -350,61 +495,44 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
         int to_delete = -1;
 
+        if (st().edit.empty()) {
+            const char*  msg = "MISSION EMPTY";
+            const ImVec2 ts  = ImGui::CalcTextSize(msg);
+            const ImVec2 av  = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPos({ (av.x - ts.x) * 0.5f, (av.y - ts.y) * 0.5f });
+            ImGui::TextDisabled("%s", msg);
+        }
+
         for (int i = 0; i < (int)st().edit.size(); ++i) {
             MissionItem& item = st().edit[i];
             item.seq = (uint16_t)i;  // keep seq in sync with list position
 
             ImGui::PushID(i);
 
-            // ── Collapse / expand arrow ───────────────────────────────────────
-            // Row icons are sized by hand rather than left to SmallButton: the
-            // right-aligned layout below is computed against fixed widths, and
-            // the shared chrome needs an explicit size.
-            const ImVec2 icon_sz = { 18.0f, ImGui::GetFontSize() + 2.0f };
-            const char* arrow = st().open[i] ? "v" : ">";
-            if (ui_grid_button(arrow, icon_sz))
-                st().open[i] = !st().open[i];
-            ImGui::SameLine(0, 4);
-
             // ── Row header (seq, cmd, alt) ────────────────────────────────────
-            if (item.is_current)
-                ImGui::PushStyleColor(ImGuiCol_Text, accent_col());
+            // The whole row, short of the delete button, toggles the item open
+            // and closed.
+            const float  del_w  = 18.0f;
+            const ImVec2 del_sz = { del_w, ImGui::GetFontSize() + 2.0f };
+            const float  row_w  = ImGui::GetContentRegionAvail().x - del_w - 4.0f;
 
-            char hdr[48];
+            char hdr[64];
             const CmdMeta* m = find_meta(item.command);
             if (m && m->show_alt)
-                snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm", i, m ? m->name : cmd_short(item.command), (double)item.alt);
+                snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm", i, m->name, (double)item.alt);
             else
                 snprintf(hdr, sizeof(hdr), "#%u  %s", i, m ? m->name : cmd_short(item.command));
-            ImGui::TextUnformatted(hdr);
 
+            if (item.is_current)
+                ImGui::PushStyleColor(ImGuiCol_Text, accent_col());
+            if (ImGui::Selectable(hdr, st().open[i], ImGuiSelectableFlags_AllowOverlap,
+                                  { row_w, del_sz.y }))
+                st().open[i] = !st().open[i];
             if (item.is_current)
                 ImGui::PopStyleColor();
 
-            // ── Pick button (map pin) and Delete button — right-aligned ──────────
-            const float del_w  = 18.0f;
-            const float pick_w = 18.0f;
-            const float right_edge = ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX();
-
-            // Determine if this command supports lat/lon (show pick button for those)
-            const CmdMeta* row_m = find_meta(item.command);
-            const bool has_latlon = !row_m || row_m->show_latlon; // show for unknown too
-
-            if (pick && has_latlon) {
-                const bool is_picking = (pick->active_index == i);
-                ImGui::SameLine(right_edge - del_w - pick_w - 2.0f);
-                // "Waiting for a map click" is a persistent state, so it maps
-                // onto the same active plate a held tab or engaged mode uses.
-                if (ui_grid_button(is_picking ? "*" : "+", icon_sz, is_picking)) {
-                    if (is_picking)
-                        pick->active_index = -1;  // cancel
-                    else
-                        pick->active_index = i;   // start picking
-                }
-            }
-
-            ImGui::SameLine(right_edge - del_w);
-            if (ui_solid_button("x", icon_sz,
+            ImGui::SameLine(0, 4);
+            if (ui_solid_button("x", del_sz,
                                 btn_disconnect_base(), btn_disconnect_hov()))
                 to_delete = i;
 
@@ -446,34 +574,6 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     }
     ImGui::EndChild();
     ImGui::PopStyleColor(); // ChildBg
-
-    // ── Add waypoint ──────────────────────────────────────────────────────────
-    ImGui::Spacing();
-    if (ImGui::BeginCombo("##add_cmd", "+ Add Waypoint")) {
-        for (int c = 0; c < CMD_COUNT; ++c) {
-            char opt[32];
-            snprintf(opt, sizeof(opt), "%s (%u)", CMD_TABLE[c].name, CMD_TABLE[c].id);
-            if (ImGui::Selectable(opt, false)) {
-                MissionItem ni{};
-                ni.seq     = (uint16_t)st().edit.size();
-                ni.command = CMD_TABLE[c].id;
-                ni.frame   = 3; // MAV_FRAME_GLOBAL_RELATIVE_ALT
-                // Pre-fill lat/lon from last waypoint with valid coords
-                for (int k = (int)st().edit.size() - 1; k >= 0; --k) {
-                    if (st().edit[k].lat != 0.0 || st().edit[k].lon != 0.0) {
-                        ni.lat = st().edit[k].lat;
-                        ni.lon = st().edit[k].lon;
-                        ni.alt = st().edit[k].alt;
-                        break;
-                    }
-                }
-                st().edit.push_back(ni);
-                st().open.push_back(true); // expand new item
-                st().has_edit = true;      // protect manual edits from auto-sync
-            }
-        }
-        ImGui::EndCombo();
-    }
 
     // ── Upload ────────────────────────────────────────────────────────────────
     ImGui::Spacing();

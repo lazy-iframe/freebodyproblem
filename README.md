@@ -101,6 +101,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
+- **HUD**: a full-panel flight display — horizon edge to edge, a ±60° roll arc, and moving tapes for ground speed (left), heading (top) and altitude (right) — or the classic attitude ball, chosen separately for the main view and the swarm cards in the settings tab
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
 - **Parameter management**: fetch, search, edit, and write parameters, each with its ArduPilot Copter or PX4 documentation one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
 - **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
@@ -111,7 +112,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 ### Mission Planning
 - **Interactive map view**: slippy map with OpenStreetMap tile support (configurable tile server)
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
-- **Point-and-click waypoint editing**: click map to place waypoints during mission planning
+- **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
+- **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it
 - **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
 - **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
@@ -573,7 +575,10 @@ apply display scaling yet — see [Limitations](#limitations).
    confirmation, but it is never blocked
 5. Click **i** beside a row for everything ArduPilot documents about it:
    description, units, range, increment, accepted values or bits, whether a
-   reboot is needed, and the type the vehicle stores it as
+   reboot is needed, and the type the vehicle stores it as. For an enum or a
+   bitmask, **MANUAL ENTRY** swaps the row's list or checkboxes
+   for a plain number field, for values the reference does not list; hovering
+   the field names what the number means. Press it again to switch back
 6. Click **WRITE** to commit one change, or **WRITE ALL** to send every edited
    parameter at once (asks for confirmation, and shows the count on the button)
 7. Click the **×** beside a changed value to drop that one edit, or **DISCARD**
@@ -673,13 +678,22 @@ precision so a saved value reloads as the same float rather than as an edit.
 
 ### Mission Planning
 1. Navigate to **MISSION** tab in left sidebar
-2. Click **REQUEST** to download current mission from vehicle
-3. Click **ADD WAYPOINT** to append a new point
-4. Click the **pin icon** next to a waypoint to enable map pick mode
-5. Click on the map to set waypoint coordinates
-6. Adjust altitude, command type (NAV_WAYPOINT, NAV_LOITER_UNLIM, etc.)
-7. Click **UPLOAD** to send mission to vehicle
-8. Click **CLEAR** to erase vehicle mission (zero waypoints)
+2. Click **FETCH** to download current mission from vehicle
+3. Add items from the command grid. A command with a position (WAYPOINT,
+   TAKEOFF, LAND, LOITER, ROI, ...) arms the map: its button reads **LOC?**
+   until you click the map, and the item is added there. Press it again or
+   **Esc** to cancel. A command without one (RTL, SPEED, DELAY, JUMP, ...) is
+   added at once. **MORE...** holds the rest of the commands
+4. Press **EDIT** (the full-width button above the grid) and drag any waypoint
+   on the map to move it; press it again or **Esc** to go back to panning
+5. Click an item in the list to expand or collapse it and adjust its
+   altitude, parameters and command type. A newly added item opens expanded
+   and the others collapse
+6. Click **UPLOAD MISSION** to send the mission to the vehicle
+7. Click **CLEAR** to empty the editor
+
+New items take the altitude of the last item that has one, or 20 m. Leaving
+the MISSION tab cancels a pending **LOC?** and turns **EDIT** off.
 
 ### The Map
 The map draws every vehicle that has a position, not only the one the panels

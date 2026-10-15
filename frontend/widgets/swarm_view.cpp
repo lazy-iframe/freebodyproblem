@@ -19,7 +19,7 @@
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "sidebar_left.hpp"    // FlightTarget, draw_flight_section, draw_ekf_bars
-#include "sidebar_right.hpp"   // attitude ball, VFR strip, telemetry grid, event log
+#include "sidebar_right.hpp"   // attitude ball, telemetry grid, event log
 #include "topbar.hpp"          // mode_display_name, interlock_latched
 #include "../../backend/firmware_profile.hpp"
 #include "imgui.h"
@@ -228,6 +228,10 @@ static int card_readouts(const SwarmVehicle& v, Readout* out, bool expanded)
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 
+// The cards' HUD style, AppSettings::hud_tapes_swarm, taken once a frame by
+// draw_swarm_view() rather than passed down through every card.
+static bool s_hud_tapes = false;
+
 struct CardInput {
     bool toggle_check   = false;
     bool clicked        = false;
@@ -316,22 +320,18 @@ static CardInput draw_card(const SwarmVehicle& v, ImVec2 p0, ImVec2 size,
     const float body_y = wp.y + CARD_HEAD_H + CARD_PAD;
     const float inner_w = size.x - CARD_PAD * 2.0f;
 
-    // 40, as the sidebar and the map overlay use: ui_readout stacks its label
-    // over its number, and any shorter the two run into each other.
-    const float strip_h  = expanded ? 40.0f : 0.0f;
     const float ekf_bar  = expanded ? 40.0f : 22.0f;
     const float ekf_font = expanded ? ImGui::GetFontSize() : UI_SZ_MICRO;
     const float ekf_h    = ekf_bar + ekf_font + 4.0f;
 
-    const float room_h = size.y - CARD_HEAD_H - CARD_PAD * 3.0f - ekf_h
-                         - (expanded ? strip_h + CARD_PAD : 0.0f);
+    const float room_h = size.y - CARD_HEAD_H - CARD_PAD * 3.0f - ekf_h;
     const float ball   = std::max(40.0f, std::min(room_h,
                                                   inner_w * (expanded ? 0.52f : 0.46f)));
 
     // Attitude. Lettering shrunk with the ball, as the map overlay's is: at
     // sidebar size the ladder and the readouts run into each other.
     ImGui::SetCursorScreenPos({ wp.x + CARD_PAD, body_y });
-    draw_attitude_ball(vs, ball, expanded ? 11.0f : 8.0f);
+    draw_attitude_ball(vs, ball, expanded ? 11.0f : 8.0f, s_hud_tapes);
 
     // Readouts beside it.
     {
@@ -344,11 +344,6 @@ static CardInput draw_card(const SwarmVehicle& v, ImVec2 p0, ImVec2 size,
         for (int i = 0; i < n; ++i)
             kv_row(dl, col_x, body_y + i * row_h, col_w, row_h,
                    rows[i].label, rows[i].value, rows[i].col, vsize);
-    }
-
-    if (expanded) {
-        ImGui::SetCursorScreenPos({ wp.x + CARD_PAD, body_y + ball + CARD_PAD });
-        draw_vfr_readouts(vs, strip_h, UI_SZ_BODY);
     }
 
     // Estimator bars along the bottom edge.
@@ -635,6 +630,7 @@ void draw_swarm_view(const std::vector<SwarmVehicle>& fleet,
 {
     const SwarmLayout& sl = s_layout;
 
+    s_hud_tapes = settings && settings->hud_tapes_swarm;
     draw_cards_panel(fleet, focused_id, focus_out, sl);
 
     // ── FLIGHT, aimed at the checked vehicles ─────────────────────────────────

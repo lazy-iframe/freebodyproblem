@@ -196,6 +196,22 @@ void Vehicle::publish(bool param_fetch_active, bool republish_params)
     }
 }
 
+// Attitude alone, the moment it arrives, between the full publishes. The
+// horizon is the one thing on screen that moves with every sample, and on the
+// 50 ms cadence above a sample could wait almost a whole period, or be skipped
+// when two landed in one — a horizon that lagged and stepped where v0.3.1's,
+// published per datagram, did not. Four scalars under the lock, so it costs
+// nothing at any rate the vehicle streams.
+void Vehicle::publish_attitude()
+{
+    const VehicleState& ps = parser_.state();
+    std::lock_guard<std::mutex> lk(snap_mtx_);
+    snap_.state.roll         = ps.roll;
+    snap_.state.pitch        = ps.pitch;
+    snap_.state.yaw          = ps.yaw;
+    snap_.state.has_attitude = ps.has_attitude;
+}
+
 // ── Protocol thread ───────────────────────────────────────────────────────────
 //
 // What used to be the second half of the link thread. Every conversation a GCS
@@ -290,8 +306,10 @@ void Vehicle::loop()
         }
         if (!running_.load(std::memory_order_relaxed)) break;
 
+        bool attitude_in = false;
         for (const auto& msg : batch) {
             parser_.handle(msg);
+            if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) attitude_in = true;
             if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT &&
                 msg.compid == autopilot_compid_)
                 last_heartbeat_ns_.store(now_ns(), std::memory_order_relaxed);
@@ -593,6 +611,8 @@ void Vehicle::loop()
         {
             publish(param_fetch_active, republish_params);
             last_publish = Clock::now();
+        } else if (attitude_in) {
+            publish_attitude();
         }
 
         if (params_just_completed)

@@ -33,6 +33,7 @@
 // ── Fonts (loaded in main.cpp; never null after font_kit_init) ───────────────
 extern ImFont* g_font_ui;      // 16 px mono — body text / controls
 extern ImFont* g_font_micro;   // 13 px mono — cell labels, log timestamps
+extern ImFont* g_font_mono_bold; // 13 px bold mono — HUD lettering; null if missing
 extern ImFont* g_font_value;   // 26 px mono — big readouts / annunciators
 
 // Font sizes used across panels.
