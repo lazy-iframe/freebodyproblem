@@ -102,7 +102,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 ### Core Telemetry
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
-- **Parameter management**: fetch, search, edit, and write parameters with metadata tooltips
+- **Parameter management**: fetch, search, edit, and write parameters, each with ArduPilot's documentation for it one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
 - **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
 - **Flight modes**: quick mode switching with visual feedback (ArduCopter/Plane/Rover/Sub)
 - **EKF status**: variance bars for velocity, horizontal/vertical position, compass, terrain, and airspeed
@@ -565,10 +565,18 @@ apply display scaling yet — see [Limitations](#limitations).
 1. Navigate to **PARAMETERS** tab
 2. Click **FETCH ALL** to download full parameter set
 3. Use search box to filter (e.g., `WPNAV`, `EK2_`)
-4. Edit values in-place with spinners
-5. Click **WRITE** to commit one change, or **WRITE ALL** to send every edited
+4. Edit values in-place — each row gets the editor its type calls for: a
+   dropdown for an enum, a free number field for an integer or float, and for
+   a bitmask its value in hex, which opens to one checkbox per bit (or type
+   the hex directly). A number outside its documented range turns amber and
+   says so on hover, in the log when written, and in the WRITE ALL
+   confirmation, but it is never blocked
+5. Click **i** beside a row for everything ArduPilot documents about it:
+   description, units, range, increment, accepted values or bits, whether a
+   reboot is needed, and the type the vehicle stores it as
+6. Click **WRITE** to commit one change, or **WRITE ALL** to send every edited
    parameter at once (asks for confirmation, and shows the count on the button)
-6. Click the **×** beside a changed value to drop that one edit, or **DISCARD**
+7. Click the **×** beside a changed value to drop that one edit, or **DISCARD**
    next to WRITE ALL to drop every staged change at once
 
 Edits are staged until written: a row whose value differs from the vehicle's
@@ -586,6 +594,24 @@ as the rest of the panel rather than the desktop's own dialog. Neither reads
 nor writes anything until a file has been named, and the browser opens where
 the last one left off, so a save after a load lands beside what was loaded.
 SAVE asks before overwriting; LOAD does not, having nothing to overwrite.
+
+The documentation comes from ArduPilot's Copter parameter reference — the
+page for every stable release from 4.0.0 on
+([latest](https://ardupilot.org/copter/docs/parameters.html), with the others
+under its version picker) — merged by `scripts/gen_param_meta.py` into
+`frontend/widgets/param_meta_generated.cpp`, which is checked in; rerun the
+script when a new stable release comes out. Parameters are renamed and
+re-documented between releases (`ARMING_CHECK` became `ARMING_SKIPCHK`,
+`WPNAV_SPEED` in cm/s became `WP_SPD` in m/s), so once the vehicle reports its
+firmware version every row is read against that release's page, and the tab
+says which one. A parameter that release's page leaves out is shown as the
+nearest release documents it, and **i** says so. The pages name enums and
+bitmasks but not storage types, so a plain number is edited as an integer or
+a float by the type the vehicle reports. A list of values counts as an enum
+only when the page gives no range and every value is whole. Otherwise the
+values are named points within a range (`ATC_INPUT_TC`'s 0.5 "Very Soft",
+0.2 "Soft", … anywhere from 0 to 1), so the field stays free and **i** lists
+them as suggested values. Applied to ArduPilot Copter only.
 
 **DISCARD** asks for confirmation because a loaded parameter file can put
 hundreds of edits behind it and there is no undo. The per-row **×** does not:

@@ -372,6 +372,8 @@ add_executable(freebodyproblem
     frontend/widgets/sidebar_right.cpp
     frontend/widgets/ui_kit.cpp
     frontend/widgets/vehicle_ui_state.cpp
+    frontend/widgets/param_meta.cpp
+    frontend/widgets/param_meta_generated.cpp
     backend/mavlink_parser.cpp
 )
 target_include_directories(freebodyproblem PRIVATE

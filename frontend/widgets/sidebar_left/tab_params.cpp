@@ -23,10 +23,12 @@
 #include "../../app_log.hpp"
 #include "../../audio.hpp"
 #include "../../param_file.hpp"
+#include "../../../backend/rc_binding.hpp"
 #include "imgui.h"
 #include "ImGuiFileDialog.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdarg>
 #include <cstring>
 #include <cstdio>
 #include <string>
@@ -161,6 +163,242 @@ struct ParamsTabState {
 static VehicleUiState<ParamsTabState> s_state;
 static ParamsTabState& st() { return *s_state; }
 
+// ── Bitmasks ──────────────────────────────────────────────────────────────────
+//
+// PARAM_VALUE carries every parameter as a float holding the number, whatever
+// the vehicle stores it as. A bitmask in an int8 with bit 7 set therefore
+// arrives as -128, and read straight into 32 bits it would claim bits 7–31.
+// Masked to the storage width on the way in and sign-folded back on the way
+// out, so the checkboxes show exactly the bits the vehicle holds.
+
+static int bitmask_width(uint8_t mav_type)
+{
+    switch (mav_type) {
+    case MAV_PARAM_TYPE_UINT8:  case MAV_PARAM_TYPE_INT8:  return 8;
+    case MAV_PARAM_TYPE_UINT16: case MAV_PARAM_TYPE_INT16: return 16;
+    default:                                               return 32;
+    }
+}
+
+static uint32_t bitmask_from_value(float v, uint8_t mav_type)
+{
+    const uint32_t u = (uint32_t)(int64_t)v;
+    const int      w = bitmask_width(mav_type);
+    return w < 32 ? u & ((1u << w) - 1u) : u;
+}
+
+static float bitmask_to_value(uint32_t bits, uint8_t mav_type)
+{
+    const int  w      = bitmask_width(mav_type);
+    const bool is_sig = mav_type == MAV_PARAM_TYPE_INT8  ||
+                        mav_type == MAV_PARAM_TYPE_INT16 ||
+                        mav_type == MAV_PARAM_TYPE_INT32;
+    if (is_sig && ((bits >> (w - 1)) & 1u))
+        return (float)((int64_t)bits - ((int64_t)1 << w));
+    return (float)bits;
+}
+
+// "0x00FF" — as many hex digits as the storage holds, so a byte-wide mask does
+// not read as eight digits of mostly zeros.
+static void bitmask_hex(char* out, size_t n, uint32_t bits, uint8_t mav_type)
+{
+    snprintf(out, n, "0x%0*X", bitmask_width(mav_type) / 4, bits);
+}
+
+// ── Parameter info ────────────────────────────────────────────────────────────
+
+constexpr float INFO_W = 380.0f;
+
+static void info_row(const char* key, const char* fmt, ...) IM_FMTARGS(2);
+static void info_row(const char* key, const char* fmt, ...)
+{
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::TextDisabled("%s", key);
+    ImGui::TableNextColumn();
+    va_list args;
+    va_start(args, fmt);
+    ImGui::TextWrappedV(fmt, args);
+    va_end(args);
+}
+
+// True when a plain number sits outside the range its reference documents.
+// A warning, never a block: the range is the documentation's, not the
+// firmware's, and a developer may mean to go past it. Enums and bitmasks have
+// their own editors and no range to speak of.
+static bool param_out_of_range(const ParamMeta* meta, ParamKind kind, float v)
+{
+    return meta && (kind == ParamKind::Int || kind == ParamKind::Float) &&
+           meta->has(PARAM_FLAG_HAS_RANGE) &&
+           (v < meta->min_val || v > meta->max_val);
+}
+
+// The body of the "i" popup: everything the reference says about one
+// parameter, then the vehicle's side of it — how it stores the value and what
+// it holds now. `shown` is the row's value, staged edit included.
+//
+// `has_ref` says whether the vehicle is one the reference covers at all;
+// `fw_doc` is the release the vehicle runs (-1 unknown) and `doc` the one
+// `meta`'s text was published for.
+static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
+                            ParamKind kind, float shown, bool has_ref,
+                            int fw_doc, int doc)
+{
+    ui_dialog_title(p.param_id, INFO_W);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + INFO_W);
+
+    if (!meta) {
+        ImGui::TextDisabled("%s", has_ref
+            ? "Not in any stable ArduPilot Copter parameter reference (V4.0.0 on)."
+            : "No parameter reference for this vehicle " "\xe2\x80\x94 "
+              "only ArduPilot Copter is covered.");
+        ImGui::Spacing();
+    } else {
+        char doc_lbl[16];
+        param_doc_version_label(doc, doc_lbl, sizeof(doc_lbl));
+
+        ImGui::TextColored(accent_col(), "%s", meta->display_name);
+        if (meta->variant)
+            ImGui::TextDisabled("as documented for %s", meta->variant);
+
+        // Which release's page this is. Said loudly only when it is not the
+        // vehicle's own: a parameter its release's page left out, or one
+        // documented only before or after it.
+        if (fw_doc >= 0 && doc != fw_doc) {
+            char fw_lbl[16];
+            param_doc_version_label(fw_doc, fw_lbl, sizeof(fw_lbl));
+            ImGui::TextColored(col_reboot(), "Not in the %s reference " "\xe2\x80\x94 "
+                               "shown as documented for %s", fw_lbl, doc_lbl);
+        } else {
+            ImGui::TextDisabled("Copter %s reference%s", doc_lbl,
+                                fw_doc < 0 ? " (firmware version not known yet)" : "");
+        }
+        ImGui::Spacing();
+        if (meta->description[0])
+            ImGui::TextUnformatted(meta->description);
+        ImGui::Spacing();
+
+        // Flags, each on its own line — the reboot one in the colour the rest
+        // of the app gives reboots.
+        if (meta->has(PARAM_FLAG_REBOOT))
+            ImGui::TextColored(col_reboot(), "! Reboot required after change");
+        if (meta->has(PARAM_FLAG_READONLY))
+            ImGui::TextColored(col_reboot(), "! Read-only");
+        if (meta->has(PARAM_FLAG_ADVANCED))
+            ImGui::TextDisabled("For advanced users");
+        if (meta->has(PARAM_FLAG_CALIBRATION))
+            ImGui::TextDisabled("Set by a calibration routine");
+        if (meta->has(PARAM_FLAG_VOLATILE))
+            ImGui::TextDisabled("Changed by the firmware at runtime");
+        ImGui::Spacing();
+    }
+
+    if (ImGui::BeginTable("##info_kv", 2, ImGuiTableFlags_SizingFixedFit,
+                          { INFO_W, 0.0f })) {
+        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
+
+        info_row("Type", "%s  (vehicle stores %s)",
+                 param_kind_name(kind), param_mav_type_name(p.type));
+        if (meta && meta->units)
+            info_row("Units", "%s", meta->units);
+        if (meta && meta->has(PARAM_FLAG_HAS_RANGE))
+            info_row("Range", "%.7g \xe2\x80\x93 %.7g",
+                     (double)meta->min_val, (double)meta->max_val);
+        if (meta && meta->has(PARAM_FLAG_HAS_INCREMENT))
+            info_row("Increment", "%.7g", (double)meta->increment);
+        if (meta && meta->group)
+            info_row("Group", "%s", meta->group);
+
+        if (kind == ParamKind::Bitmask) {
+            char hex[16];
+            bitmask_hex(hex, sizeof(hex), bitmask_from_value(p.value, p.type), p.type);
+            info_row("Vehicle", "%s  (%.0f)", hex, (double)p.value);
+            if (shown != p.value) {
+                bitmask_hex(hex, sizeof(hex), bitmask_from_value(shown, p.type), p.type);
+                info_row("Staged", "%s  (%.0f)", hex, (double)shown);
+            }
+        } else {
+            info_row("Vehicle", "%.7g%s", (double)p.value,
+                     param_out_of_range(meta, kind, p.value) ? "  (out of range)" : "");
+            if (shown != p.value)
+                info_row("Staged", "%.7g%s", (double)shown,
+                         param_out_of_range(meta, kind, shown) ? "  (out of range)" : "");
+        }
+        ImGui::EndTable();
+    }
+
+    // Accepted values / bits, the current ones lit. Scrolls past a dozen or so
+    // rows — SERIALn_PROTOCOL alone has close to fifty. A plain number's listed
+    // values are landmarks in its range (ATC_INPUT_TC's "Soft", "Medium", ...),
+    // shown for reference only — the field takes anything.
+    const bool numeric = kind == ParamKind::Int || kind == ParamKind::Float;
+    const bool as_enum = kind == ParamKind::Enum || numeric;
+    const int n = !meta ? 0
+                : as_enum                    ? meta->enum_count
+                : kind == ParamKind::Bitmask ? meta->bitmask_count : 0;
+    if (n > 0) {
+        ImGui::Spacing();
+        themed_sep();
+        ImGui::TextDisabled(kind == ParamKind::Enum    ? "VALUES"
+                          : kind == ParamKind::Bitmask ? "BITS"
+                          : "SUGGESTED VALUES");
+
+        const float row_h  = ImGui::GetTextLineHeightWithSpacing();
+        const float list_h = std::min(n, 14) * row_h + 4.0f;
+        const uint32_t bits = bitmask_from_value(shown, p.type);
+
+        if (ImGui::BeginTable("##info_vals", 2,
+                              ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY,
+                              { INFO_W, list_h })) {
+            ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("m", ImGuiTableColumnFlags_WidthStretch);
+            for (int i = 0; i < n; ++i) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                bool lit;
+                if (as_enum) {
+                    const ParamEnumEntry& e = meta->enum_entries[i];
+                    lit = (e.value == shown);
+                    if (lit) ImGui::TextColored(accent_col(), "%.7g", (double)e.value);
+                    else     ImGui::TextDisabled("%.7g", (double)e.value);
+                    ImGui::TableNextColumn();
+                    if (lit) ImGui::TextColored(accent_col(), "%s", e.label);
+                    else     ImGui::TextWrapped("%s", e.label);
+                } else {
+                    const ParamBitmaskBit& b = meta->bitmask_bits[i];
+                    lit = (bits >> b.bit) & 1u;
+                    if (lit) ImGui::TextColored(accent_col(), "%u", (unsigned)b.bit);
+                    else     ImGui::TextDisabled("%u", (unsigned)b.bit);
+                    ImGui::TableNextColumn();
+                    if (lit) ImGui::TextColored(accent_col(), "%s", b.label);
+                    else     ImGui::TextWrapped("%s", b.label);
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    // Older releases list common whole-mask settings beside a bitmask's bits
+    // (4.0's LOG_BITMASK "Default", "NearlyAll", ...). Read-only here — the
+    // hex field in the bitmask editor takes any of them.
+    if (meta && kind == ParamKind::Bitmask && meta->enum_count > 0) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("PRESETS");
+        for (int i = 0; i < meta->enum_count; ++i) {
+            const ParamEnumEntry& e = meta->enum_entries[i];
+            char hex[16];
+            bitmask_hex(hex, sizeof(hex), bitmask_from_value(e.value, p.type), p.type);
+            if (e.value == shown)
+                ImGui::TextColored(accent_col(), "%s  %s", hex, e.label);
+            else
+                ImGui::Text("%s  %s", hex, e.label);
+        }
+    }
+
+    ImGui::PopTextWrapPos();
+}
+
 void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                      const std::unordered_map<std::string, ParamEntry>* params)
 {
@@ -245,6 +483,18 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     // the *stale* value over the vehicle's newer one.
     auto& edited_vals = st().edited_vals;
 
+    // The reference is ArduPilot Copter's, and only means anything against
+    // that: a PX4 parameter that happens to share a name is a different
+    // parameter, and Plane's and Rover's tables differ from Copter's in
+    // exactly the vehicle-specific entries an operator is likeliest to open.
+    const bool has_ref = vs && vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA &&
+                         rc_firmware_for((MAV_TYPE)vs->type) == RcFirmware::Copter;
+    const bool heli    = vs && vs->type == MAV_TYPE_HELICOPTER;
+    // The release whose page fits the firmware, from AUTOPILOT_VERSION; until
+    // that arrives, -1, which the lookup reads as the newest.
+    const int  fw_doc  = (has_ref && vs->has_fw_info)
+                       ? param_doc_version_for(vs->fw_version) : -1;
+
     // Rows the operator has moved away from the vehicle's value, in name order
     // so the write goes out and logs in the same order the list shows.
     // Rebuilt every frame: the vehicle echoes each accepted write back as a
@@ -259,6 +509,15 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             dirty.push_back(&it->second);
     }
     const int dirty_n = (int)dirty.size();
+
+    // Staged values outside their documented range, for WRITE ALL to mention.
+    int dirty_oor = 0;
+    for (const ParamEntry* p : dirty) {
+        const ParamMeta* meta = has_ref ? get_param_meta(p->param_id, heli, fw_doc) : nullptr;
+        if (param_out_of_range(meta, param_effective_kind(meta, p->type),
+                               edited_vals[p->param_id]))
+            ++dirty_oor;
+    }
 
     // ── Write all / discard all ───────────────────────────────────────────────
     //
@@ -314,9 +573,12 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     }
 
     {
-        char q[96];
-        snprintf(q, sizeof(q), "WRITE %d CHANGED PARAMETER%s TO THE VEHICLE?",
-                 dirty_n, dirty_n == 1 ? "" : "S");
+        char q[160];
+        int  qn = snprintf(q, sizeof(q), "WRITE %d CHANGED PARAMETER%s TO THE VEHICLE?",
+                           dirty_n, dirty_n == 1 ? "" : "S");
+        if (dirty_oor > 0 && qn > 0 && (size_t)qn < sizeof(q))
+            snprintf(q + qn, sizeof(q) - qn, "\n%d %s OUTSIDE THE DOCUMENTED RANGE.",
+                     dirty_oor, dirty_oor == 1 ? "IS" : "ARE");
         if (ui_confirm_popup("##confirm_write_all", "WRITE ALL", q,
                              "WRITE ALL", btn_write_base()) == UiConfirm::Confirmed) {
             int sent = 0;
@@ -581,9 +843,29 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     for (int i = 0; i < 63 && param_search[i]; ++i)
         search_upper[i] = (char)toupper((unsigned char)param_search[i]);
 
+    // Which page the rows are read against, so a mismatch is visible before
+    // anyone opens an "i".
+    if (has_ref) {
+        size_t n_docs = 0;
+        param_doc_versions(&n_docs);
+        char lbl[16];
+        param_doc_version_label(fw_doc >= 0 ? fw_doc : (int)n_docs - 1, lbl, sizeof(lbl));
+        if (fw_doc >= 0)
+            ImGui::TextDisabled("Docs: Copter %s reference (firmware %s)", lbl, vs->fw_version);
+        else
+            ImGui::TextDisabled("Docs: Copter %s reference until the firmware reports its version", lbl);
+    } else if (vs && vs->has_heartbeat) {
+        ImGui::TextDisabled("Docs: none for this vehicle (ArduPilot Copter only)");
+    }
+    ImGui::Spacing();
+
     const float avail_h = ImGui::GetContentRegionAvail().y;
     const float val_w   = 150.0f;
+    // The info button and WRITE share what WRITE alone used to take, for the
+    // same reason the discard cross comes out of the value column below.
     const float btn_w   = 86.0f;
+    const float info_w  = 22.0f;
+    const float write_w = btn_w - info_w - 4.0f;
     // Discard-one cross, and the input width left once it is taken out. The
     // cross comes out of the value column rather than being added to the row:
     // the name column is already the one under pressure — left_w is 24% of the
@@ -618,28 +900,20 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             ImGui::PushID(p.param_id);
 
-            const ParamMeta* meta = get_param_meta(p.param_id);
+            int doc = -1;
+            const ParamMeta* meta = has_ref
+                ? get_param_meta(p.param_id, heli, fw_doc, &doc) : nullptr;
+            const ParamKind  kind = param_effective_kind(meta, p.type);
+            const bool       ro   = meta && meta->has(PARAM_FLAG_READONLY);
 
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(p.param_id);
 
+            // Just the name on hover; the whole entry is behind "i".
             if (meta && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
                 ImGui::BeginTooltip();
-                ImGui::TextColored(accent_col(), "%s", p.param_id);
-                ImGui::Separator();
-                ImGui::PushTextWrapPos(320.0f);
-                ImGui::TextUnformatted(meta->short_desc);
-                ImGui::PopTextWrapPos();
-                ImGui::Spacing();
-                if (meta->units)
-                    ImGui::Text("Units:   %s", meta->units);
-                ImGui::Text("Default: %.4g", meta->default_val);
-                if (meta->widget == ParamWidgetType::Float &&
-                    meta->min_val != meta->max_val)
-                    ImGui::Text("Range:   %.4g  \xe2\x80\x93  %.4g",
-                                meta->min_val, meta->max_val);
-                if (meta->reboot_required)
-                    ImGui::TextColored(col_reboot(), "! Reboot required");
+                ImGui::TextUnformatted(meta->display_name);
+                if (meta->units) ImGui::TextDisabled("%s", meta->units);
                 ImGui::EndTooltip();
             }
 
@@ -654,21 +928,32 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             float edit_val = (ev != edited_vals.end()) ? ev->second : p.value;
             bool  edited   = false;
 
-            if (meta && meta->widget == ParamWidgetType::Enum) {
-                const char* preview = "Unknown";
-                int32_t cur_int = (int32_t)edit_val;
-                for (int e = 0; e < meta->enum_count; ++e) {
-                    if (meta->enum_entries[e].value == cur_int) {
-                        preview = meta->enum_entries[e].label;
+            ImGui::BeginDisabled(ro);
+            if (kind == ParamKind::Enum) {
+                // A value the reference does not list still shows as its
+                // number rather than a blank — firmware newer than the table,
+                // or a value set by hand.
+                const ParamEnumEntry* cur = nullptr;
+                for (int e = 0; e < meta->enum_count; ++e)
+                    if (meta->enum_entries[e].value == edit_val) {
+                        cur = &meta->enum_entries[e];
                         break;
                     }
-                }
+                char preview[64];
+                if (cur) snprintf(preview, sizeof(preview), "%s", cur->label);
+                else     snprintf(preview, sizeof(preview), "%.7g (unlisted)",
+                                  (double)edit_val);
+
                 ImGui::SetNextItemWidth(in_w);
                 if (ImGui::BeginCombo("##v", preview, ImGuiComboFlags_HeightLargest)) {
                     for (int e = 0; e < meta->enum_count; ++e) {
-                        bool sel = (meta->enum_entries[e].value == cur_int);
-                        if (ImGui::Selectable(meta->enum_entries[e].label, sel)) {
-                            edit_val = (float)meta->enum_entries[e].value;
+                        const ParamEnumEntry& ent = meta->enum_entries[e];
+                        const bool sel = (&ent == cur);
+                        char item[160];
+                        snprintf(item, sizeof(item), "%-4.7g %s##e%d",
+                                 (double)ent.value, ent.label, e);
+                        if (ImGui::Selectable(item, sel)) {
+                            edit_val = ent.value;
                             edited   = true;
                         }
                         if (sel) ImGui::SetItemDefaultFocus();
@@ -676,39 +961,104 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                     ImGui::EndCombo();
                 }
 
-            } else if (meta && meta->widget == ParamWidgetType::Bitmask) {
-                int32_t bitmask_val = (int32_t)edit_val;
-                char btn_lbl[24];
-                snprintf(btn_lbl, sizeof(btn_lbl), "0x%04X###bm", bitmask_val);
+            } else if (kind == ParamKind::Bitmask) {
+                // Shown as hex, edited as checkboxes — one per documented bit,
+                // plus any set bit the reference has no name for, so nothing
+                // the vehicle holds is invisible here or impossible to clear.
+                uint32_t bits = bitmask_from_value(edit_val, p.type);
+                char hex[16];
+                bitmask_hex(hex, sizeof(hex), bits, p.type);
+                char btn_lbl[32];
+                snprintf(btn_lbl, sizeof(btn_lbl), "%s###bm", hex);
                 if (ui_grid_button(btn_lbl, { in_w, 0.0f }))
                     ImGui::OpenPopup("##bitmask_popup");
 
                 ui_push_dialog_style();
                 if (ImGui::BeginPopup("##bitmask_popup")) {
-                    ui_dialog_title(p.param_id, 240.0f);
-                    for (int b = 0; b < meta->bitmask_count; ++b) {
-                        bool set = (bitmask_val >> meta->bitmask_bits[b].bit) & 1;
-                        if (ImGui::Checkbox(meta->bitmask_bits[b].label, &set)) {
-                            if (set) bitmask_val |=  (1 << meta->bitmask_bits[b].bit);
-                            else     bitmask_val &= ~(1 << meta->bitmask_bits[b].bit);
-                            edit_val = (float)bitmask_val;
-                            edited   = true;
-                        }
-                    }
+                    constexpr float BM_W = 300.0f;
+                    ui_dialog_title(p.param_id, BM_W);
+
+                    const int width = bitmask_width(p.type);
+                    uint32_t  next  = bits;
+
+                    // Typed hex, for when the mask is already known.
+                    char fmt[16];
+                    snprintf(fmt, sizeof(fmt), "%%0%dX", width / 4);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("HEX  0x");
+                    ImGui::SameLine(0, 2);
+                    ImGui::SetNextItemWidth(BM_W * 0.5f);
+                    ImGui::InputScalar("##hex", ImGuiDataType_U32, &next,
+                                       nullptr, nullptr, fmt,
+                                       ImGuiInputTextFlags_CharsHexadecimal);
+                    if (width < 32) next &= (1u << width) - 1u;
+                    ImGui::SameLine(0, 8);
+                    ImGui::TextDisabled("= %u", (unsigned)next);
                     ImGui::Spacing();
-                    char val_line[48];
-                    snprintf(val_line, sizeof(val_line), "0x%04X  (%d)",
-                             bitmask_val, bitmask_val);
-                    ui_dialog_text(val_line, ui_col_accent());
+
+                    const float row_h = ImGui::GetFrameHeightWithSpacing();
+                    const int   rows  = meta->bitmask_count;
+                    ImGui::BeginChild("##bits", { BM_W, std::min(rows, 16) * row_h },
+                                      false);
+                    uint32_t documented = 0;
+                    for (int b = 0; b < rows; ++b) {
+                        const ParamBitmaskBit& bb = meta->bitmask_bits[b];
+                        documented |= 1u << bb.bit;
+                        bool set = (next >> bb.bit) & 1u;
+                        char lbl[160];
+                        snprintf(lbl, sizeof(lbl), "%-2u %s##b%u",
+                                 (unsigned)bb.bit, bb.label, (unsigned)bb.bit);
+                        if (ImGui::Checkbox(lbl, &set))
+                            next = set ? next | (1u << bb.bit) : next & ~(1u << bb.bit);
+                    }
+                    for (int b = 0; b < width; ++b) {
+                        if ((documented >> b) & 1u || !((next >> b) & 1u)) continue;
+                        bool set = true;
+                        char lbl[48];
+                        snprintf(lbl, sizeof(lbl), "%-2d (undocumented)##u%d", b, b);
+                        if (ImGui::Checkbox(lbl, &set) && !set)
+                            next &= ~(1u << b);
+                    }
+                    ImGui::EndChild();
+
+                    if (next != bits) {
+                        bits     = next;
+                        edit_val = bitmask_to_value(bits, p.type);
+                        edited   = true;
+                    }
                     ImGui::EndPopup();
                 }
                 ui_pop_dialog_style();
 
             } else {
+                // A plain number takes any value, whatever the reference
+                // lists — its range is a warning, drawn in amber, not a limit.
+                const bool oor = param_out_of_range(meta, kind, edit_val);
+                if (oor) {
+                    ImGui::PushStyleColor(ImGuiCol_Border, col_warning());
+                    ImGui::PushStyleColor(ImGuiCol_Text,   col_warning());
+                }
                 ImGui::SetNextItemWidth(in_w);
-                if (ImGui::InputFloat("##v", &edit_val, 0.0f, 0.0f, "%.4g"))
-                    edited = true;
+                if (kind == ParamKind::Int) {
+                    // 64-bit so a uint32 above INT32_MAX still round-trips.
+                    int64_t iv = (int64_t)edit_val;
+                    if (ImGui::InputScalar("##v", ImGuiDataType_S64, &iv,
+                                           nullptr, nullptr, "%lld")) {
+                        edit_val = (float)iv;
+                        edited   = true;
+                    }
+                } else {
+                    if (ImGui::InputFloat("##v", &edit_val, 0.0f, 0.0f, "%.4g"))
+                        edited = true;
+                }
+                if (oor) {
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Outside the documented range %.7g \xe2\x80\x93 %.7g",
+                                          (double)meta->min_val, (double)meta->max_val);
+                }
             }
+            ImGui::EndDisabled();
 
             // Stage on edit; unstage once the vehicle agrees again, which is
             // both how an accepted write clears a row and how typing a value
@@ -741,16 +1091,37 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
 
             ImGui::SameLine(0, 4);
 
-            ImGui::BeginDisabled(!connected || !dirty);
+            // Everything the reference says about this parameter. Live with or
+            // without a link — reading documentation needs no vehicle.
+            if (ui_grid_button("i###info", { info_w, 0.0f }))
+                ImGui::OpenPopup("##param_info");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("Parameter info");
+
+            ui_push_dialog_style();
+            if (ImGui::BeginPopup("##param_info")) {
+                draw_param_info(p, meta, kind, edit_val, has_ref, fw_doc, doc);
+                ImGui::EndPopup();
+            }
+            ui_pop_dialog_style();
+
+            ImGui::SameLine(0, 4);
+
+            ImGui::BeginDisabled(!connected || !dirty || ro);
             // Amber only once the field differs from the vehicle's value —
             // an unedited row stays in the neutral well like every other button.
             const bool wrote = dirty
-                ? ui_solid_button("WRITE", { btn_w, 0.0f },
+                ? ui_solid_button("WRITE", { write_w, 0.0f },
                                   btn_write_base(), btn_write_hov())
-                : ui_grid_button("WRITE", { btn_w, 0.0f });
+                : ui_grid_button("WRITE", { write_w, 0.0f });
             if (wrote) {
                 sender->set_param(tsys, tcomp, p.param_id, edit_val, p.type);
-                gcs_log("writing %s = %.6g", p.param_id, (double)edit_val);
+                if (param_out_of_range(meta, kind, edit_val))
+                    gcs_log("writing %s = %.6g (outside documented range %.6g \xe2\x80\x93 %.6g)",
+                            p.param_id, (double)edit_val,
+                            (double)meta->min_val, (double)meta->max_val);
+                else
+                    gcs_log("writing %s = %.6g", p.param_id, (double)edit_val);
             }
             ImGui::EndDisabled();
 
