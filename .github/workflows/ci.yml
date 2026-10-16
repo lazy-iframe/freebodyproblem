@@ -132,7 +132,12 @@ jobs:
           foreach ($n in @("gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.msi",
                            "gstreamer-1.0-devel-msvc-x86_64-$env:GSTREAMER_VERSION.msi")) {
             Write-Host "Downloading $n"
-            curl.exe -fSL --retry 3 -o "gst-msi\$n" "$base/$n"
+            # freedesktop.org's mirror drops long transfers part-way (curl error
+            # 18) and answers 503 under load. --retry alone retries neither a
+            # cut-off transfer nor every 5xx; --retry-all-errors does, and -C -
+            # resumes from what is already on disk rather than starting over.
+            curl.exe -fSL --retry 8 --retry-delay 10 --retry-all-errors -C - `
+                     -o "gst-msi\$n" "$base/$n"
             if ($LASTEXITCODE -ne 0) { throw "Download failed: $base/$n" }
           }
 
