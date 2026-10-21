@@ -1430,8 +1430,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 for (const ImVec2& p : scr) dl->AddCircleFilled(p, 4.0f, col);
                 if (scr.size() >= 3) {
                     const float dx = scr[0].x - mouse.x, dy = scr[0].y - mouse.y;
-                    const bool  near = dx * dx + dy * dy <= 12.0f * 12.0f;
-                    dl->AddCircle(scr[0], near ? 10.0f : 7.0f, col, 0, 2.0f);
+                    const bool  on_first = dx * dx + dy * dy <= 12.0f * 12.0f;
+                    dl->AddCircle(scr[0], on_first ? 10.0f : 7.0f, col, 0, 2.0f);
                 }
             } else if (!pts.empty()) {
                 const ImVec2 c = project(pts[0].lat, pts[0].lon);

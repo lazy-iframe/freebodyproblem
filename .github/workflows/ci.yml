@@ -90,14 +90,13 @@ jobs:
 
   # ── Windows ──────────────────────────────────────────────────────────────────
   #
-  # Marked continue-on-error: the Windows port is incomplete — serial transport
-  # is compiled out (frontend/main.cpp) and list_serial_ports() returns empty
-  # (backend/connection.cpp). This job exists to surface compile breakage while
-  # that work happens. Remove continue-on-error once it is reliably green.
+  # A failure here fails the run, as Linux's does. It used to be marked
+  # continue-on-error while the port was incomplete, which let an MSVC-only
+  # compile error show a green CI and surface only when a release tag's build
+  # came up without its installer.
   windows:
-    name: Windows (MSVC) [porting]
+    name: Windows (MSVC)
     runs-on: windows-latest
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
