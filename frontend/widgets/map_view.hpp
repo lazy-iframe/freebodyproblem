@@ -51,6 +51,9 @@ struct MapVehicle {
     double    home_lat = 0.0;
     double    home_lon = 0.0;
     bool      has_home = false;
+
+    // The parameter-set geofence, drawn as a ring around home.
+    FenceParams fence;
 };
 
 // Record one position sample on the bound vehicle's trail.
@@ -92,6 +95,9 @@ void map_view_shutdown();
 //               empty falls back to drawing the lat/lon above on its own, which
 //               is what the scalar arguments are still for: the overlay, the
 //               follow-the-vehicle centring, and callers with one aircraft
+//   fence     – the active vehicle's uploaded geofence as last downloaded
+//               (raw fence items); the fence editor's plan, through pick, is
+//               drawn instead while it has one
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
@@ -99,4 +105,5 @@ void draw_map_view(double lat, double lon, bool has_pos,
                    MissionPickState* pick = nullptr,
                    float alt_rel = 0.0f, float gs = 0.0f,
                    GotoTargetState* go = nullptr,
-                   const std::vector<MapVehicle>* fleet = nullptr);
+                   const std::vector<MapVehicle>* fleet = nullptr,
+                   const std::vector<MissionItem>* fence = nullptr);

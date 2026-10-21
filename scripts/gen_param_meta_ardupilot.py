@@ -16,9 +16,11 @@
 # limitations under the License.
 ################################################################################
 """
-Generate param_meta_arducopter.cpp from ArduPilot's published Copter parameter
-lists — one page per stable release, 4.0.0 onwards, as offered by the version
-picker on https://ardupilot.org/copter/docs/parameters.html.
+Generate an ArduPilot vehicle's parameter reference — param_meta_arducopter.cpp
+or param_meta_arduplane.cpp — from the parameter lists ArduPilot publishes for
+it: one page per stable release, 4.0.0 onwards, as offered by the version
+picker on https://ardupilot.org/<vehicle>/docs/parameters.html. Copter and
+Plane print their pages from the same generator, so one parser reads both.
 
 Every release's page is parsed and the results merged: a parameter whose
 documentation did not change between releases is stored once, tagged with
@@ -31,7 +33,7 @@ network — or changes under you because someone edited the wiki — is worse
 than a checked-in table refreshed on purpose. Rerun it when a new stable
 release appears and commit the result.
 
-Usage: gen_param_meta_arducopter.py <out_cpp> [<cache_dir>]
+Usage: gen_param_meta_ardupilot.py <copter|plane> <out_cpp> [<cache_dir>]
 
 <cache_dir> keeps the downloaded pages, and pages already in it are not
 fetched again.
@@ -46,9 +48,33 @@ from param_meta_common import (cached, clean_bits, clean_values, emit, is_int,
                                merge, new_record, norm, parse_html, table_rows,
                                values_are_enum)
 
-BASE_URL     = "https://ardupilot.org/copter/"
-VERSIONS_URL = BASE_URL + "_static/parameters-Copter.json"
-PAGE_URL     = BASE_URL + "docs/"
+# Per vehicle: the wiki's path and page prefix, the ParamDocSource it becomes,
+# and — of a parameter's variants — the one that vehicle is most likely to be
+# running, sorted first so a lookup that knows nothing more lands on it.
+VEHICLES = {
+    "copter": {
+        "wiki": "Copter", "symbol": "param_docs_arducopter",
+        "preferred_variants": {
+            "AC_AttitudeControl_Multi", "AC_AutoTune_Multi",
+            "AP_BattMonitor_Analog", "AP_MotorsHeli_Single",
+        },
+    },
+    "plane": {
+        "wiki": "Plane", "symbol": "param_docs_arduplane",
+        # Plane's pages document one name per library only for the battery
+        # monitors.
+        "preferred_variants": { "AP_BattMonitor_Analog" },
+    },
+}
+
+# Releases before this are left out, whatever the picker still offers: Plane's
+# goes back to 3.9, and this GCS speaks to nothing older than 4.0.
+OLDEST = (4, 0, 0)
+
+
+def urls(wiki):
+    base = f"https://ardupilot.org/{wiki.lower()}/"
+    return base + f"_static/parameters-{wiki}.json", base + "docs/"
 
 
 # ── Page → parameter records ──────────────────────────────────────────────────
@@ -170,13 +196,15 @@ def classify(p):
 
 # ── Fetching ──────────────────────────────────────────────────────────────────
 
-def stable_versions(cache_dir):
-    """[(major, minor, patch, page)] for every stable release, oldest first."""
-    picker = json.loads(cached(cache_dir, "parameters-Copter.json", VERSIONS_URL))
+def stable_versions(cache_dir, wiki):
+    """[(major, minor, patch, page)] for every stable release from OLDEST,
+    oldest first."""
+    versions_url, _ = urls(wiki)
+    picker = json.loads(cached(cache_dir, f"parameters-{wiki}.json", versions_url))
     out = []
     for label, page in picker.items():
-        m = re.fullmatch(r"Copter stable V(\d+)\.(\d+)\.(\d+)", label)
-        if m:
+        m = re.fullmatch(rf"{wiki} stable V(\d+)\.(\d+)\.(\d+)", label)
+        if m and (int(m[1]), int(m[2]), int(m[3])) >= OLDEST:
             out.append((int(m[1]), int(m[2]), int(m[3]), page))
     out.sort()
     return out
@@ -184,28 +212,23 @@ def stable_versions(cache_dir):
 
 # ── Emit ──────────────────────────────────────────────────────────────────────
 
-# Of a parameter's variants, the one a copter is most likely to be running:
-# sorted first, so a lookup that knows nothing more lands on it.
-PREFERRED_VARIANTS = {
-    "AC_AttitudeControl_Multi", "AC_AutoTune_Multi",
-    "AP_BattMonitor_Analog", "AP_MotorsHeli_Single",
-}
-
-
 def main():
-    if len(sys.argv) not in (2, 3):
+    if len(sys.argv) not in (3, 4) or sys.argv[1] not in VEHICLES:
         sys.exit(__doc__)
-    out_path  = sys.argv[1]
-    cache_dir = sys.argv[2] if len(sys.argv) == 3 else None
+    vehicle   = VEHICLES[sys.argv[1]]
+    wiki      = vehicle["wiki"]
+    out_path  = sys.argv[2]
+    cache_dir = sys.argv[3] if len(sys.argv) == 4 else None
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
+    _, page_url = urls(wiki)
 
-    versions = stable_versions(cache_dir)
+    versions = stable_versions(cache_dir, wiki)
     warnings = set()
 
     pages = []
     for ma, mi, pa, page in versions:
-        params = parse_page(cached(cache_dir, page, PAGE_URL + page), warnings.add)
+        params = parse_page(cached(cache_dir, page, page_url + page), warnings.add)
         pages.append((f"V{ma}.{mi}.{pa}", params))
         print(f"V{ma}.{mi}.{pa}: {len(params)} parameters", file=sys.stderr)
 
@@ -215,12 +238,12 @@ def main():
 
     first, last = versions[0], versions[-1]
     emit(records, [v[:3] for v in versions], out_path,
-         script="gen_param_meta_arducopter.py",
-         source=PAGE_URL + "parameters-Copter-stable-V*.html",
+         script=f"gen_param_meta_ardupilot.py {sys.argv[1]}",
+         source=page_url + f"parameters-{wiki}-stable-V*.html",
          summary=f"{len(versions)} stable releases, V{first[0]}.{first[1]}.{first[2]} "
                  f"to V{last[0]}.{last[1]}.{last[2]}",
-         symbol="param_docs_arducopter", display_name="Copter",
-         minor_releases=False, preferred_variants=PREFERRED_VARIANTS)
+         symbol=vehicle["symbol"], display_name=wiki,
+         minor_releases=False, preferred_variants=vehicle["preferred_variants"])
     print(f"{len(records)} records, {len({p['name'] for p, _ in records})} names "
           f"-> {out_path}", file=sys.stderr)
 

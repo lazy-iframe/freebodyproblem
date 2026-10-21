@@ -421,6 +421,20 @@ void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,
     queue_.emplace(buf, buf + len);
 }
 
+void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,
+                                        const char* param_id)
+{
+    // An index of -1 means "look up by name".
+    mavlink_message_t msg;
+    PackLock _pl(shared_chan_);
+    mavlink_msg_param_request_read_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
+                                             tsys, tcomp, param_id, -1);
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    queue_.emplace(buf, buf + len);
+}
+
 void MavlinkSender::set_param(uint8_t tsys, uint8_t tcomp,
                                const char* param_id, float value, uint8_t param_type)
 {
@@ -486,38 +500,39 @@ void MavlinkSender::set_param_ext(uint8_t tsys, uint8_t tcomp,
     queue_.emplace(buf, buf + len);
 }
 
-void MavlinkSender::request_mission_list(uint8_t tsys, uint8_t tcomp)
+void MavlinkSender::request_mission_list(uint8_t tsys, uint8_t tcomp, uint8_t type)
 {
     mavlink_message_t msg;
     PackLock _pl(shared_chan_);
     mavlink_msg_mission_request_list_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
-                                                tsys, tcomp, MAV_MISSION_TYPE_MISSION);
+                                                tsys, tcomp, type);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
 }
 
-void MavlinkSender::request_mission_item(uint8_t tsys, uint8_t tcomp, uint16_t seq)
+void MavlinkSender::request_mission_item(uint8_t tsys, uint8_t tcomp, uint16_t seq,
+                                         uint8_t type)
 {
     mavlink_message_t msg;
     PackLock _pl(shared_chan_);
     mavlink_msg_mission_request_int_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
-                                              tsys, tcomp, seq, MAV_MISSION_TYPE_MISSION);
+                                              tsys, tcomp, seq, type);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
 }
 
-void MavlinkSender::send_mission_ack(uint8_t tsys, uint8_t tcomp)
+void MavlinkSender::send_mission_ack(uint8_t tsys, uint8_t tcomp, uint8_t type)
 {
     mavlink_message_t msg;
     PackLock _pl(shared_chan_);
     mavlink_msg_mission_ack_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
                                        tsys, tcomp,
                                        MAV_MISSION_ACCEPTED,
-                                       MAV_MISSION_TYPE_MISSION,
+                                       type,
                                        0);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -539,29 +554,31 @@ void MavlinkSender::send_timesync(uint8_t tsys, uint8_t tcomp,
 }
 
 void MavlinkSender::start_upload(uint8_t tsys, uint8_t tcomp,
-                                  std::vector<MissionItem> items)
+                                  std::vector<MissionItem> items, uint8_t type)
 {
+    if (type > MAV_MISSION_TYPE_RALLY) return;
     mavlink_message_t msg;
     PackLock _pl(shared_chan_);
     mavlink_msg_mission_count_pack_chan(GCS_SYSID, GCS_COMPID, chan_, &msg,
                                         tsys, tcomp,
                                         (uint16_t)items.size(),
-                                        MAV_MISSION_TYPE_MISSION,
+                                        type,
                                         0 /* opaque_id */);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
 
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
-    upload_items_ = std::move(items);
+    upload_items_[type] = std::move(items);
 }
 
-void MavlinkSender::send_mission_item_at(uint8_t tsys, uint8_t tcomp, uint16_t seq)
+void MavlinkSender::send_mission_item_at(uint8_t tsys, uint8_t tcomp, uint16_t seq,
+                                         uint8_t type)
 {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (seq >= upload_items_.size()) return;
+    if (type > MAV_MISSION_TYPE_RALLY || seq >= upload_items_[type].size()) return;
 
-    const MissionItem& it = upload_items_[seq];
+    const MissionItem& it = upload_items_[type][seq];
     mavlink_message_t msg;
     PackLock _pl(shared_chan_);
     mavlink_msg_mission_item_int_pack_chan(
@@ -576,23 +593,25 @@ void MavlinkSender::send_mission_item_at(uint8_t tsys, uint8_t tcomp, uint16_t s
         (int32_t)(it.lat * 1e7),
         (int32_t)(it.lon * 1e7),
         it.alt,
-        MAV_MISSION_TYPE_MISSION
+        type
     );
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     queue_.emplace(buf, buf + len);
 }
 
-void MavlinkSender::clear_upload()
+void MavlinkSender::clear_upload(uint8_t type)
 {
+    if (type > MAV_MISSION_TYPE_RALLY) return;
     std::lock_guard<std::mutex> lk(mtx_);
-    upload_items_.clear();
+    upload_items_[type].clear();
 }
 
-bool MavlinkSender::upload_active() const
+bool MavlinkSender::upload_active(uint8_t type) const
 {
+    if (type > MAV_MISSION_TYPE_RALLY) return false;
     std::lock_guard<std::mutex> lk(mtx_);
-    return !upload_items_.empty();
+    return !upload_items_[type].empty();
 }
 
 void MavlinkSender::request_message_interval(uint8_t tsys, uint8_t tcomp,

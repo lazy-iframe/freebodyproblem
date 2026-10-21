@@ -102,6 +102,8 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     if (pick && selected != Tab::Mission) {
         pick->add_command  = 0;
         pick->drag_edit    = false;
+        pick->fence_edit   = false;
+        pick->cancel_fence_draw();
     }
 
     // ── Dispatch to per-tab panels ────────────────────────────────────────────

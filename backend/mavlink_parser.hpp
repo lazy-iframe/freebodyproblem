@@ -61,6 +61,39 @@ struct MissionItem {
     bool     autocontinue = true;
 };
 
+// The simple, parameter-set geofence: a cylinder around home. What the vehicle
+// reported of it, from PARAM_VALUE — requested on connect, and echoed by the
+// vehicle whenever one of them is written. ArduPilot and PX4 name it
+// differently; both fill the same fields, and `px4` says which.
+struct FenceParams {
+    bool  px4         = false;
+    bool  has_enable  = false;  bool  enabled  = false;  // FENCE_ENABLE (PX4: GF_ACTION != 0)
+    bool  has_type    = false;  uint32_t type  = 0;      // FENCE_TYPE bitmask
+    bool  has_radius  = false;  float radius_m = 0.0f;   // FENCE_RADIUS / GF_MAX_HOR_DIST
+    bool  has_alt_max = false;  float alt_max_m = 0.0f;  // FENCE_ALT_MAX / GF_MAX_VER_DIST
+    bool  has_alt_min = false;  float alt_min_m = 0.0f;  // FENCE_ALT_MIN
+    bool  has_action  = false;  int   action   = 0;      // FENCE_ACTION / GF_ACTION
+
+    // FENCE_TYPE bits (ArduPilot).
+    static constexpr uint32_t TYPE_ALT_MAX = 1u << 0;
+    static constexpr uint32_t TYPE_CIRCLE  = 1u << 1;
+    static constexpr uint32_t TYPE_POLYGON = 1u << 2;
+    static constexpr uint32_t TYPE_ALT_MIN = 1u << 3;
+
+    // A horizontal cylinder is configured: a radius, and on ArduPilot the
+    // circle bit set. Whether it is enforced is `enabled`, separately — the map
+    // draws a configured but disabled one too, dimmed.
+    bool circle_configured() const {
+        if (!has_radius || radius_m <= 0.0f) return false;
+        return px4 || !has_type || (type & TYPE_CIRCLE);
+    }
+    // The ceiling the cylinder is drawn with, when one is configured.
+    bool ceiling_configured() const {
+        if (!has_alt_max || alt_max_m <= 0.0f) return false;
+        return px4 || !has_type || (type & TYPE_ALT_MAX);
+    }
+};
+
 struct ParamEntry {
     char     param_id[17];  // null-terminated, MAVLink param_id is 16 chars
     float    value;
@@ -365,10 +398,36 @@ struct VehicleState {
     bool     param_fetch_active = false;
 
     // Mission download (MISSION_COUNT / MISSION_ITEM_INT)
+    //
+    // `mission` is the operator's plan only. On a stack that keeps home in seq 0
+    // (see FirmwareProfile::mission_home_at_seq0) that item is split off into
+    // `mission_home`, so mission[0] is always the first item the operator
+    // planned whichever stack is on the other end. It is replaced whole when a
+    // download completes, never cleared at its start, so the last mission stays
+    // on screen while the next one comes in.
+    //
+    // count / received are the transfer itself — wire items, home included.
+    // mission_generation ticks once per completed download, an empty one too;
+    // it is how the UI tells a fresh download from the snapshot it already has.
     std::vector<MissionItem> mission;
-    uint16_t mission_count    = 0;
-    uint16_t mission_received = 0;
-    bool     has_mission      = false;
+    MissionItem mission_home{};
+    bool     has_mission_home   = false;
+    uint16_t mission_count      = 0;
+    uint16_t mission_received   = 0;
+    uint32_t mission_generation = 0;
+    bool     has_mission        = false;
+
+    // Fence download — the uploaded geofence (MAV_MISSION_TYPE_FENCE), the same
+    // protocol on its own list. `fence` is the raw items; geofence.hpp turns
+    // them into shapes. Replaced whole on completion, like `mission`.
+    std::vector<MissionItem> fence;
+    uint16_t fence_count      = 0;
+    uint16_t fence_received   = 0;
+    uint32_t fence_generation = 0;
+    bool     has_fence        = false;
+
+    // The parameter-set fence (FENCE_* / GF_*).
+    FenceParams fence_params;
 
     // Last raw MAVLink message received per message ID.
     // Used only by the MAVLink inspector tab for display; never read by app logic.
@@ -380,6 +439,10 @@ struct VehicleState {
     enum class UploadStatus { Idle, InProgress, Accepted, Failed };
     UploadStatus upload_status     = UploadStatus::Idle;
     uint8_t      upload_ack_result = 255; // MAV_MISSION_RESULT
+
+    // The same for a fence upload, which acknowledges on its own list.
+    UploadStatus fence_upload_status     = UploadStatus::Idle;
+    uint8_t      fence_upload_ack_result = 255;
 
     // AVAILABLE_MODES (#435) — populated after the link requests the mode list.
     // Sorted by the vehicle's mode_index. Empty when the flight stack does not
@@ -470,13 +533,14 @@ public:
     }
 
     // Mission download request queue — drained by link thread after each parse()
-    struct MissionReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; };
+    // `type` is the MAV_MISSION_TYPE the item belongs to: mission or fence.
+    struct MissionReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; uint8_t type; };
     const std::vector<MissionReq>& pending_mission_reqs() const { return mission_reqs_; }
     void clear_mission_reqs() { mission_reqs_.clear(); }
 
     // Mission upload item request queue — FC sends MISSION_REQUEST_INT during upload
     // Link thread drains this and calls MavlinkSender::send_mission_item_at()
-    struct ItemReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; };
+    struct ItemReq { uint8_t tsys; uint8_t tcomp; uint16_t seq; uint8_t type; };
     const std::vector<ItemReq>& pending_item_reqs() const { return item_reqs_; }
     void clear_item_reqs() { item_reqs_.clear(); }
 
@@ -523,6 +587,8 @@ private:
     std::vector<CommandAck>                    ack_queue_;
     std::vector<ParamExtAck>                   param_ext_acks_;
     std::vector<MissionReq>                    mission_reqs_;
+    std::vector<MissionItem>                   mission_rx_;  // download in progress
+    std::vector<MissionItem>                   fence_rx_;    // fence download in progress
     std::vector<ItemReq>                       item_reqs_;
     std::deque<StatusText>                     status_texts_;
     TimeSync                                   timesync_;
@@ -530,6 +596,13 @@ private:
     static constexpr size_t MAX_STATUS_TEXTS = 200;
 
     uint64_t total_messages_ = 0;
+
+    // Publish mission_rx_ as state_.mission once every item is in.
+    void finish_mission_download();
+    void finish_fence_download();
+
+    // FENCE_* / GF_* into state_.fence_params.
+    void note_fence_param(const char* id, float value);
 
     // Reboot detection — see VehicleState::reboot_count.
     //

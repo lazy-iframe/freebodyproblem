@@ -17,7 +17,7 @@
 """
 What the parameter-reference generators share: a small HTML tree, the page
 cache, the merge of many releases into one table, and the C++ it is written
-out as. Each firmware's script — gen_param_meta_arducopter.py,
+out as. Each firmware's script — gen_param_meta_ardupilot.py (Copter, Plane),
 gen_param_meta_px4.py — only knows how to read its own pages.
 
 A parameter record is a dict with the keys in CONTENT_KEYS:

@@ -19,6 +19,7 @@
 #pragma once
 #include <vector>
 #include "../backend/mavlink_parser.hpp"
+#include "../backend/geofence.hpp"
 
 // Passed by pointer to both draw_sidebar_left and draw_map_view each frame.
 // Carries two-way state for placing and moving waypoints on the map.
@@ -47,5 +48,32 @@ struct MissionPickState {
     // waypoints in it.
     std::vector<MissionItem>* edit_mission = nullptr;
 
-    bool picking() const { return add_command != 0; }
+    // ── Geofence drawing (the mission tab's FENCE view) ──────────────────────
+    //
+    // fence_draw != None arms the map the way add_command does: each click
+    // comes back through pick_done / picked_lat / picked_lon, and the tab
+    // builds the shape. A polygon collects its vertices in fence_pts; a circle
+    // takes its centre there, then a second click for its radius.
+    // fence_inclusion is which kind the shape will be.
+    enum class FenceDraw : uint8_t { None, Polygon, Circle };
+    FenceDraw                fence_draw      = FenceDraw::None;
+    bool                     fence_inclusion = true;
+    std::vector<FenceVertex> fence_pts;
+
+    // Set by map_view with pick_done when the click landed on a polygon's first
+    // vertex: close the polygon rather than add a vertex there.
+    bool fence_close = false;
+
+    // EDIT in the FENCE view: polygon vertices and circle centres can be
+    // dragged. map_view writes into edit_fence, which the tab points at its
+    // plan every frame (null when the FENCE view has nothing to draw) — the
+    // map draws it in preference to the vehicle's own fence.
+    bool       fence_edit = false;
+    FencePlan* edit_fence = nullptr;
+
+    bool fence_drawing() const { return fence_draw != FenceDraw::None; }
+    // A click on the map is wanted: for a mission item or for a fence shape.
+    bool picking() const { return add_command != 0 || fence_drawing(); }
+
+    void cancel_fence_draw() { fence_draw = FenceDraw::None; fence_pts.clear(); }
 };

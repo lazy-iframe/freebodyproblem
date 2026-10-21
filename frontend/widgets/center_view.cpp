@@ -685,7 +685,8 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                       s_map_x, s_map_y,
                       s_map_w, s_map_h,
                       map_mission, pick,
-                      vs.alt_rel, vs.groundspeed, &s_goto, fleet);
+                      vs.alt_rel, vs.groundspeed, &s_goto, fleet,
+                      vs.has_fence ? &vs.fence : nullptr);
 
         // Consume the map's request. Guarded again rather than trusting the
         // menu's own check: the flags it read were a frame old, and a mode

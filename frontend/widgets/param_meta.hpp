@@ -28,8 +28,11 @@
 // each a ParamDocSource generated from that firmware's published reference
 // for every release and checked in — rerun the script when a release appears:
 //
-//   param_docs_arducopter   param_meta_arducopter.cpp, scripts/gen_param_meta_arducopter.py
+//   param_docs_arducopter   param_meta_arducopter.cpp, scripts/gen_param_meta_ardupilot.py copter
 //                           https://ardupilot.org/copter/docs/parameters.html,
+//                           every stable release from 4.0.0
+//   param_docs_arduplane    param_meta_arduplane.cpp, scripts/gen_param_meta_ardupilot.py plane
+//                           https://ardupilot.org/plane/docs/parameters.html,
 //                           every stable release from 4.0.0
 //   param_docs_px4          param_meta_px4.cpp, scripts/gen_param_meta_px4.py
 //                           https://docs.px4.io/main/en/advanced_config/parameter_reference,
@@ -101,7 +104,7 @@ struct ParamDocVersion { uint8_t major, minor, patch; };
 
 // One firmware's documentation.
 struct ParamDocSource {
-    const char*            name;           // "Copter", "PX4"
+    const char*            name;           // "Copter", "Plane", "PX4"
     // Sorted by name; a name's variants and per-release revisions sit together.
     const ParamMeta*       params;
     size_t                 param_count;
@@ -114,6 +117,7 @@ struct ParamDocSource {
 };
 
 extern const ParamDocSource param_docs_arducopter;
+extern const ParamDocSource param_docs_arduplane;
 extern const ParamDocSource param_docs_px4;
 
 // Index into src.versions of the reference that fits a firmware version

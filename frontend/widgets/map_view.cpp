@@ -846,6 +846,119 @@ void map_view_shutdown()
 // while the button is held, dropped on release.
 static int s_drag_wp = -1;
 
+// The fence point being dragged in the FENCE view's EDIT: a shape in
+// MissionPickState::edit_fence and a vertex of it, -1 for a circle's centre.
+// shape < 0 when none.
+struct FenceDrag { int shape = -1; int vertex = -1; };
+static FenceDrag s_drag_fence;
+
+// ── Geofence drawing ──────────────────────────────────────────────────────────
+
+static ImU32 fence_col(bool inclusion, float alpha)
+{
+    return ui_col(inclusion ? g_theme.col_ok : g_theme.col_error, alpha);
+}
+
+// Metres on the ground to pixels on the map, at a latitude: the screen
+// distance of a point that far north. Mercator is conformal, so one direction
+// serves for a circle's radius.
+template <class Project>
+static float metres_to_px(const Project& project, double lat, double lon, float m)
+{
+    const ImVec2 a = project(lat, lon);
+    const ImVec2 b = project(lat + (double)m / 111320.0, lon);
+    return std::fabs(a.y - b.y);
+}
+
+// One uploaded fence zone: a translucent fill so overlapping zones still read,
+// an outline in the zone's colour, and its number at the middle. Inclusion
+// zones are green, exclusion zones red.
+template <class Project>
+static void draw_fence_shape(ImDrawList* dl, const Project& project,
+                             const FenceShape& s, int number, bool dragging_this)
+{
+    const ImU32 fill = fence_col(s.inclusion, 0.16f);
+    const ImU32 line = fence_col(s.inclusion, 0.95f);
+    ImVec2 label_at;
+
+    if (s.kind == FenceShape::Kind::Polygon) {
+        if (s.pts.size() < 2) return;
+        static std::vector<ImVec2> scr;   // UI thread only
+        scr.clear();
+        float cx = 0.0f, cy = 0.0f;
+        for (const FenceVertex& v : s.pts) {
+            scr.push_back(project(v.lat, v.lon));
+            cx += scr.back().x; cy += scr.back().y;
+        }
+        if (scr.size() >= 3)
+            dl->AddConcavePolyFilled(scr.data(), (int)scr.size(), fill);
+        dl->AddPolyline(scr.data(), (int)scr.size(), line,
+                        ImDrawFlags_Closed, dragging_this ? 3.0f : 2.0f);
+        for (const ImVec2& p : scr) dl->AddCircleFilled(p, 3.5f, line);
+        label_at = { cx / scr.size(), cy / scr.size() };
+    } else {
+        const ImVec2 c = project(s.center.lat, s.center.lon);
+        const float  r = metres_to_px(project, s.center.lat, s.center.lon, s.radius_m);
+        dl->AddCircleFilled(c, r, fill, 64);
+        dl->AddCircle(c, r, line, 64, dragging_this ? 3.0f : 2.0f);
+        dl->AddCircleFilled(c, 3.5f, line);
+        label_at = c;
+    }
+
+    char lbl[24];
+    snprintf(lbl, sizeof(lbl), "F%d %s", number, s.inclusion ? "IN" : "EX");
+    ImFont*      fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+    const float  tw = ui_tracked_width(fm, UI_SZ_MICRO, lbl);
+    const ImVec2 tp = { label_at.x - tw * 0.5f, label_at.y + 6.0f };
+    dl->AddRectFilled({ tp.x - 3.0f, tp.y - 1.0f }, { tp.x + tw + 3.0f, tp.y + UI_SZ_MICRO + 1.0f },
+                      IM_COL32(0, 0, 0, 150), 2.0f);
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, tp, line, lbl);
+}
+
+// The parameter-set fence: a ring around home of FENCE_RADIUS (PX4:
+// GF_MAX_HOR_DIST), amber, labelled with its radius and ceiling. Drawn even
+// when the fence is off, faded and marked so, since a fence configured but
+// not enabled is worth knowing about before take-off.
+template <class Project>
+static void draw_fence_cylinder(ImDrawList* dl, const Project& project,
+                                const MapVehicle& mv)
+{
+    const FenceParams& f = mv.fence;
+    if (!mv.has_home || !f.circle_configured()) return;
+
+    const bool   on    = !f.has_enable || f.enabled;
+    const float  alpha = (on ? 1.0f : 0.45f) * (mv.active ? 1.0f : 0.5f);
+    const ImU32  col   = ui_col(g_theme.col_warning, 0.9f * alpha);
+    const ImVec2 c     = project(mv.home_lat, mv.home_lon);
+    const float  r     = metres_to_px(project, mv.home_lat, mv.home_lon, f.radius_m);
+
+    // Dashed when off: 48 dashes round the ring.
+    if (on) {
+        dl->AddCircle(c, r, col, 96, 2.5f);
+    } else {
+        constexpr int DASHES = 48;
+        for (int i = 0; i < DASHES; ++i) {
+            const float a0 = (float)i / DASHES * 6.2831853f;
+            const float a1 = a0 + 0.5f / DASHES * 6.2831853f;
+            dl->PathArcTo(c, r, a0, a1, 4);
+            dl->PathStroke(col, 0, 2.0f);
+        }
+    }
+
+    char lbl[64];
+    if (f.ceiling_configured())
+        snprintf(lbl, sizeof(lbl), "FENCE %.0f M  \xe2\x89\xa4 %.0f M%s",
+                 (double)f.radius_m, (double)f.alt_max_m, on ? "" : "  (OFF)");
+    else
+        snprintf(lbl, sizeof(lbl), "FENCE %.0f M%s", (double)f.radius_m, on ? "" : "  (OFF)");
+    ImFont*      fm = g_font_micro ? g_font_micro : ImGui::GetFont();
+    const float  tw = ui_tracked_width(fm, UI_SZ_MICRO, lbl);
+    const ImVec2 tp = { c.x - tw * 0.5f, c.y - r - UI_SZ_MICRO - 6.0f };
+    dl->AddRectFilled({ tp.x - 3.0f, tp.y - 1.0f }, { tp.x + tw + 3.0f, tp.y + UI_SZ_MICRO + 1.0f },
+                      IM_COL32(0, 0, 0, 150), 2.0f);
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, tp, col, lbl);
+}
+
 void draw_map_view(double lat, double lon, bool has_pos,
                    float heading, bool has_hdg,
                    float win_x, float win_y, float win_w, float win_h,
@@ -853,7 +966,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                    MissionPickState* pick,
                    float alt_rel, float gs,
                    GotoTargetState* go,
-                   const std::vector<MapVehicle>* fleet)
+                   const std::vector<MapVehicle>* fleet,
+                   const std::vector<MissionItem>* fence)
 {
     ensure_started();
     drain_upload_queue();
@@ -911,11 +1025,17 @@ void draw_map_view(double lat, double lon, bool has_pos,
     if (!drag_mission || s_drag_wp >= (int)drag_mission->size())
         s_drag_wp = -1;
 
+    // The FENCE view's EDIT, likewise; never while a shape is being drawn.
+    FencePlan* drag_fence =
+        (pick && pick->fence_edit && !pick_active) ? pick->edit_fence : nullptr;
+    if (!drag_fence || s_drag_fence.shape >= (int)drag_fence->shapes.size())
+        s_drag_fence = {};
+
     if (map_hovered) {
         if (pick_active) {
             // Show a hand cursor so the user knows the map is clickable
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        } else if (s_drag_wp < 0) {
+        } else if (s_drag_wp < 0 && s_drag_fence.shape < 0) {
             // Pan: left-drag (suppressed during pick mode, and while a
             // waypoint is being dragged — the gesture is the waypoint's)
             if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -962,6 +1082,18 @@ void draw_map_view(double lat, double lon, bool has_pos,
             tile_frac_to_lat_lon(tx, ty, g_map.zoom,
                                  pick->picked_lat, pick->picked_lon);
             pick->pick_done = true;
+
+            // A polygon closes on a click at its first vertex.
+            pick->fence_close = false;
+            if (pick->fence_draw == MissionPickState::FenceDraw::Polygon &&
+                pick->fence_pts.size() >= 3) {
+                double fx, fy;
+                lat_lon_to_tile_frac(pick->fence_pts[0].lat, pick->fence_pts[0].lon,
+                                     g_map.zoom, fx, fy);
+                const float dx = wp.x + (float)(fx * TILE_PX - tl_px) - mouse.x;
+                const float dy = wp.y + (float)(fy * TILE_PX - tl_py) - mouse.y;
+                pick->fence_close = dx * dx + dy * dy <= 12.0f * 12.0f;
+            }
             // add_command intentionally left set; tab_mission clears it
             // after consuming
         }
@@ -1005,6 +1137,60 @@ void draw_map_view(double lat, double lon, bool has_pos,
                     tile_frac_to_lat_lon(mx, my, g_map.zoom, it.lat, it.lon);
                 } else {
                     s_drag_wp = -1;
+                }
+            }
+        }
+
+        // ── FENCE EDIT: drag a vertex or a circle's centre ────────────────────
+        // As EDIT does for waypoints: the nearest point within reach is picked
+        // up on the press and follows the pointer until the button comes up.
+        if (drag_fence) {
+            auto screen_of = [&](double flat, double flon) -> ImVec2 {
+                double vx, vy;
+                lat_lon_to_tile_frac(flat, flon, g_map.zoom, vx, vy);
+                return { wp.x + (float)(vx * TILE_PX - tl_px),
+                         wp.y + (float)(vy * TILE_PX - tl_py) };
+            };
+            const ImVec2 mouse = ImGui::GetMousePos();
+
+            FenceDrag under;
+            float best_d = 10.0f * 10.0f;
+            auto consider = [&](int si, int vi, double flat, double flon) {
+                const ImVec2 sp = screen_of(flat, flon);
+                const float  d  = (sp.x - mouse.x) * (sp.x - mouse.x) +
+                                  (sp.y - mouse.y) * (sp.y - mouse.y);
+                if (d <= best_d) { best_d = d; under = { si, vi }; }
+            };
+            for (int si = 0; si < (int)drag_fence->shapes.size(); ++si) {
+                const FenceShape& fs = drag_fence->shapes[si];
+                if (fs.kind == FenceShape::Kind::Polygon)
+                    for (int vi = 0; vi < (int)fs.pts.size(); ++vi)
+                        consider(si, vi, fs.pts[vi].lat, fs.pts[vi].lon);
+                else
+                    consider(si, -1, fs.center.lat, fs.center.lon);
+            }
+
+            if (s_drag_fence.shape < 0 && map_hovered && under.shape >= 0) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    s_drag_fence = under;
+                    g_map.follow = false;
+                }
+            }
+            if (s_drag_fence.shape >= 0) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                    FenceShape& fs = drag_fence->shapes[s_drag_fence.shape];
+                    FenceVertex* v = nullptr;
+                    if (fs.kind == FenceShape::Kind::Circle)            v = &fs.center;
+                    else if (s_drag_fence.vertex < (int)fs.pts.size()) v = &fs.pts[s_drag_fence.vertex];
+                    if (v) {
+                        const double mx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
+                        const double my = ((double)(mouse.y - wp.y) + tl_py) / TILE_PX;
+                        tile_frac_to_lat_lon(mx, my, g_map.zoom, v->lat, v->lon);
+                    }
+                } else {
+                    s_drag_fence = {};
                 }
             }
         }
@@ -1092,6 +1278,27 @@ void draw_map_view(double lat, double lon, bool has_pos,
             for (const MapVehicle& mv : *draw_list) if (!mv.active) fn(mv);
             for (const MapVehicle& mv : *draw_list) if ( mv.active) fn(mv);
         };
+
+        // ── Geofences ─────────────────────────────────────────────────────────
+        // Lowest of everything drawn over the tiles: they are areas, and the
+        // trails, the aircraft and the mission are all read against them.
+        //
+        // Uploaded zones: the fence editor's plan while it has one, else the
+        // active vehicle's fence as last downloaded.
+        {
+            FencePlan downloaded;
+            const FencePlan* zones = (pick && pick->edit_fence) ? pick->edit_fence : nullptr;
+            if (!zones && fence && !fence->empty()) {
+                downloaded = fence_from_items(*fence);
+                zones      = &downloaded;
+            }
+            if (zones)
+                for (int si = 0; si < (int)zones->shapes.size(); ++si)
+                    draw_fence_shape(dl, project, zones->shapes[si], si + 1,
+                                     drag_fence && si == s_drag_fence.shape);
+        }
+        // The parameter-set cylinder, every vehicle's around its own home.
+        in_draw_order([&](const MapVehicle& mv) { draw_fence_cylinder(dl, project, mv); });
 
         // ── Position trails ───────────────────────────────────────────────────
         // Under the aircraft and under the mission, so neither is obscured by
@@ -1204,6 +1411,41 @@ void draw_map_view(double lat, double lon, bool has_pos,
             }
         }
 
+        // ── Fence shape being drawn ───────────────────────────────────────────
+        // The vertices so far, joined, with a rubber band to the pointer; a
+        // circle's centre with the ring it would have if the next click set
+        // its radius. The first vertex rings once a polygon can be closed on it.
+        if (pick && pick->fence_drawing()) {
+            const ImU32  col   = fence_col(pick->fence_inclusion, 0.95f);
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const auto&  pts   = pick->fence_pts;
+            if (pick->fence_draw == MissionPickState::FenceDraw::Polygon) {
+                static std::vector<ImVec2> scr;
+                scr.clear();
+                for (const FenceVertex& v : pts) scr.push_back(project(v.lat, v.lon));
+                if (scr.size() >= 2)
+                    dl->AddPolyline(scr.data(), (int)scr.size(), col, ImDrawFlags_None, 2.0f);
+                if (!scr.empty() && map_hovered)
+                    dl->AddLine(scr.back(), mouse, fence_col(pick->fence_inclusion, 0.6f), 1.5f);
+                for (const ImVec2& p : scr) dl->AddCircleFilled(p, 4.0f, col);
+                if (scr.size() >= 3) {
+                    const float dx = scr[0].x - mouse.x, dy = scr[0].y - mouse.y;
+                    const bool  near = dx * dx + dy * dy <= 12.0f * 12.0f;
+                    dl->AddCircle(scr[0], near ? 10.0f : 7.0f, col, 0, 2.0f);
+                }
+            } else if (!pts.empty()) {
+                const ImVec2 c = project(pts[0].lat, pts[0].lon);
+                dl->AddCircleFilled(c, 4.0f, col);
+                if (map_hovered) {
+                    const float r = std::sqrt((mouse.x - c.x) * (mouse.x - c.x) +
+                                              (mouse.y - c.y) * (mouse.y - c.y));
+                    dl->AddCircleFilled(c, r, fence_col(pick->fence_inclusion, 0.12f), 64);
+                    dl->AddCircle(c, r, col, 64, 2.0f);
+                    dl->AddLine(c, mouse, fence_col(pick->fence_inclusion, 0.6f), 1.5f);
+                }
+            }
+        }
+
         // ── Guided target marker ──────────────────────────────────────────────
         // Where the vehicle was last told to go, with the altitude it was told
         // to hold. A ringed cross rather than a filled disc, so it reads as a
@@ -1241,12 +1483,25 @@ void draw_map_view(double lat, double lon, bool has_pos,
         }
 
         // ── Pick-mode / EDIT hint banner ──────────────────────────────────────
-        if (pick_active || drag_mission) {
-            char hint[80];
-            if (pick_active)
+        if (pick_active || drag_mission || drag_fence) {
+            char hint[112];
+            using FD = MissionPickState::FenceDraw;
+            if (pick_active && pick->fence_draw == FD::Polygon)
+                snprintf(hint, sizeof(hint), pick->fence_pts.size() < 3
+                         ? "  Click to add vertex %d  \xe2\x80\x94  Esc to cancel  "
+                         : "  Click to add vertex %d, or the first one to close  \xe2\x80\x94  Esc to cancel  ",
+                         (int)pick->fence_pts.size() + 1);
+            else if (pick_active && pick->fence_draw == FD::Circle)
+                snprintf(hint, sizeof(hint), pick->fence_pts.empty()
+                         ? "  Click to place the circle's centre  \xe2\x80\x94  Esc to cancel  "
+                         : "  Click to set the radius  \xe2\x80\x94  Esc to cancel  ");
+            else if (pick_active)
                 snprintf(hint, sizeof(hint),
                          "  Click to place %s  \xe2\x80\x94  Esc to cancel  ",
                          pick->add_label ? pick->add_label : "item");
+            else if (drag_fence)
+                snprintf(hint, sizeof(hint),
+                         "  EDIT  \xe2\x80\x94  drag a fence vertex or circle centre  ");
             else
                 snprintf(hint, sizeof(hint),
                          "  EDIT  \xe2\x80\x94  drag a waypoint to move it  ");

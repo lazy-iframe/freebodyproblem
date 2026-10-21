@@ -103,7 +103,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **HUD**: a full-panel flight display — horizon edge to edge, a ±60° roll arc, and moving tapes for ground speed (left), heading (top) and altitude (right) — or the classic attitude ball, chosen separately for the main view and the swarm cards in the settings tab
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
-- **Parameter management**: fetch, search, edit, and write parameters, each with its ArduPilot Copter or PX4 documentation one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
+- **Parameter management**: fetch, search, edit, and write parameters, each with its ArduPilot Copter, ArduPilot Plane or PX4 documentation one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
 - **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
 - **Flight modes**: quick mode switching with visual feedback (ArduCopter/Plane/Rover/Sub)
 - **EKF status**: variance bars for velocity, horizontal/vertical position, compass, terrain, and airspeed
@@ -114,6 +114,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
 - **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it
+- **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling, dashed and marked OFF when the fence is not enabled. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
 - **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
 - **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
@@ -606,11 +607,12 @@ new release comes out:
 
 | Firmware | Releases | Source | Script → table |
 |---|---|---|---|
-| ArduPilot Copter | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/copter/docs/parameters.html) and its version picker | `scripts/gen_param_meta_arducopter.py` → `frontend/widgets/param_meta_arducopter.cpp` |
+| ArduPilot Copter | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/copter/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py copter` → `frontend/widgets/param_meta_arducopter.cpp` |
+| ArduPilot Plane | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/plane/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py plane` → `frontend/widgets/param_meta_arduplane.cpp` |
 | PX4 | every release from v1.12 (`main` left out) | [parameter_reference](https://docs.px4.io/main/en/advanced_config/parameter_reference) and its version dropdown | `scripts/gen_param_meta_px4.py` → `frontend/widgets/param_meta_px4.cpp` |
 
-Both scripts take `<out_cpp> [<cache_dir>]`; pages already in the cache are not
-fetched again.
+The ArduPilot script takes `<copter|plane> <out_cpp> [<cache_dir>]`, the PX4
+one `<out_cpp> [<cache_dir>]`; pages already in the cache are not fetched again.
 
 Parameters are renamed and re-documented between releases (`ARMING_CHECK`
 became `ARMING_SKIPCHK`, `WPNAV_SPEED` in cm/s became `WP_SPD` in m/s), so once
@@ -628,7 +630,9 @@ Otherwise the values are named points within a range (`ATC_INPUT_TC`'s 0.5
 "Very Soft", 0.2 "Soft", … anywhere from 0 to 1; PX4's `GPS_1_PROTOCOL`, whose
 range runs past its list), so the field stays free and **i** lists them as
 suggested values. A PX4 boolean is a Disabled/Enabled dropdown. ArduPilot's
-documentation applies to Copter only; PX4's to every airframe.
+documentation is per vehicle: Copter's to multirotors and helicopters,
+Plane's to fixed-wing and VTOL types (QuadPlanes included); Rover and Sub get
+none. PX4's applies to every airframe.
 
 **DISCARD** asks for confirmation because a loaded parameter file can put
 hundreds of edits behind it and there is no undo. The per-row **×** does not:
@@ -694,6 +698,32 @@ precision so a saved value reloads as the same float rather than as an edit.
 
 New items take the altitude of the last item that has one, or 20 m. Leaving
 the MISSION tab cancels a pending **LOC?** and turns **EDIT** off.
+
+### Geofence
+The parameter fence needs no editing here: set `FENCE_ENABLE`, `FENCE_TYPE`,
+`FENCE_RADIUS` and `FENCE_ALT_MAX` in **PARAMS** (PX4: `GF_ACTION`,
+`GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) and the ring around home follows as the
+vehicle echoes each one back. The **GEOFENCE** view of the MISSION tab
+summarises it.
+
+Uploaded zones are edited in that view:
+
+1. Click **FETCH** to download the vehicle's current fence. Fetch before
+   editing to keep its existing zones: an upload replaces the whole list
+2. **POLYGON**: click the map for each vertex, then click the first vertex,
+   press **Enter** or press the button (now **CLOSE**) to finish. **CIRCLE**:
+   click the centre, then click again to set the radius. **Esc** cancels. A
+   new zone is an inclusion zone (the vehicle must stay inside)
+3. Click a zone in the list to switch it to **EXCLUSION** (the vehicle must
+   stay out) or back, set a circle's radius, or type vertex coordinates.
+   **EDIT** lets you drag polygon vertices and circle centres on the map
+4. Click **UPLOAD FENCE**. **CLEAR** followed by **UPLOAD EMPTY FENCE** removes
+   the vehicle's fence
+
+On ArduPilot, uploaded zones are only enforced with `FENCE_ENABLE` set and the
+Polygon bit (4) in `FENCE_TYPE`; the view warns when either is missing. A
+Plane's fence return point (`MAV_CMD_NAV_FENCE_RETURN_POINT`) is kept through
+a fetch and upload but not edited.
 
 ### The Map
 The map draws every vehicle that has a position, not only the one the panels
@@ -897,6 +927,7 @@ the serial handle, drains them.
 - **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
 - **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
 - **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each on its own MAVLink TX channel so their sequence counters stay independent
+- **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
 - **accel_calibration.cpp** / **gyro_calibration.cpp** / **mag_calibration.cpp**: the GCS half of each calibration — link-free state machines fed messages and a clock

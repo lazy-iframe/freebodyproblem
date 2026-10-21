@@ -138,6 +138,8 @@ public:
 
     Capability aux_functions() const override { return { true, nullptr }; }
 
+    bool mission_home_at_seq0() const override { return true; }
+
 private:
     static Capability ok()      { return { true,  nullptr }; }
     static Capability refused() { return { false, "GUIDED MODE REQUIRED" }; }
@@ -239,6 +241,8 @@ public:
     {
         return { false, "AUX FUNCTIONS ARE ARDUPILOT-ONLY (MAV_CMD_DO_AUX_FUNCTION)" };
     }
+
+    bool mission_home_at_seq0() const override { return false; }
 };
 
 } // namespace

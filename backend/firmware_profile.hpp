@@ -167,6 +167,14 @@ public:
     // MAV_CMD_DO_AUX_FUNCTION (218) and the RCn_OPTION function numbers behind
     // it. An ArduPilot invention; PX4 implements neither.
     virtual Capability aux_functions() const = 0;
+
+    // ── Missions ─────────────────────────────────────────────────────────────
+
+    // Does mission seq 0 belong to home rather than to the plan? ArduPilot
+    // reserves it: whatever is uploaded there is discarded, and a download
+    // always reads home back in its place, so the operator's first item has to
+    // go out as seq 1. PX4 numbers the plan from 0.
+    virtual bool mission_home_at_seq0() const = 0;
 };
 
 // The profile for an autopilot. Never null, and never a dangling reference: the

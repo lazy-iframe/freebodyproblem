@@ -253,19 +253,23 @@ static void format_range(const ParamMeta* meta, char* out, size_t n)
 
 // Which firmware's documentation fits a vehicle, or nullptr for none.
 //
-// ArduPilot's is Copter's only: Plane's and Rover's tables differ from it in
-// exactly the vehicle-specific entries an operator is likeliest to open. PX4
-// publishes one table for every airframe. A parameter one stack shares by
-// name with the other is a different parameter, so neither stands in for the
-// other.
+// ArduPilot documents each vehicle separately, Copter and Plane covered here:
+// their tables differ in exactly the vehicle-specific entries an operator is
+// likeliest to open, so neither stands in for the other, and Rover and Sub
+// get none rather than the wrong one. A QuadPlane reports a fixed-wing or VTOL
+// type and reads Plane's, which documents its Q_ parameters. PX4 publishes
+// one table for every airframe. A parameter one stack shares by name with the
+// other is a different parameter, so neither stands in for the other.
 static const ParamDocSource* param_docs_for(const VehicleState* vs)
 {
     if (!vs) return nullptr;
     if (vs->autopilot == MAV_AUTOPILOT_PX4) return &param_docs_px4;
-    if (vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA &&
-        rc_firmware_for((MAV_TYPE)vs->type) == RcFirmware::Copter)
-        return &param_docs_arducopter;
-    return nullptr;
+    if (vs->autopilot != MAV_AUTOPILOT_ARDUPILOTMEGA) return nullptr;
+    switch (rc_firmware_for((MAV_TYPE)vs->type)) {
+    case RcFirmware::Copter: return &param_docs_arducopter;
+    case RcFirmware::Plane:  return &param_docs_arduplane;
+    default:                 return nullptr;
+    }
 }
 
 // The body of the "i" popup: everything the reference says about one
@@ -293,7 +297,7 @@ static void draw_param_info(const ParamEntry& p, const ParamMeta* meta,
                                 docs->name, first, last);
         } else {
             ImGui::TextDisabled("No parameter reference for this vehicle " "\xe2\x80\x94 "
-                                "only ArduPilot Copter and PX4 are covered.");
+                                "only ArduPilot Copter, ArduPilot Plane and PX4 are covered.");
         }
         ImGui::Spacing();
     } else {

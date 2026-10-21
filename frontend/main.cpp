@@ -331,6 +331,7 @@ static void render_ui()
             mv.home_lat = vsnap.state.home_lat;
             mv.home_lon = vsnap.state.home_lon;
             mv.has_home = vsnap.state.has_home;
+            mv.fence    = vsnap.state.fence_params;
             mv.checked  = swarm && swarm_is_checked(v->id());
             g_map_fleet.push_back(mv);
 

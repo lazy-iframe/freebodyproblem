@@ -17,6 +17,7 @@
 
 
 #include "mavlink_parser.hpp"
+#include "firmware_profile.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -598,6 +599,7 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         entry.type  = pv.param_type;
         entry.index = pv.param_index;
         params_[entry.param_id]     = entry;
+        note_fence_param(entry.param_id, entry.value);
         state_.param_count          = pv.param_count;
         state_.params_received      = (uint16_t)params_.size();
         ++state_.params_generation;
@@ -607,21 +609,44 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
     case MAVLINK_MSG_ID_MISSION_COUNT: {
         mavlink_mission_count_t mc;
         mavlink_msg_mission_count_decode(&msg, &mc);
-        state_.mission.clear();
-        state_.mission.resize(mc.count);
+        // The plan and the fence each have a list of their own on the same
+        // messages; rally points are not handled.
+        if (mc.mission_type == MAV_MISSION_TYPE_FENCE) {
+            fence_rx_.assign(mc.count, MissionItem{});
+            state_.fence_count    = mc.count;
+            state_.fence_received = 0;
+            if (mc.count > 0)
+                mission_reqs_.push_back({msg.sysid, msg.compid, 0, MAV_MISSION_TYPE_FENCE});
+            else
+                finish_fence_download();
+            break;
+        }
+        if (mc.mission_type != MAV_MISSION_TYPE_MISSION) break;
+        mission_rx_.assign(mc.count, MissionItem{});
         state_.mission_count    = mc.count;
         state_.mission_received = 0;
-        state_.has_mission      = false;
         if (mc.count > 0)
-            mission_reqs_.push_back({msg.sysid, msg.compid, 0});
+            mission_reqs_.push_back({msg.sysid, msg.compid, 0, MAV_MISSION_TYPE_MISSION});
+        else
+            finish_mission_download();
         break;
     }
 
     case MAVLINK_MSG_ID_MISSION_ITEM_INT: {
         mavlink_mission_item_int_t mi;
         mavlink_msg_mission_item_int_decode(&msg, &mi);
-        if (mi.seq < state_.mission_count) {
-            MissionItem& item   = state_.mission[mi.seq];
+        const bool fence = mi.mission_type == MAV_MISSION_TYPE_FENCE;
+        if (!fence && mi.mission_type != MAV_MISSION_TYPE_MISSION) break;
+
+        uint16_t&                 received = fence ? state_.fence_received : state_.mission_received;
+        const uint16_t            count    = fence ? state_.fence_count    : state_.mission_count;
+        std::vector<MissionItem>& rx       = fence ? fence_rx_             : mission_rx_;
+        // Items are requested one at a time, so only the one asked for is
+        // taken. A duplicate — the reply to a re-request that crossed the
+        // original on the wire — would otherwise count twice, end the download
+        // one item early and leave a blank where the last item belongs.
+        if (received < count && mi.seq == received && mi.seq < rx.size()) {
+            MissionItem& item   = rx[mi.seq];
             item.seq            = mi.seq;
             item.lat            = mi.x / 1e7;
             item.lon            = mi.y / 1e7;
@@ -634,12 +659,14 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
             item.frame          = mi.frame;
             item.is_current     = (mi.current != 0);
             item.autocontinue   = (mi.autocontinue != 0);
-            ++state_.mission_received;
-            if (state_.mission_received < state_.mission_count)
+            ++received;
+            if (received < count)
                 mission_reqs_.push_back({msg.sysid, msg.compid,
-                                         (uint16_t)(mi.seq + 1)});
+                                         (uint16_t)(mi.seq + 1), mi.mission_type});
+            else if (fence)
+                finish_fence_download();
             else
-                state_.has_mission = true;
+                finish_mission_download();
         }
         break;
     }
@@ -648,9 +675,13 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         // FC is requesting a mission item from GCS (upload protocol, new style)
         mavlink_mission_request_int_t mr;
         mavlink_msg_mission_request_int_decode(&msg, &mr);
-        if (mr.seq == 0)
-            state_.upload_status = VehicleState::UploadStatus::InProgress;
-        item_reqs_.push_back({msg.sysid, msg.compid, mr.seq});
+        if (mr.seq == 0) {
+            if (mr.mission_type == MAV_MISSION_TYPE_FENCE)
+                state_.fence_upload_status = VehicleState::UploadStatus::InProgress;
+            else
+                state_.upload_status = VehicleState::UploadStatus::InProgress;
+        }
+        item_reqs_.push_back({msg.sysid, msg.compid, mr.seq, mr.mission_type});
         break;
     }
 
@@ -659,9 +690,13 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         // Some ArduPilot versions send this instead of MISSION_REQUEST_INT.
         mavlink_mission_request_t mr;
         mavlink_msg_mission_request_decode(&msg, &mr);
-        if (mr.seq == 0)
-            state_.upload_status = VehicleState::UploadStatus::InProgress;
-        item_reqs_.push_back({msg.sysid, msg.compid, mr.seq});
+        if (mr.seq == 0) {
+            if (mr.mission_type == MAV_MISSION_TYPE_FENCE)
+                state_.fence_upload_status = VehicleState::UploadStatus::InProgress;
+            else
+                state_.upload_status = VehicleState::UploadStatus::InProgress;
+        }
+        item_reqs_.push_back({msg.sysid, msg.compid, mr.seq, mr.mission_type});
         break;
     }
 
@@ -669,6 +704,14 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         // FC acknowledges completed upload
         mavlink_mission_ack_t ma;
         mavlink_msg_mission_ack_decode(&msg, &ma);
+        if (ma.mission_type == MAV_MISSION_TYPE_FENCE) {
+            state_.fence_upload_ack_result = ma.type;
+            state_.fence_upload_status = (ma.type == MAV_MISSION_ACCEPTED)
+                                       ? VehicleState::UploadStatus::Accepted
+                                       : VehicleState::UploadStatus::Failed;
+            break;
+        }
+        if (ma.mission_type != MAV_MISSION_TYPE_MISSION) break;
         state_.upload_ack_result = ma.type;
         state_.upload_status = (ma.type == MAV_MISSION_ACCEPTED)
                              ? VehicleState::UploadStatus::Accepted
@@ -804,6 +847,63 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
 
     default:
         break;
+    }
+}
+
+// ── Mission download ──────────────────────────────────────────────────────────
+
+void MavlinkParser::finish_mission_download()
+{
+    std::vector<MissionItem> items = std::move(mission_rx_);
+    mission_rx_.clear();
+
+    state_.has_mission_home = false;
+    if (firmware_profile(state_.autopilot).mission_home_at_seq0() && !items.empty()) {
+        state_.mission_home     = items.front();
+        state_.has_mission_home = true;
+        items.erase(items.begin());
+    }
+    // Numbered as the operator sees them, from 0, with or without home.
+    for (size_t i = 0; i < items.size(); ++i) items[i].seq = (uint16_t)i;
+    state_.mission     = std::move(items);
+    state_.has_mission = true;
+    ++state_.mission_generation;
+}
+
+void MavlinkParser::finish_fence_download()
+{
+    // No home slot: that is the plan's alone.
+    state_.fence = std::move(fence_rx_);
+    fence_rx_.clear();
+    for (size_t i = 0; i < state_.fence.size(); ++i) state_.fence[i].seq = (uint16_t)i;
+    state_.has_fence = true;
+    ++state_.fence_generation;
+}
+
+// ── Parameter-set fence ───────────────────────────────────────────────────────
+
+void MavlinkParser::note_fence_param(const char* id, float v)
+{
+    FenceParams& f = state_.fence_params;
+    if (id[0] == 'F' && std::strncmp(id, "FENCE_", 6) == 0) {
+        const char* k = id + 6;
+        f.px4 = false;
+        if      (!std::strcmp(k, "ENABLE"))  { f.has_enable  = true; f.enabled   = v != 0.0f; }
+        else if (!std::strcmp(k, "TYPE"))    { f.has_type    = true; f.type      = (uint32_t)v; }
+        else if (!std::strcmp(k, "RADIUS"))  { f.has_radius  = true; f.radius_m  = v; }
+        else if (!std::strcmp(k, "ALT_MAX")) { f.has_alt_max = true; f.alt_max_m = v; }
+        else if (!std::strcmp(k, "ALT_MIN")) { f.has_alt_min = true; f.alt_min_m = v; }
+        else if (!std::strcmp(k, "ACTION"))  { f.has_action  = true; f.action    = (int)v; }
+    } else if (id[0] == 'G' && std::strncmp(id, "GF_", 3) == 0) {
+        // PX4 has no enable of its own: no action is no fence.
+        const char* k = id + 3;
+        f.px4 = true;
+        if      (!std::strcmp(k, "MAX_HOR_DIST")) { f.has_radius  = true; f.radius_m  = v; }
+        else if (!std::strcmp(k, "MAX_VER_DIST")) { f.has_alt_max = true; f.alt_max_m = v; }
+        else if (!std::strcmp(k, "ACTION")) {
+            f.has_action = true; f.action  = (int)v;
+            f.has_enable = true; f.enabled = v != 0.0f;
+        }
     }
 }
 

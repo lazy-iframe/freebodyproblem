@@ -303,6 +303,10 @@ public:
     void request_param_read(uint8_t target_sysid, uint8_t target_compid,
                             int16_t param_index);
 
+    // The same by name, for the few parameters wanted without a full fetch.
+    void request_param_read(uint8_t target_sysid, uint8_t target_compid,
+                            const char* param_id);
+
     // Write a single parameter (PARAM_SET #23).
     // FC echoes the accepted value back as a PARAM_VALUE message.
     void set_param(uint8_t target_sysid, uint8_t target_compid,
@@ -325,17 +329,22 @@ public:
                        const char* param_id, float value, uint8_t param_type);
 
     // ── Mission protocol ─────────────────────────────────────────────────────
+    //
+    // `type` is the MAV_MISSION_TYPE of the list: the plan by default, or the
+    // geofence (MAV_MISSION_TYPE_FENCE), which travels on the same messages.
 
     // Send MISSION_REQUEST_LIST (#43) — FC responds with MISSION_COUNT (#44).
-    void request_mission_list(uint8_t target_sysid, uint8_t target_compid);
+    void request_mission_list(uint8_t target_sysid, uint8_t target_compid,
+                              uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // Send MISSION_REQUEST_INT (#51) for a specific sequence number.
     // FC responds with MISSION_ITEM_INT (#73).
     void request_mission_item(uint8_t target_sysid, uint8_t target_compid,
-                              uint16_t seq);
+                              uint16_t seq, uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // Send MISSION_ACK (#47) to signal successful receipt of all items.
-    void send_mission_ack(uint8_t target_sysid, uint8_t target_compid);
+    void send_mission_ack(uint8_t target_sysid, uint8_t target_compid,
+                          uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // Send TIMESYNC (#111), either half of the exchange. A request is
     // tc1 = 0, ts1 = our clock, broadcast (target ids 0); a reply carries our
@@ -348,19 +357,22 @@ public:
     // Begin mission upload — sends MISSION_COUNT and stores the item vector.
     // FC will then send MISSION_REQUEST_INT per item; link thread serves
     // each request by calling send_mission_item_at().
+    // Each list type keeps its own stored items, so a fence upload and a
+    // mission upload never serve each other's requests.
     void start_upload(uint8_t target_sysid, uint8_t target_compid,
-                      std::vector<MissionItem> items);
+                      std::vector<MissionItem> items,
+                      uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // Send MISSION_ITEM_INT for seq from the stored upload vector.
     // Called by the link thread when parser.pending_item_reqs() is drained.
     void send_mission_item_at(uint8_t target_sysid, uint8_t target_compid,
-                              uint16_t seq);
+                              uint16_t seq, uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // Discard stored upload items (call after MISSION_ACK or abort).
-    void clear_upload();
+    void clear_upload(uint8_t type = MAV_MISSION_TYPE_MISSION);
 
     // True while upload items are stored (cleared by clear_upload()).
-    bool upload_active() const;
+    bool upload_active(uint8_t type = MAV_MISSION_TYPE_MISSION) const;
 
     // ── Transport ─────────────────────────────────────────────────────────────
 
@@ -431,5 +443,6 @@ private:
     std::atomic<uint32_t>                   reboot_requests_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;
 
-    std::vector<MissionItem>                upload_items_;
+    // Indexed by MAV_MISSION_TYPE: mission, fence, rally.
+    std::vector<MissionItem>                upload_items_[3];
 };
