@@ -1,0 +1,110 @@
+---
+// The two downloads, straight to the latest release's installer for each OS.
+// Resolved at build time — see src/lib/release.ts.
+import { Icon } from '@astrojs/starlight/components';
+import { latestRelease, formatSize, RELEASES_URL } from '../lib/release';
+
+const rel = await latestRelease();
+const items = [
+	{
+		os: 'Windows',
+		detail: 'Installer for Windows 10/11, 64-bit',
+		dl: rel.windows,
+		icon: null,
+	},
+	{
+		os: 'Linux',
+		detail: 'Debian package for Ubuntu, amd64',
+		dl: rel.linux,
+		icon: 'linux' as const,
+	},
+];
+const base = import.meta.env.BASE_URL;
+---
+
+<div class="downloads not-content">
+	{
+		items.map(({ os, detail, dl, icon }) => (
+			<a class="dl" href={dl.url} rel="noopener">
+				<span class="dl-icon" aria-hidden="true">
+					{icon ? (
+						<Icon name={icon} size="1.75rem" />
+					) : (
+						<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+							<path d="M3 5.1 10 4v7H3zM11 3.9 21 2.5V11H11zM3 12h7v7l-7-1zM11 12h10v8.5l-10-1.4z" />
+						</svg>
+					)}
+				</span>
+				<span class="dl-text">
+					<span class="dl-title">Download for {os}</span>
+					<span class="dl-detail">
+						{detail}
+						{dl.size ? ` · ${formatSize(dl.size)}` : ''}
+					</span>
+				</span>
+			</a>
+		))
+	}
+	<p class="dl-meta">
+		{rel.tag ? <>Latest release <a href={rel.page}>{rel.tag}</a> · </> : null}
+		<a href={RELEASES_URL}>All releases</a>{' · '}
+		<a href={`${base}start/install/`}>Install notes</a>
+	</p>
+</div>
+
+<style>
+	.downloads {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		margin-block: 1.5rem 0;
+	}
+	.dl {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 1rem 1.25rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		background: rgb(0 0 0 / 0.4);
+		color: var(--sl-color-white);
+		text-decoration: none;
+		transition: border-color 0.15s, background-color 0.15s;
+	}
+	.dl:hover {
+		border-color: var(--sl-color-accent);
+		background: var(--sl-color-accent-low);
+	}
+	.dl-icon {
+		color: var(--sl-color-accent);
+		display: flex;
+	}
+	.dl-text {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.dl-title {
+		font-weight: 600;
+		font-size: var(--sl-text-lg);
+	}
+	.dl-detail {
+		color: var(--sl-color-gray-3);
+		font-size: var(--sl-text-sm);
+	}
+	.dl-meta {
+		grid-column: 1 / -1;
+		margin: 0;
+		text-align: center;
+		color: var(--sl-color-gray-3);
+		font-size: var(--sl-text-sm);
+	}
+	.dl-meta a {
+		color: var(--sl-color-accent);
+	}
+	@media (max-width: 40rem) {
+		.downloads {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

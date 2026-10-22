@@ -1,9 +1,17 @@
 name: CI
 
 on:
+  # The website under site/ has its own workflow (site.yml); a change to it
+  # alone does not rebuild the application.
   push:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site.yml'
   pull_request:
+    paths-ignore:
+      - 'site/**'
+      - '.github/workflows/site.yml'
   workflow_dispatch:
   # Lets cd.yml run these exact jobs on a tag instead of duplicating the build
   # and dependency setup. Called jobs share the caller's run, so the artifacts

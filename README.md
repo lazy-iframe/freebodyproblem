@@ -20,20 +20,33 @@
   <a href="plugins/README.md"><b>Plugins</b></a><br><br>
 </p>
 
-A modern, fast ground control station for ArduPilot and PX4 autopilots. Several links and several vehicles at once, each parsed on its own thread. Built for operators who know what they're doing. The development is in its early stages.
+A modern, fast ground control station for ArduPilot and PX4 autopilots. Several links and several vehicles at once, each parsed on its own thread. Built for operators who know what they're doing.
+
+> [!WARNING]
+> **This GCS is still in early development.** Expect missing features, rough edges and changes between releases. Try it in SITL or on the bench before you trust it with an aircraft in flight.
 
 <p align="center">
-  <a href="screens/cap0.png"><img src="screens/cap0.png" alt="Free Body Problem with a vehicle connected: map, attitude, telemetry tiles and event log" width="100%"></a>
+  <a href="screens/cap0.png"><img src="screens/cap0.png" alt="Free Body Problem in MAP + VIDEO: the video feed above the map, flight modes on the left, attitude, telemetry tiles and event log on the right" width="100%"></a>
 </p>
 
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="#the-map"><img src="screens/cap2.png" alt="Fullscreen map with the attitude and event-log overlay" width="100%"></a><br>
+      <a href="#the-map"><img src="screens/cap3.png" alt="MAP: the map alone in the centre view, both sidebars in place" width="100%"></a><br>
+      <sub><b>MAP</b> — the map alone in the centre, both sidebars in place</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="#video-streaming-1"><img src="screens/cap4.png" alt="VIDEO: the video feed alone in the centre view, both sidebars in place" width="100%"></a><br>
+      <sub><b>VIDEO</b> — the feed alone in the centre, both sidebars in place</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="#the-map"><img src="screens/cap2.png" alt="MAP FULL: the map takes the right sidebar, with attitude and the event log in its corner" width="100%"></a><br>
       <sub><b>MAP FULL</b> — the map takes the right sidebar; attitude and the event log float in its corner</sub>
     </td>
     <td align="center" width="50%">
-      <a href="#video-streaming-1"><img src="screens/cap1.png" alt="Fullscreen video feed below the topbar" width="100%"></a><br>
+      <a href="#video-streaming-1"><img src="screens/cap1.png" alt="VIDEO FULL: the feed takes the whole window below the topbar" width="100%"></a><br>
       <sub><b>VIDEO FULL</b> — the feed takes the whole window below the topbar</sub>
     </td>
   </tr>
@@ -140,6 +153,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 ### Multi-Vehicle
 - **Several links at once**: CONNECT adds a link rather than replacing the one already open — a radio on serial and a SITL on UDP side by side. The **LINKS** list shows each one with its status, the number of vehicles heard on it, and a button to drop just that link
 - **Several vehicles per link**: one telemetry port carrying three aircraft is three vehicles. Traffic is demultiplexed by MAVLink sysid, so a shared link or a swarm forwarded through one port no longer collapses into a single vehicle
+- **No cap on fleet size**: each vehicle numbers its own outgoing MAVLink frames, so nothing in the GCS limits how many it holds. The ceiling is MAVLink's 254 system IDs per link, and in practice the machine's CPU — fifty SITL copters on one link run without trouble
 - **A thread per vehicle**: each link reads and frames its own bytes; each vehicle then interprets them on its own thread, so a thousand-parameter fetch on one aircraft does not stall telemetry from another
 - **Vehicle switcher on the callsign chip**: the topbar chip already names the system on screen, so clicking it lists the fleet — sysid, armed state, and the link each was heard on. Every tab and panel follows the selection
 - **Per-vehicle panel state**: a compass calibration, a half-planned mission or a staged parameter edit belongs to the aircraft it was started on and is still there when you switch back. Nothing is carried across to a different vehicle
@@ -416,6 +430,20 @@ git tag v0.2.0-rc1 && git push origin v0.2.0-rc1
 This is the safest way to exercise the release pipeline end to end without
 publishing a headline version.
 
+After a release is published, CD dispatches the website's workflow so its
+download buttons move to the new files. A prerelease does not move them: they
+follow GitHub's *latest* release, which skips prereleases.
+
+### Website
+
+The project site and documentation live in `site/` — Astro with the Starlight
+theme — and are published to GitHub Pages by `.github/workflows/site.yml`,
+separately from CI: a change under `site/` (or to the shared `screens/`)
+redeploys the site without rebuilding the application, and an application
+change does not touch the site. See [`site/README.md`](site/README.md) to run
+it locally. It needs Pages switched on once: **Settings → Pages → Build and
+deployment → Source: GitHub Actions**.
+
 ## Usage
 
 ### Quick Start
@@ -460,6 +488,10 @@ window below the topbar to the fleet. It is the one place a command goes to
 several vehicles at once. Press it again — it reads **EXIT SWARM** — to go back
 to the view you came from.
 
+There is no cap on how many vehicles the fleet holds. The ceiling is MAVLink's
+254 system IDs per link and, in practice, the machine's CPU: fifty SITL copters
+on one link run without trouble.
+
 <p align="center">
   <a href="screens/swarm.png"><img src="screens/swarm.png" alt="SWARM view: vehicle cards on the left, FLIGHT, telemetry and event log across the top, map and video below" width="100%"></a>
 </p>
@@ -485,6 +517,12 @@ to the view you came from.
   HIGH** / **ILK LOW** for motor interlock (PX4 vehicles in the set are skipped
   and logged) and **ARM** / **DISARM**, which name every vehicle they will
   reach and ask before sending
+- **Batch commands are retried.** A command sent to more than one vehicle at
+  once goes out again to each vehicle that has not answered within a second,
+  up to three tries in all; a vehicle still silent after the third is named in
+  the event log (`sys7: no ACK for command 176 after 3 tries`). This is the only
+  thing the GCS ever resends on its own: a command to a single vehicle goes
+  out once
 - **Telemetry and event log** across the top: the telemetry tiles of the
   selected vehicle, and the whole fleet's event log
 - **Map, and video beside it.** The map fills the space below, with checked
@@ -574,7 +612,7 @@ apply display scaling yet — see [Limitations](#limitations).
    the hex directly). A number outside its documented range turns amber and
    says so on hover, in the log when written, and in the WRITE ALL
    confirmation, but it is never blocked
-5. Click **i** beside a row for everything ArduPilot documents about it:
+5. Click **i** beside a row for everything the firmware documents about it:
    description, units, range, increment, accepted values or bits, whether a
    reboot is needed, and the type the vehicle stores it as. For an enum or a
    bitmask, **MANUAL ENTRY** swaps the row's list or checkboxes
@@ -640,6 +678,8 @@ it can only lose one value, and the value it restores is on the vehicle.
 
 <p align="center">
   <a href="screens/params.png"><img src="screens/params.png" alt="PARAMS tab" width="260"></a>
+  &nbsp;
+  <a href="screens/param_info.png"><img src="screens/param_info.png" alt="A parameter's i popup: ARMING_MIS_ITEMS with its description, Copter 4.7.1 reference, MANUAL ENTRY, type, group and the bits it takes" width="380"></a>
 </p>
 
 #### Parameter files
@@ -732,6 +772,10 @@ then the sysid it reports — and the selected one keeps full colour and a headi
 line run out to the edge of the panel, while the rest are dimmed with a short
 stub so three aircraft do not lay three dotted lines across the imagery.
 
+<p align="center">
+  <a href="screens/cap3.png"><img src="screens/cap3.png" alt="MAP: five vehicles on the map, the selected one with its heading line and the parameter fence ring" width="100%"></a>
+</p>
+
 Behind each aircraft is its **trail**, recorded off the live stream rather than
 off what is on screen: an aircraft that flew while you were watching another one
 still has its track when you switch back. Points are thinned to one every 3 m,
@@ -762,6 +806,10 @@ back as a semi-transparent block in the map's top-right corner, small enough to
 read the map past. Click either half and it grows to the size it had in the
 sidebar, text and all, until you click somewhere else; it always comes back
 small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
+
+<p align="center">
+  <a href="screens/cap2.png"><img src="screens/cap2.png" alt="MAP FULL: the map takes the right sidebar, with attitude and the event log in its corner" width="100%"></a>
+</p>
 
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
@@ -851,6 +899,19 @@ abandoned with a log line if the link drops.
    take its width from. The button then reads **EXIT FULL**; that, **ESC**, or
    either other mode button brings the panels back.
 
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="screens/cap4.png"><img src="screens/cap4.png" alt="VIDEO: the feed alone in the centre view" width="100%"></a><br>
+      <sub><b>VIDEO</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="screens/cap1.png"><img src="screens/cap1.png" alt="VIDEO FULL: the feed takes the whole window below the topbar" width="100%"></a><br>
+      <sub><b>VIDEO FULL</b></sub>
+    </td>
+  </tr>
+</table>
+
 ### Audio Cues
 1. Navigate to **SETTINGS** tab, **AUDIO** section
 2. **Tones** mutes everything; the volume slider is linear, and **TEST** plays
@@ -926,7 +987,7 @@ the serial handle, drains them.
 - **vehicle.cpp**: One vehicle and the thread that talks to it — stream rates, the mode list, clock sync, the parameter fetch and its retransmits, and the snapshot the UI reads
 - **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
 - **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
-- **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each on its own MAVLink TX channel so their sequence counters stay independent
+- **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds
 - **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
@@ -1034,12 +1095,11 @@ Example `settings.json`:
 - **No log download**: Access DataFlash logs via MAVLink file transfer in other tools
 - **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
-- **No geofence editor**: Geofence/rally point management not implemented yet
+- **No rally points**: the vehicle's rally list (`MAV_MISSION_TYPE_RALLY`) is neither downloaded nor edited
 - **One vehicle in the tabs at a time**: the map draws the whole fleet and SWARM gives every vehicle a summary card, but the tabs — parameters, mission, radio, sensors, the inspector — and the telemetry tiles follow the selected vehicle only
 - **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
 - **Display scaling on Windows and X11**: the UI is drawn in physical pixels there, so at 150% or 200% desktop scaling it comes out smaller than intended. Wayland hands the app scaled sizes and is not affected
 - **Plugin rail on short screens**: below about 900 px of height the rail's ten buttons do not fit and the rail scrolls
-- **Fifteen vehicles**: each needs a MAVLink TX channel of its own so their sequence counters stay independent, and one of the sixteen is spent on the fallback used when nothing is connected. Past the cap a vehicle is logged and ignored rather than displacing one already there
 
 ## Future Plans
 

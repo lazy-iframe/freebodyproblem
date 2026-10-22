@@ -1,0 +1,115 @@
+---
+title: Free Body Problem
+description: A fast ground control station for ArduPilot and PX4 — several links and several vehicles at once, each parsed on its own thread.
+template: splash
+hero:
+  title: A fast ground control station for ArduPilot and PX4
+  tagline: Several links and several vehicles at once, each parsed on its own thread. Built for operators who know what they're doing.
+---
+
+import { Image } from 'astro:assets';
+import Downloads from '../../components/Downloads.astro';
+import FeatureGrid from '../../components/FeatureGrid.astro';
+import Gallery from '../../components/Gallery.astro';
+import Points from '../../components/Points.astro';
+import Section from '../../components/Section.astro';
+
+import cap1 from '../../../../screens/cap1.png';
+import cap2 from '../../../../screens/cap2.png';
+import cap3 from '../../../../screens/cap3.png';
+import cap4 from '../../../../screens/cap4.png';
+import swarm from '../../../../screens/swarm.png';
+import paramInfo from '../../../../screens/param_info.png';
+
+<Section title="Only what the flight needs" href="guides/flight/" cta="See the flight controls">
+  <Fragment slot="lede">
+    A full-panel HUD with speed, heading and altitude tapes. Every flight mode the vehicle
+    publishes, one press away. Telemetry tiles you choose, an event log, and a GStreamer feed
+    beside the map. Firmware upload and log analysis are left to the tools built for them.
+  </Fragment>
+  <Points
+    items={[
+      { title: 'A real flight display', text: 'Horizon edge to edge, a roll arc, speed, heading and altitude tapes, airspeed and climb dials. Or the classic attitude ball, if you prefer it.' },
+      { title: 'Every mode, one press', text: 'The modes the vehicle itself publishes, in a grid that lights the one it is in and flashes the answer to each command.' },
+      { title: 'Your telemetry', text: 'Click a tile and pick what it shows, from the fields of any message. The event log keeps every vehicle\'s status text, tagged with its number.' },
+    ]}
+  />
+</Section>
+
+<Section title="Map, video, or both" href="guides/screen-sizes/" cta="How the layout fits your screen">
+  <Fragment slot="lede">
+    The centre view is the map, the feed, or both stacked or side by side. Press the mode again
+    and it goes fullscreen; the topbar always stays, so link state and arming are never out of
+    sight.
+  </Fragment>
+  <Gallery
+    min="22rem"
+    items={[
+      { src: cap3, alt: 'MAP: the map alone in the centre view, both sidebars in place', caption: 'MAP — five vehicles, the parameter fence ring around home', href: 'guides/map/' },
+      { src: cap4, alt: 'VIDEO: the video feed alone in the centre view', caption: 'VIDEO — the feed alone in the centre', href: 'guides/video/' },
+      { src: cap2, alt: 'MAP FULL: the map takes the right sidebar, attitude and the event log in its corner', caption: 'MAP FULL — attitude and the log float in the corner', href: 'guides/map/' },
+      { src: cap1, alt: 'VIDEO FULL: the feed takes the whole window below the topbar', caption: 'VIDEO FULL — everything below the topbar', href: 'guides/video/' },
+    ]}
+  />
+</Section>
+
+<Section title="The whole fleet, in one view" href="guides/swarm/" cta="Read the swarm guide">
+  <Fragment slot="lede">
+    SWARM gives every vehicle a card — attitude, mode, battery, GPS and EKF health — and is the
+    one place a command goes to several of them at once.
+  </Fragment>
+  <Image src={swarm} alt="SWARM view: vehicle cards on the left, FLIGHT, telemetry and event log across the top, map and video below" width={1600} loading="lazy" class="framed" />
+  <Points
+    items={[
+      { title: 'Every link, every vehicle', text: 'Serial, TCP and UDP side by side, several aircraft on each. Every vehicle is parsed on its own thread and drawn on the map.' },
+      { title: 'Commands to the checked set', text: 'Modes, takeoff, arming and the interlock go to every checked vehicle. One that does not answer gets up to three tries, then is named in the log.' },
+      { title: 'No cap on fleet size', text: 'The limit is MAVLink\'s 254 system IDs per link, and your CPU. Fifty SITL copters on one link run without trouble.' },
+    ]}
+  />
+</Section>
+
+<Section title="Every parameter, documented" layout="split" href="guides/parameters/" cta="Read the parameters guide">
+  <Fragment slot="lede">
+    <p>
+      Press <b>i</b> beside any parameter for what the firmware's own reference says about it:
+      description, units, range, the values or bits it takes, and whether it needs a reboot.
+    </p>
+    <p>
+      ArduPilot Copter and Plane from 4.0, and PX4 from 1.12, each read against the release the
+      vehicle is actually running. Enums are dropdowns, bitmasks are checkboxes, and
+      <b>MANUAL ENTRY</b> takes a raw number when you need one.
+    </p>
+  </Fragment>
+  <Image src={paramInfo} alt="A parameter's i popup: ARMING_MIS_ITEMS with its description, the Copter 4.7.1 reference, MANUAL ENTRY, type, group and the bits it takes" width={788} loading="lazy" class="framed" />
+</Section>
+
+<Section title="Everything else on the panel">
+  <Fragment slot="lede">
+    Each tab does one job, without a wizard in the way.
+  </Fragment>
+  <FeatureGrid
+    items={[
+      { icon: 'mission', title: 'Missions and geofences', text: 'Point-and-click waypoints, drag to edit, and inclusion/exclusion fences drawn on the map.', href: 'guides/mission/' },
+      { icon: 'radio', title: 'Radio', text: 'Live channel bars, three-step calibration, stick DETECT and the six mode-switch slots.', href: 'guides/radio/' },
+      { icon: 'sensors', title: 'Sensor calibration', text: 'Accelerometer, gyro and compass, with a coverage sphere for the compass dance.', href: 'guides/sensors/' },
+      { icon: 'inspector', title: 'MAVLink inspector', text: 'Every message on the link, decoded field by field, with its rate.', href: 'guides/mavlink/' },
+      { icon: 'video', title: 'Video', text: 'RTSP and UDP through GStreamer, beside the map or fullscreen.', href: 'guides/video/' },
+      { icon: 'audio', title: 'Audio cues', text: 'Tones for ACKs, uploads and the link, and an armed heartbeat you can hear stop.', href: 'guides/audio/' },
+      { icon: 'screens', title: 'Any screen', text: 'From a portrait 1080×1920 to a 32:9 ultrawide; the layout follows the space.', href: 'guides/screen-sizes/' },
+      { icon: 'plugins', title: 'Plugins', text: 'Your own C++ on the rail, with the vehicle, the sender and the video feed to hand.', href: 'https://github.com/lazy-iframe/freebodyproblem/blob/main/plugins/README.md' },
+    ]}
+  />
+</Section>
+
+<section class="closing not-content">
+  <h2>Ready for the next flight</h2>
+  <p>
+    For UAV professionals and enthusiasts who already know MAVLink. ArduPilot is the primary
+    target; PX4 is supported for telemetry and flight modes. If you want a beginner-friendly GCS,
+    QGroundControl is the better choice.
+  </p>
+  <Downloads />
+  <p class="links">
+    <a href="start/quick-start/">Get started</a>{' · '}<a href="https://github.com/lazy-iframe/freebodyproblem">Source on GitHub</a>
+  </p>
+</section>

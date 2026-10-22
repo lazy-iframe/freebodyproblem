@@ -1,0 +1,84 @@
+---
+// One landing-page section: a large left-aligned heading, a short paragraph and
+// a link to the guide, then what it is about. "stack" puts the picture under
+// the text at full width, for the window-sized screenshots; "split" sets them
+// side by side, for a picture taller than it is wide.
+interface Props {
+	title: string;
+	href?: string; // relative to the site base, e.g. "guides/map/"
+	cta?: string;
+	layout?: 'stack' | 'split';
+}
+const { title, href, cta = 'Read the guide', layout = 'stack' } = Astro.props;
+const base = import.meta.env.BASE_URL;
+---
+
+<section class:list={['feature', layout, 'not-content']}>
+	<div class="text">
+		<h2>{title}</h2>
+		<div class="lede"><slot name="lede" /></div>
+		{href && <a class="more" href={`${base}${href}`}>{cta} <span aria-hidden="true">→</span></a>}
+	</div>
+	<div class="media"><slot /></div>
+</section>
+
+<style>
+	.feature {
+		margin-top: 7rem;
+	}
+	h2 {
+		margin: 0;
+		color: var(--sl-color-white);
+		font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+		font-weight: 650;
+		line-height: 1.15;
+		letter-spacing: -0.015em;
+	}
+	.lede {
+		max-width: 44rem;
+		margin-top: 1rem;
+		color: var(--sl-color-gray-2);
+		font-size: var(--sl-text-lg);
+		line-height: 1.6;
+	}
+	.lede :global(p) {
+		margin: 0;
+	}
+	.lede :global(p + p) {
+		margin-top: 0.75rem;
+	}
+	.lede :global(a) {
+		color: var(--sl-color-accent);
+	}
+	.more {
+		display: inline-block;
+		margin-top: 1rem;
+		color: var(--sl-color-accent);
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.more:hover {
+		text-decoration: underline;
+	}
+	.stack .media {
+		margin-top: 2.5rem;
+	}
+	.media :global(img) {
+		display: block;
+		max-width: 100%;
+		height: auto;
+	}
+
+	.split {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 3.5rem;
+		align-items: center;
+	}
+	@media (max-width: 50rem) {
+		.split {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 2.5rem;
+		}
+	}
+</style>

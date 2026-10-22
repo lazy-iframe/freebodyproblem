@@ -1,0 +1,49 @@
+---
+// Three short claims side by side, each a title and a sentence or two.
+interface Point {
+	title: string;
+	text: string;
+}
+interface Props {
+	items: Point[];
+}
+const { items } = Astro.props;
+---
+
+<div class="points not-content">
+	{
+		items.map(({ title, text }) => (
+			<div class="point">
+				<h3>{title}</h3>
+				<p set:html={text} />
+			</div>
+		))
+	}
+</div>
+
+<style>
+	.points {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		gap: 2rem;
+		margin-top: 2.5rem;
+	}
+	.point {
+		padding-top: 1rem;
+		border-top: 2px solid var(--sl-color-accent);
+	}
+	h3 {
+		margin: 0;
+		color: var(--sl-color-white);
+		font-size: var(--sl-text-lg);
+		font-weight: 600;
+	}
+	p {
+		margin: 0.5rem 0 0;
+		color: var(--sl-color-gray-2);
+		line-height: 1.6;
+	}
+	p :global(code) {
+		font-size: 0.9em;
+	}
+</style>

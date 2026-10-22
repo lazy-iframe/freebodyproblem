@@ -374,6 +374,9 @@ void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_tar
             fs = merge_flash(fs, t.sender->query_flash(22));
 
         if (ui_grid_button("TAKEOFF", { btn_w, ROW_H }, false, fs)) {
+            size_t n_live = 0;
+            for (const FlightTarget& t : targets) n_live += target_connected(t);
+            const MavlinkSender::BatchRetry retry(n_live > 1);
             std::vector<size_t> sent;
             for (size_t i = 0; i < targets.size(); ++i) {
                 if (!target_connected(targets[i])) continue;
@@ -464,6 +467,9 @@ void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_tar
 
             ImGui::BeginDisabled(!reachable);
             if (ui_grid_button(id.c_str(), { col_w, MODE_BTN_H }, is_active_mode, fs)) {
+                size_t n_live = 0;
+                for (const ModeHit& h : b.hits) n_live += target_connected(targets[h.target]);
+                const MavlinkSender::BatchRetry retry(n_live > 1);
                 std::vector<size_t> sent;
                 for (const ModeHit& h : b.hits) {
                     const FlightTarget& t = targets[h.target];

@@ -93,3 +93,19 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # The site's download buttons point at the latest release's files, resolved
+  # when the site is built — so it is rebuilt now that there is a new one. A
+  # release created with this workflow's GITHUB_TOKEN raises no event another
+  # workflow can trigger on, so site.yml is dispatched explicitly instead.
+  site:
+    name: Redeploy website
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write    # required to dispatch a workflow
+    steps:
+      - name: Dispatch site.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run site.yml --repo "${{ github.repository }}" --ref main

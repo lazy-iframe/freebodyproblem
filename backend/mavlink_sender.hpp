@@ -54,14 +54,8 @@ public:
     static constexpr uint8_t GCS_SYSID  = 255;
     static constexpr uint8_t GCS_COMPID = 190;
 
-    // How many senders can exist at once — one per vehicle, since each needs a
-    // MAVLink TX channel of its own. See the note on chan_ below.
-    static constexpr int MAX_CHANNELS = MAVLINK_COMM_NUM_BUFFERS;
-
-    // Takes the next free TX channel. Throws nothing: past MAX_CHANNELS the
-    // sender shares channel 0, which is safe (the pack mutex covers it) and only
-    // costs a shared sequence counter. Callers that care cap vehicle count
-    // instead of relying on that.
+    // Each sender numbers its own outgoing messages (see tx_status_ below), so
+    // any number of them can exist at once.
     MavlinkSender();
     ~MavlinkSender();
 
@@ -387,6 +381,37 @@ public:
 
     bool has_pending() const;
 
+    // ── Retries for batch commands ────────────────────────────────────────────
+    //
+    // A command goes out once: this ground station sends nothing the operator
+    // did not ask for. The one exception is a command sent to several vehicles
+    // at once. A swarm of a hundred on one link loses the odd packet, and one
+    // lost COMMAND_LONG or COMMAND_ACK leaves that vehicle out of the set, with
+    // nothing on screen to say so. So while a BatchRetry is alive, every
+    // COMMAND_LONG this thread queues — on any sender — is sent again until it
+    // is acknowledged, up to COMMAND_TRIES in all, RETRY_INTERVAL apart, with
+    // the confirmation field counting the resends as the protocol asks.
+    //
+    // Thread-local, so a command the vehicle thread queues meanwhile (a
+    // REQUEST_MESSAGE, say) is never mistaken for part of the batch.
+    static constexpr int COMMAND_TRIES = 3;
+    static constexpr std::chrono::milliseconds RETRY_INTERVAL { 1000 };
+
+    class BatchRetry {
+    public:
+        // `enable` false makes this a no-op: a batch of one is not a batch.
+        explicit BatchRetry(bool enable);
+        ~BatchRetry();
+        BatchRetry(const BatchRetry&)            = delete;
+        BatchRetry& operator=(const BatchRetry&) = delete;
+    private:
+        bool prev_;
+    };
+
+    // Link thread, before flushing: queues the resends that have come due, and
+    // logs the commands that ran out of tries without an ACK.
+    void queue_due_retries();
+
     // ── ACK feedback ──────────────────────────────────────────────────────────
 
     // Called from recv thread when COMMAND_ACK arrives
@@ -405,16 +430,24 @@ public:
     CmdFlashState query_flash(uint16_t cmd, float p1, float p2, float p3) const;
 
 private:
-    // Takes an already-acquired channel index, or -1 when none was free. The
-    // public constructor delegates here so both channel members are set from a
-    // single acquisition rather than from a shared scratch variable.
-    explicit MavlinkSender(int acquired);
-
     // Serialise a COMMAND_LONG and push onto the queue
     void enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
                               float p1 = 0.f, float p2 = 0.f, float p3 = 0.f,
                               float p4 = 0.f, float p5 = 0.f, float p6 = 0.f,
                               float p7 = 0.f);
+
+    // Packs one COMMAND_LONG, with the given confirmation count, as a frame.
+    std::vector<uint8_t> pack_command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
+                                           uint8_t confirmation, const float (&p)[7]);
+
+    // A batch command awaiting its ACK. `sent` counts the transmissions so far.
+    struct Retry {
+        uint8_t  tsys, tcomp;
+        uint16_t cmd;
+        float    p[7];
+        int      sent;
+        std::chrono::steady_clock::time_point due;
+    };
 
     struct CmdState {
         CmdFlashState state = CmdFlashState::Normal;
@@ -422,26 +455,25 @@ private:
         float p1 = 0.f, p2 = 0.f, p3 = 0.f;   // of the last one sent
     };
 
-    // This sender's MAVLink TX channel.
+    // This sender's outgoing sequence counter, packed through the generated
+    // mavlink_msg_*_pack_status() functions.
     //
-    // Every mavlink_msg_*_pack() funnels through mavlink_finalize_message(),
-    // which is hardcoded to MAVLINK_COMM_0 and increments *that* channel's
-    // sequence counter — a global. Two senders packing at once would therefore
-    // race, and worse, would share one sequence number: each vehicle counts the
-    // gaps in the GCS's sequence to estimate link quality, so a shared counter
-    // reads to every vehicle as heavy packet loss. A channel each fixes both.
-    const uint8_t                           chan_;
-
-    // True when channels ran out and this sender had to share channel 0. Packing
-    // then goes through a process-wide mutex, since the sequence counter behind
-    // that channel is no longer ours alone.
-    const bool                              shared_chan_;
+    // The library's other pack functions keep that counter in a global table of
+    // "channels", MAVLINK_COMM_NUM_BUFFERS long — sixteen on desktop — which
+    // would cap the fleet at that many senders. Senders must not share one:
+    // each vehicle counts the gaps in the GCS's sequence to estimate link
+    // quality, so a shared counter reads to every vehicle as heavy packet loss.
+    // A counter per sender has neither problem. Packing can happen on the UI
+    // thread and the vehicle thread at once, so it is held under tx_mtx_.
+    mavlink_status_t                        tx_status_ {};
+    std::mutex                              tx_mtx_;
 
     mutable std::mutex                      mtx_;
     std::queue<std::vector<uint8_t>>        queue_;
     std::atomic<uint32_t>                   param_list_seq_ { 0 };
     std::atomic<uint32_t>                   reboot_requests_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;
+    std::vector<Retry>                      retries_;    // under mtx_
 
     // Indexed by MAV_MISSION_TYPE: mission, fence, rally.
     std::vector<MissionItem>                upload_items_[3];

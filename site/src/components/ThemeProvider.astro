@@ -1,0 +1,11 @@
+---
+// Replaces Starlight's ThemeProvider: the site is dark only, like the app it
+// documents, whatever the visitor's system prefers or once chose here.
+// Inlined so the first paint is already dark.
+---
+
+<script is:inline>
+	document.documentElement.dataset.theme = 'dark';
+	// Starlight's own scripts call this to sync theme pickers; there are none.
+	window.StarlightThemeProvider = { updatePickers() {} };
+</script>

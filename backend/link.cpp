@@ -120,6 +120,17 @@ bool Link::open()
             status_.store(LinkStatus::Error);
             return false;
         }
+        // A deep receive buffer, so a moment where this thread falls behind —
+        // a hundred vehicles streaming into one socket — is absorbed instead of
+        // dropped, and an ACK in the middle of it with it. The defaults are
+        // 208 KB on Linux and 64 KB on Windows. Linux quietly caps the request
+        // at net.core.rmem_max and Windows takes it as asked; a refusal would
+        // only leave the default in place, so the result is not checked. The
+        // const char* cast is what Winsock's setsockopt() takes, and POSIX's
+        // const void* accepts it.
+        const int rcvbuf = 4 * 1024 * 1024;
+        setsockopt(fd_, SOL_SOCKET, SO_RCVBUF,
+                   reinterpret_cast<const char*>(&rcvbuf), sizeof(rcvbuf));
         // Short poll interval so the thread can check for shutdown and timeouts.
 #ifdef _WIN32
         DWORD tv_ms = 200;

@@ -172,16 +172,6 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
         auto it = vehicles_.find(vid);
         if (it != vehicles_.end()) return it->second;   // raced with another link
 
-        if (vehicles_.size() >= MAX_VEHICLES) {
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
-                gcs_log("vehicle limit (%zu) reached — ignoring sys%u",
-                        MAX_VEHICLES, (unsigned)msg.sysid);
-            }
-            return nullptr;
-        }
-
         // The same sysid already known on a different link. Legitimate when one
         // aircraft is reachable two ways, and a misconfiguration when it is two
         // aircraft that both shipped as sysid 1 — worth saying out loud either
@@ -196,8 +186,8 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
 
         // Lowest free number. A number is free exactly when no live vehicle
         // holds it, so a scan of the fleet is the whole bookkeeping — no free
-        // list to fall out of step with the map it describes. MAX_VEHICLES is
-        // 15, and this runs once per discovery.
+        // list to fall out of step with the map it describes. It runs once per
+        // discovery.
         uint32_t number = 1;
         while (std::any_of(vehicles_.begin(), vehicles_.end(),
                            [number](const auto& kv) {
@@ -332,8 +322,10 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
         }
 
         // Drain what the vehicles queued. The transport handle belongs to this
-        // thread, so this is the only place frames can actually leave.
+        // thread, so this is the only place frames can actually leave. A batch
+        // command's resends are queued first; see MavlinkSender::BatchRetry.
         for (auto& v : mine) {
+            v->sender().queue_due_retries();
             sockaddr_in peer{};
             const bool  has_peer = v->peer(peer);
             link.flush_to(v->sender(), has_peer ? &peer : nullptr);

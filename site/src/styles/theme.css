@@ -1,0 +1,135 @@
+/* The app's own palette: the Tactical theme's olive surfaces and amber accent
+ * (frontend/widgets/theme.hpp), so the site reads as the same product. Dark
+ * only — see src/components/ThemeProvider.astro.
+ */
+
+:root {
+	--sl-font: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+	--sl-font-mono: 'Geist Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+	/* Dark: surfaces from bg_topbar #12160C to the panel border, text in bone. */
+	--sl-color-accent-low: #3a2f12;
+	--sl-color-accent: #ecb94e;
+	--sl-color-accent-high: #f7dfa6;
+	--sl-color-white: #e6eadf;
+	--sl-color-gray-1: #d3dacb;
+	--sl-color-gray-2: #b4c68f;
+	--sl-color-gray-3: #8b9876;
+	--sl-color-gray-4: #4f5c39;
+	--sl-color-gray-5: #2e3720;
+	--sl-color-gray-6: #1b2012;
+	--sl-color-black: #12160c;
+
+	/* Surfaces that sit on the grid: near-black green rather than the
+	 * panels' olive, which reads brown against it. */
+	--sl-color-bg-sidebar: #040c06;
+}
+
+/* The app labels everything in tracked capitals; the site borrows that for its
+ * small labels only, so body text stays easy to read. */
+.sidebar-content .group-label,
+.hero .tagline {
+	letter-spacing: 0.02em;
+}
+
+/* Screenshots: a hairline frame, like the app's panel seams. */
+.sl-markdown-content img {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.25rem;
+}
+
+/* ── Background ───────────────────────────────────────────────────────────────
+ * A phosphor grid on deep green: a major line every 64 px over a fainter one
+ * every 16 px, lit from the centre, with a thin black fade at every edge: the
+ * vignette stays clear for the inner two thirds and darkens only past that.
+ * Layers, top first: the vignette, the two grids, then the green underneath.
+ * An ellipse sized to the farthest sides reaches black exactly at all four
+ * edges of the window, whatever its shape. Fixed, so the grid holds still
+ * under the page as it scrolls instead of sliding with the text. */
+body {
+	--grid-major: rgb(70 255 130 / 0.075);
+	--grid-minor: rgb(70 255 130 / 0.03);
+	background:
+		radial-gradient(ellipse farthest-side at 50% 50%,
+			transparent 0%, transparent 65%, rgb(0 0 0 / 0.35) 85%, rgb(0 0 0 / 0.8) 95%, #000 100%),
+		linear-gradient(var(--grid-major) 1px, transparent 1px) center / 64px 64px,
+		linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) center / 64px 64px,
+		linear-gradient(var(--grid-minor) 1px, transparent 1px) center / 16px 16px,
+		linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px) center / 16px 16px,
+		radial-gradient(ellipse farthest-side at 50% 50%, #0d3019 0%, #08200f 55%, #051509 100%);
+	background-color: #000;
+	background-attachment: fixed;
+}
+/* The top bar sits on the gradient too, darkened enough to stay a bar. */
+.header {
+	background: rgb(2 8 4 / 0.78);
+	backdrop-filter: blur(8px);
+}
+
+/* ── Landing page ─────────────────────────────────────────────────────────────
+ * Laid out by its own components (Hero, Section, Points, FeatureGrid); what is
+ * left here is shared by them or sits directly in index.mdx. */
+.framed {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.5rem;
+	box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 0.45);
+}
+.feature .media .gallery {
+	margin-block: 0;
+}
+.closing {
+	margin-top: 8rem;
+	padding: 3.5rem 1.5rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.75rem;
+	background: rgb(0 0 0 / 0.25);
+	text-align: center;
+}
+.closing h2 {
+	margin: 0;
+	color: var(--sl-color-white);
+	font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+	font-weight: 650;
+	letter-spacing: -0.015em;
+}
+.closing > p {
+	max-width: 40rem;
+	margin: 1rem auto 2rem;
+	color: var(--sl-color-gray-2);
+	line-height: 1.6;
+}
+.closing .downloads {
+	max-width: 46rem;
+	margin-inline: auto;
+	text-align: left;
+}
+.closing .links {
+	margin: 1.5rem auto 0;
+	color: var(--sl-color-gray-3);
+}
+.closing .links a {
+	color: var(--sl-color-accent);
+	font-weight: 600;
+	text-decoration: none;
+}
+/* Starlight's splash page ends at the content; give the last block room. */
+[data-has-hero] .sl-container {
+	padding-bottom: 4rem;
+}
+
+/* Two screenshots side by side in a guide, one column on a phone. */
+.shot-pair {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+	gap: 1rem;
+	align-items: start;
+}
+.shot-pair p {
+	margin: 0;
+}
+
+/* Starlight draws a divider after the social icons to set off the theme
+ * switch; with no switch it divides nothing. */
+.header .social-icons::after {
+	display: none;
+}

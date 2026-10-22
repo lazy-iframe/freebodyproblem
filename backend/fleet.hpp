@@ -39,10 +39,6 @@
 // and the protocol timers, and that part runs per vehicle and in parallel.
 class Fleet {
 public:
-    // One channel per vehicle sender is the binding constraint, and the null
-    // sender the UI falls back on takes one of them.
-    static constexpr size_t MAX_VEHICLES = MavlinkSender::MAX_CHANNELS - 1;
-
     ~Fleet();
 
     // Opens a link and starts its thread. Returns the link id, or 0 on failure.

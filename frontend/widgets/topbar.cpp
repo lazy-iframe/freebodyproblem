@@ -120,6 +120,7 @@ static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
             continue;
 
         std::vector<const FlightTarget*> sent, skipped;
+        const MavlinkSender::BatchRetry retry(live.size() > 1);
         const VehicleId prev = ui_bound_vehicle();
         for (const FlightTarget* t : live) {
             if (!firmware_profile(t->vs->autopilot).aux_functions().supported) {
@@ -160,6 +161,7 @@ static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
     ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always, { 1.0f, 0.0f });
     if (ui_confirm_popup("##confirm_arm_swarm", "ARM VEHICLES", q_arm,
                          "CONFIRM ARM", g_theme.btn_arm_base) == UiConfirm::Confirmed) {
+        const MavlinkSender::BatchRetry retry(live.size() > 1);
         for (const FlightTarget* t : live) t->sender->arm(t->vs->sysid, t->vs->compid);
         gcs_log("arm command sent â%s", who.c_str());
     }
@@ -167,6 +169,7 @@ static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
     ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always, { 1.0f, 0.0f });
     if (ui_confirm_popup("##confirm_disarm_swarm", "DISARM VEHICLES", q_disarm,
                          "CONFIRM DISARM", g_theme.btn_disarm_base) == UiConfirm::Confirmed) {
+        const MavlinkSender::BatchRetry retry(live.size() > 1);
         for (const FlightTarget* t : live) t->sender->disarm(t->vs->sysid, t->vs->compid);
         gcs_log("disarm command sent â%s", who.c_str());
     }
