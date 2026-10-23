@@ -20,6 +20,7 @@
 #include "../../backend/vehicle.hpp"
 #include "../goto_target.hpp"
 #include "../mission_pick.hpp"
+#include "imgui.h"
 #include <string>
 #include <vector>
 
@@ -28,6 +29,19 @@
 // URL format: "https://host/path/{z}/{x}/{y}" — {z}/{x}/{y} are substituted per tile.
 // Some providers use {z}/{y}/{x} ordering (e.g. Esri) — match your provider.
 void map_view_set_tile_source(const std::string& url, const std::string& attribution);
+
+// How aircraft are drawn: the legacy arrow, a top-down silhouette chosen from
+// each vehicle's MAV_TYPE (the arrow for anything that is not a plane,
+// multicopter or helicopter), or one silhouette for every vehicle.
+// Stored in settings as its int value, so the numbering is fixed.
+enum class MapIconStyle : int { Legacy = 0, ByType = 1, Plane = 2, Multicopter = 3, Helicopter = 4 };
+
+void map_view_set_icon_style(MapIconStyle s);
+
+// The symbol a vehicle of `mav_type` gets under `style`, centred on `c` and
+// nosed along `heading_deg` — for drawing previews outside the map.
+void map_draw_vehicle_symbol(ImDrawList* dl, ImVec2 c, uint8_t mav_type, MapIconStyle style,
+                             float heading_deg, float alpha = 1.0f, float scale = 1.0f);
 
 // One aircraft as the map draws it. Built by the render loop, which is already
 // snapshotting every vehicle each frame, so this costs no extra locking.
@@ -46,6 +60,8 @@ struct MapVehicle {
     bool      has_hdg = false;
     bool      active  = false;    // the vehicle every other panel is showing
     bool      checked = false;    // in the SWARM view's command set
+    uint8_t   mav_type = MAV_TYPE_GENERIC;   // HEARTBEAT type — picks the symbol
+    bool      armed    = false;              // a helicopter's rotor turns only while armed
 
     // HOME_POSITION. Where this aircraft returns to, drawn as a helipad.
     double    home_lat = 0.0;

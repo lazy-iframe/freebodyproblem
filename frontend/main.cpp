@@ -72,6 +72,7 @@
 // Widgets
 #include "widgets/app_icon.hpp"
 #include "widgets/theme.hpp"
+#include "widgets/crt_overlay.hpp"
 #include "widgets/vehicle_ui_state.hpp"
 #include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
@@ -333,6 +334,8 @@ static void render_ui()
             mv.has_home = vsnap.state.has_home;
             mv.fence    = vsnap.state.fence_params;
             mv.checked  = swarm && swarm_is_checked(v->id());
+            mv.mav_type = (uint8_t)vsnap.state.type;
+            mv.armed    = vsnap.state.armed;
             g_map_fleet.push_back(mv);
 
             if (swarm)
@@ -483,25 +486,14 @@ int main()
     // Load persisted settings and apply the saved theme
     settings_load(g_settings);
     map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
-    {
-        if (g_settings.active_theme == THEME_MATRIX_NAME) {
-            g_theme = matrix_theme_vars();
-        } else if (g_settings.active_theme == THEME_AMBER_NAME) {
-            g_theme = retro_amber_theme_vars();
-        } else {
-            auto it = g_settings.themes.find(g_settings.active_theme);
-            if (it != g_settings.themes.end()) {
-                g_theme = it->second;
-            } else {
-                // "Tactical", or a name that no longer exists — a built-in
-                // theme dropped from the build stays behind in settings.json.
-                // The defaults apply either way, so the name is put back to
-                // match them: leaving it would label the selector with a theme
-                // that is not the one on screen.
-                g_theme = ThemeVars{};
-                g_settings.active_theme = THEME_BUILTIN_NAME;
-            }
-        }
+    map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
+    if (!theme_lookup(g_settings, g_settings.active_theme, g_theme)) {
+        // A name that no longer exists — a built-in theme dropped from the
+        // build stays behind in settings.json. The defaults apply, so the name
+        // is put back to match them: leaving it would label the selector with
+        // a theme that is not the one on screen.
+        g_theme = ThemeVars{};
+        g_settings.active_theme = THEME_BUILTIN_NAME;
     }
     apply_global_theme(ImGui::GetStyle());
 
@@ -586,6 +578,9 @@ int main()
             if (!g_splash_done)
                 g_splash_done = draw_splash_screen(elapsed, g_font_splash_title);
         }
+
+        // Last thing drawn, so it lies over the splash and every popup too.
+        draw_crt_overlay(g_settings, glfwGetTime());
 
         if (g_close_req)
             glfwSetWindowShouldClose(window, GLFW_TRUE);

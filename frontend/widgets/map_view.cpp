@@ -554,6 +554,212 @@ static void draw_home(ImDrawList* dl, ImVec2 c, bool active)
     dl->AddLine({ c.x - HW, c.y      }, { c.x + HW, c.y      }, col, 2.0f);
 }
 
+// ── Vehicle symbols ───────────────────────────────────────────────────────────
+//
+// Top-down silhouettes, one per airframe family, or the legacy arrow. All of
+// them keep the arrow's idea of colour: the same fixed red pair, port side the
+// darker, so which way up the airframe is reads at a glance whatever its
+// shape, and an outline in the theme's ring colour.
+//
+// Shapes are written in a local frame — x to starboard, y forward, in pixels
+// at scale 1 — and turned onto the heading by Frame. Every filled part is
+// convex, which is what ImDrawList's polygon fill wants.
+
+static MapIconStyle g_icon_style = MapIconStyle::ByType;
+
+void map_view_set_icon_style(MapIconStyle s) { g_icon_style = s; }
+
+enum class SymbolKind { Arrow, Plane, Multicopter, Helicopter };
+
+static SymbolKind symbol_kind(uint8_t mav_type, MapIconStyle style)
+{
+    switch (style) {
+    case MapIconStyle::Legacy:      return SymbolKind::Arrow;
+    case MapIconStyle::Plane:       return SymbolKind::Plane;
+    case MapIconStyle::Multicopter: return SymbolKind::Multicopter;
+    case MapIconStyle::Helicopter:  return SymbolKind::Helicopter;
+    case MapIconStyle::ByType:      break;
+    }
+    switch (mav_type) {
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_FLAPPING_WING:
+    case MAV_TYPE_PARAFOIL:
+    case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_FIXEDROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER:
+    case MAV_TYPE_VTOL_TILTWING:
+    case MAV_TYPE_VTOL_RESERVED5:
+        return SymbolKind::Plane;
+    case MAV_TYPE_QUADROTOR:
+    case MAV_TYPE_HEXAROTOR:
+    case MAV_TYPE_OCTOROTOR:
+    case MAV_TYPE_TRICOPTER:
+    case MAV_TYPE_DODECAROTOR:
+    case MAV_TYPE_DECAROTOR:
+    case MAV_TYPE_GENERIC_MULTIROTOR:
+        return SymbolKind::Multicopter;
+    case MAV_TYPE_HELICOPTER:
+    case MAV_TYPE_COAXIAL:
+        return SymbolKind::Helicopter;
+    default:
+        // Rovers, boats, and an autopilot that has not said: the arrow, which
+        // claims nothing about the airframe beyond which way it points.
+        return SymbolKind::Arrow;
+    }
+}
+
+// Local airframe coordinates → screen.
+struct Frame {
+    ImVec2 c;
+    float  dx, dy;    // forward, as a screen-space unit vector
+    float  s;         // scale
+    ImVec2 operator()(float x, float y) const
+    {
+        // Starboard is forward turned 90° clockwise on screen: (-dy, dx).
+        return { c.x + (-dy * x + dx * y) * s, c.y + (dx * x + dy * y) * s };
+    }
+};
+
+// Fill and outline one convex part given in local coordinates.
+static void part(ImDrawList* dl, const Frame& f, std::initializer_list<ImVec2> local,
+                 ImU32 fill, ImU32 edge, float edge_w)
+{
+    ImVec2 pts[16];
+    int n = 0;
+    for (const ImVec2& p : local) pts[n++] = f(p.x, p.y);
+    dl->AddConvexPolyFilled(pts, n, fill);
+    dl->AddPolyline(pts, n, edge, ImDrawFlags_Closed, edge_w);
+}
+
+static float draw_plane(ImDrawList* dl, const Frame& f, ImU32 port, ImU32 stbd, ImU32 edge)
+{
+    // Wings and tailplane under the fuselage, so the fuselage seam is unbroken.
+    part(dl, f, { { -3.0f, 9.0f }, { -25.0f, 1.0f }, { -25.0f, -4.0f }, { -3.0f, -2.0f } }, port, edge, 1.2f);
+    part(dl, f, { {  3.0f, 9.0f }, {  25.0f, 1.0f }, {  25.0f, -4.0f }, {  3.0f, -2.0f } }, stbd, edge, 1.2f);
+    part(dl, f, { { -2.0f, -13.0f }, { -10.0f, -17.5f }, { -10.0f, -20.5f }, { -2.0f, -19.0f } }, port, edge, 1.2f);
+    part(dl, f, { {  2.0f, -13.0f }, {  10.0f, -17.5f }, {  10.0f, -20.5f }, {  2.0f, -19.0f } }, stbd, edge, 1.2f);
+    // Fuselage in two halves, split down the centreline like the arrow.
+    part(dl, f, { { 0.0f, 27.0f }, { 3.0f, 21.0f }, { 3.6f, 9.0f }, { 3.0f, -14.0f },
+                  { 1.4f, -21.0f }, { 0.0f, -21.0f } }, stbd, edge, 1.3f);
+    part(dl, f, { { 0.0f, 27.0f }, { 0.0f, -21.0f }, { -1.4f, -21.0f }, { -3.0f, -14.0f },
+                  { -3.6f, 9.0f }, { -3.0f, 21.0f } }, port, edge, 1.3f);
+    return 27.0f;
+}
+
+static float draw_multicopter(ImDrawList* dl, const Frame& f, ImU32 port, ImU32 stbd, ImU32 edge,
+                              float A)
+{
+    constexpr float ARM = 15.0f, ROTOR = 8.5f;
+    const ImVec2 arms[4] = { { -ARM, ARM }, { ARM, ARM }, { ARM, -ARM }, { -ARM, -ARM } };
+    for (int i = 0; i < 4; ++i) {
+        const bool   port_side = arms[i].x < 0.0f;
+        const bool   front     = arms[i].y > 0.0f;
+        const ImVec2 hub       = f(arms[i].x, arms[i].y);
+        dl->AddLine(f(0.0f, 0.0f), hub, port_side ? port : stbd, 3.0f * f.s);
+        // Rotor discs: washed, the front pair less so — the nose of a
+        // symmetric airframe is otherwise only the outline's say-so.
+        const float disc_a = (front ? 0.55f : 0.28f) * A;
+        dl->AddCircleFilled(hub, ROTOR * f.s, (port_side ? port : stbd) & 0x00FFFFFF |
+                                              ((ImU32)(disc_a * 255.0f) << IM_COL32_A_SHIFT));
+        dl->AddCircle(hub, ROTOR * f.s, edge, 0, (front ? 1.6f : 1.0f));
+    }
+    // Body: a small rounded plate with a nose wedge.
+    part(dl, f, { { 0.0f, 12.0f }, { 5.0f, 5.0f }, { 5.5f, -5.0f }, { 0.0f, -6.5f } }, stbd, edge, 1.2f);
+    part(dl, f, { { 0.0f, 12.0f }, { 0.0f, -6.5f }, { -5.5f, -5.0f }, { -5.0f, 5.0f } }, port, edge, 1.2f);
+    return ARM + ROTOR;
+}
+
+static float draw_helicopter(ImDrawList* dl, const Frame& f, ImU32 port, ImU32 stbd, ImU32 edge,
+                             float A, float rotor)
+{
+    // Tail boom and tail rotor first, under the cabin.
+    part(dl, f, { { 1.6f, -5.0f }, { 1.0f, -27.0f }, { -1.0f, -27.0f }, { -1.6f, -5.0f } }, port, edge, 1.0f);
+    dl->AddLine(f(2.5f, -22.0f), f(2.5f, -29.0f), edge, 2.0f * f.s);
+    part(dl, f, { { -1.0f, -24.0f }, { -6.0f, -26.0f }, { -6.0f, -27.5f }, { -1.0f, -27.0f } }, port, edge, 1.0f);
+    // Cabin, split down the middle like the others.
+    part(dl, f, { { 0.0f, 15.0f }, { 4.5f, 12.0f }, { 6.5f, 5.0f }, { 6.0f, -3.0f }, { 3.5f, -7.0f }, { 0.0f, -7.0f } },
+         stbd, edge, 1.3f);
+    part(dl, f, { { 0.0f, 15.0f }, { 0.0f, -7.0f }, { -3.5f, -7.0f }, { -6.0f, -3.0f }, { -6.5f, 5.0f }, { -4.5f, 12.0f } },
+         port, edge, 1.3f);
+    // Main rotor: the disc it sweeps, and two blades at `rotor` radians — the
+    // caller turns them while the vehicle is armed, slowly enough to read as a
+    // rotor rather than as flicker.
+    constexpr float R = 23.0f;
+    dl->AddCircle(f(0.0f, 0.0f), R * f.s, (edge & 0x00FFFFFF) | ((ImU32)(0.45f * A * 255.0f) << IM_COL32_A_SHIFT),
+                  0, 1.0f);
+    // Washed back, so the cabin under them still reads.
+    const ImU32 blade = (edge & 0x00FFFFFF) | ((ImU32)(0.7f * A * 255.0f) << IM_COL32_A_SHIFT);
+    const float bx = std::cos(rotor) * R, by = std::sin(rotor) * R;
+    dl->AddLine(f(-bx, -by), f(bx, by), blade, 1.6f * f.s);
+    dl->AddLine(f(by, -bx),  f(-by, bx), blade, 1.6f * f.s);
+    dl->AddCircleFilled(f(0.0f, 0.0f), 2.2f * f.s, edge);
+    return 15.0f;
+}
+
+static float draw_arrow(ImDrawList* dl, const Frame& f, ImU32 port, ImU32 stbd, ImU32 edge)
+{
+    // Arrow dimensions
+    constexpr float BODY   = 27.0f; // distance from center to tip
+    constexpr float TAIL   = 15.0f; // distance from center to tail
+    constexpr float WING   = 10.5f; // half-width at wing base
+    constexpr float NOTCH  = 6.0f;  // tail notch depth
+
+    const ImVec2 tip    = f(0.0f, BODY);
+    const ImVec2 tail_c = f(0.0f, -TAIL);
+    const ImVec2 wL     = f(-WING, 0.0f);
+    const ImVec2 wR     = f( WING, 0.0f);
+    // Tail notch pulls tail center slightly toward tip
+    const ImVec2 notch  = f(0.0f, -(TAIL - NOTCH));
+
+    dl->AddTriangleFilled(tip, wL, notch, port);
+    dl->AddTriangleFilled(tip, wR, notch, stbd);
+    dl->AddQuad(tip, wL, notch, wR, edge, 1.5f);
+    dl->AddLine(tail_c, notch, edge, 1.5f);
+    return BODY;
+}
+
+// Draws the symbol and returns how far ahead of `c` its nose is, at scale 1 —
+// where the heading line starts.
+static float draw_symbol(ImDrawList* dl, ImVec2 c, SymbolKind kind, float heading_deg,
+                         float A, float scale, float rotor)
+{
+    const float rad = heading_deg * (float)(M_PI / 180.0);
+    const Frame f   = { c, std::sin(rad), -std::cos(rad), scale };
+
+    // Two shades of the same red rather than two colours: the seam is what
+    // says which way up the airframe is at a glance, and it has to read
+    // without becoming a second marker. Fixed rather than themed, since the
+    // pair only works as a pair.
+    const ImU32 port = IM_COL32(150, 26, 26, (int)(235 * A));
+    const ImU32 stbd = IM_COL32(206, 48, 48, (int)(235 * A));
+    const ImU32 edge = ui_col(g_theme.map_vehicle_ring, A);
+
+    switch (kind) {
+    case SymbolKind::Plane:       return draw_plane(dl, f, port, stbd, edge);
+    case SymbolKind::Multicopter: return draw_multicopter(dl, f, port, stbd, edge, A);
+    case SymbolKind::Helicopter: {
+        // Drawn 10% up: at the others' size its rotor disc read as the whole
+        // symbol and the cabin inside it as too small to make out.
+        constexpr float HELI_SCALE = 1.1f;
+        Frame big = f;
+        big.s *= HELI_SCALE;
+        return draw_helicopter(dl, big, port, stbd, edge, A, rotor) * HELI_SCALE;
+    }
+    case SymbolKind::Arrow:       break;
+    }
+    return draw_arrow(dl, f, port, stbd, edge);
+}
+
+void map_draw_vehicle_symbol(ImDrawList* dl, ImVec2 c, uint8_t mav_type, MapIconStyle style,
+                             float heading_deg, float alpha, float scale)
+{
+    // Blades parked across the cabin: a preview is of no vehicle, armed or not.
+    draw_symbol(dl, c, symbol_kind(mav_type, style), heading_deg, alpha, scale,
+                (float)(M_PI * 0.25));
+}
+
 // ── Aircraft symbol ───────────────────────────────────────────────────────────
 //
 // One vehicle: the airframe, its heading line, and the label naming it. Drawn
@@ -575,41 +781,23 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
         dl->AddCircle(c, 34.0f, ui_col(g_theme.accent), 0, 2.0f);
 
     if (mv.has_hdg) {
-        // Convert heading (degrees CW from north) to screen angle.
-        // Screen Y grows downward, so north = -Y → angle = hdg - 90° in
-        // standard math terms, but we use (sin, -cos) directly.
+        // Heading (degrees CW from north) as a screen vector. Screen Y grows
+        // downward, so north is -Y: (sin, -cos).
         const float rad = mv.heading * (float)(M_PI / 180.0);
         const float dx  = std::sin(rad);   // east component  (+x on screen)
         const float dy  = -std::cos(rad);  // north component (-y on screen)
 
-        // Arrow dimensions
-        constexpr float BODY   = 27.0f; // distance from center to tip
-        constexpr float TAIL   = 15.0f; // distance from center to tail
-        constexpr float WING   = 10.5f; // half-width at wing base
-        constexpr float NOTCH  = 6.0f;  // tail notch depth
+        // Rotor angle per vehicle, advanced only while it is armed — so on
+        // disarm the blades stop where they are rather than snapping to a
+        // parked angle, and spin up again from there.
+        static std::unordered_map<VehicleId, float, VehicleIdHash> s_rotor;
+        float& rotor = s_rotor.try_emplace(mv.id, (float)(M_PI * 0.25)).first->second;
+        if (mv.armed)
+            rotor = std::fmod(rotor + 1.6f * ImGui::GetIO().DeltaTime, (float)(2.0 * M_PI));
 
-        // Key points (all relative to marker center)
-        const ImVec2 tip   = { c.x + dx * BODY,  c.y + dy * BODY  };
-        const ImVec2 tail_c= { c.x - dx * TAIL,  c.y - dy * TAIL  }; // center tail
-        // Wing points perpendicular to heading
-        const ImVec2 wL    = { c.x - dy * WING,  c.y + dx * WING  };
-        const ImVec2 wR    = { c.x + dy * WING,  c.y - dx * WING  };
-        // Tail notch pulls tail center slightly toward tip
-        const ImVec2 notch = { c.x - dx * (TAIL - NOTCH), c.y - dy * (TAIL - NOTCH) };
-
-        // Body, split down the long diagonal into port and starboard halves.
-        // Two shades of the same red rather than two colours: the seam is what
-        // says which way up the airframe is at a glance, and it has to read
-        // without becoming a second marker. Fixed rather than themed, since the
-        // pair only works as a pair.
-        const ImU32 half_port = IM_COL32(150, 26, 26, (int)(235 * A));
-        const ImU32 half_stbd = IM_COL32(206, 48, 48, (int)(235 * A));
-        dl->AddTriangleFilled(tip, wL, notch, half_port);
-        dl->AddTriangleFilled(tip, wR, notch, half_stbd);
-        // Outline
-        dl->AddQuad(tip, wL, notch, wR, ui_col(g_theme.map_vehicle_ring, A), 1.5f);
-        // Tail segment centre → notch
-        dl->AddLine(tail_c, notch, ui_col(g_theme.map_vehicle_ring, A), 1.5f);
+        const float  nose = draw_symbol(dl, c, symbol_kind(mv.mav_type, g_icon_style),
+                                        mv.heading, A, 1.0f, rotor);
+        const ImVec2 tip  = { c.x + dx * nose, c.y + dy * nose };
 
         // Dotted heading line. For the active aircraft it runs the width of the
         // panel, which is what says where the vehicle is pointed against

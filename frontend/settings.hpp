@@ -34,8 +34,15 @@
 
 // Names reserved for hard-coded built-in themes — never removed from the UI.
 static constexpr const char* THEME_BUILTIN_NAME  = "Tactical";
+static constexpr const char* THEME_GRUVBOX_NAME  = "Gruvbox Light";
 static constexpr const char* THEME_AMBER_NAME    = "Retro Amber";
 static constexpr const char* THEME_MATRIX_NAME   = "Matrix";
+
+// The built-in themes, in the order the picker shows them. This is the one
+// list: startup, the picker and REVERT all resolve a built-in through it.
+struct BuiltinTheme { const char* name; ThemeVars (*factory)(); };
+extern const BuiltinTheme k_builtin_themes[];
+extern const size_t       k_builtin_theme_count;
 
 // Saved connection profile (type: 0=Serial, 1=TCP, 2=UDP — matches conn_tab).
 struct ConnectionProfile {
@@ -75,6 +82,15 @@ struct AppSettings {
     bool hud_tapes_main  = true;    // right sidebar and fullscreen-map overlay
     bool hud_tapes_swarm = false;   // swarm cards
 
+    // ── Map ───────────────────────────────────────────────────────────────────
+    int map_icon_style = 1;   // MapIconStyle: 0 legacy arrow, 1 by vehicle type, 2-4 forced
+
+    // ── CRT effects (cosmetic) ────────────────────────────────────────────────
+    bool  crt_scanlines         = false;
+    float crt_scanline_strength = 0.5f;   // 0..1
+    bool  crt_vignette          = false;
+    float crt_vignette_strength = 0.5f;   // 0..1
+
     // ── Map tile source ───────────────────────────────────────────────────────
     std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     std::string tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";
@@ -88,3 +104,11 @@ void settings_load(AppSettings& out);
 
 // Writes the full settings state to disk.  Creates parent directories as needed.
 void settings_save(const AppSettings& s);
+
+// ── Themes ───────────────────────────────────────────────────────────────────
+
+bool theme_is_builtin(const std::string& name);
+
+// The colours `name` was last saved with: the factory colours for a built-in,
+// the stored copy for a user theme. False if there is no such theme.
+bool theme_lookup(const AppSettings& s, const std::string& name, ThemeVars& out);

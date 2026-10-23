@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.6.3 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.6.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -364,6 +364,7 @@ add_executable(freebodyproblem
     frontend/widgets/sidebar_left/mavlink_display_generated.cpp
     frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp
     frontend/widgets/sidebar_themes.cpp
+    frontend/widgets/crt_overlay.cpp
     frontend/widgets/center_view.cpp
     frontend/widgets/splash_screen.cpp
     frontend/widgets/video_player.cpp

@@ -155,7 +155,14 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 
     ImU32 text_col;
     if (outline_only) {
+        // A dim slab of the fill's own colour — darkened toward black on a
+        // dark panel, washed toward the panel on a light one.
         ImVec4 bg = fill; bg.x *= 0.18f; bg.y *= 0.18f; bg.z *= 0.18f;
+        if (theme_is_light()) {
+            const ImVec4& p = g_theme.bg_panel;
+            bg = { fill.x * 0.12f + p.x * 0.88f, fill.y * 0.12f + p.y * 0.88f,
+                   fill.z * 0.12f + p.z * 0.88f, 1.0f };
+        }
         dl->AddRectFilled(p0, p1, ui_col(bg));
         ui_frame(dl, p0, p1, ui_col(fill, 0.9f));
         text_col = ui_col(fill);
@@ -295,8 +302,11 @@ static ImU32 ui_plate_text_col(ImVec4 fill, float alpha)
     const float   b  = fill.z * w + bg.z * (1.0f - w);
 
     const float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    // A light theme's col_active_text is light too (its accent is dark), so
+    // the dark choice there is the body ink.
+    const ImVec4& ink = theme_is_light() ? g_theme.col_text : g_theme.col_active_text;
     return lum < 0.45f ? ui_col(g_theme.col_text_on_dark, alpha)
-                       : ui_col(g_theme.col_active_text,  alpha);
+                       : ui_col(ink, alpha);
 }
 
 // Core of the shared button chrome. `base`/`base_hov` are the idle fills; the

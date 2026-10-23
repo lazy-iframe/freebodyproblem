@@ -19,13 +19,15 @@
 #pragma once
 #include "imgui.h"
 #include "../../backend/mavlink_sender.hpp"
+#include <algorithm>
+#include <cstring>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // theme.hpp — Centralized GCS color and style tokens
 //
 // Palette: tactical olive (default)
-//   Background : dark olive-black  #12160C / panels #1B2012
-//   Chrome     : header strips #242A19, seams #46552F
+//   Background : dark olive-black  #161B0F / panels #212716
+//   Chrome     : header strips #2C331F, seams #46552F
 //   Primary    : amber  #ECB94E  (labels, chips, active state)
 //   Data       : pale green  #97EA89  (live telemetry values)
 //   Muted      : olive  #B4C68F  (field labels, log), #93A375 (disabled text)
@@ -44,6 +46,16 @@ struct ThemeVars {
     // ── Palette ───────────────────────────────────────────────────────────────
     ImVec4 accent             = { 0.925f, 0.725f, 0.306f, 1.0f }; // amber #ECB94E — labels, chips
     ImVec4 col_data           = { 0.592f, 0.918f, 0.537f, 1.0f }; // pale green #97EA89 — live values
+    // Selection rows, open collapsing headers, scrollbar and slider grabs, the
+    // hover wash on fields and tabs — every ImGui shade apply_global_theme
+    // used to work out from the accent by fixed per-channel ratios. It is the
+    // same brown it always was, now a color a theme can set.
+    ImVec4 highlight          = { 0.324f, 0.152f, 0.107f, 1.0f }; // brown #53271B
+    // The CRT scanlines (crt_overlay), when they are switched on: the lines
+    // are drawn in it, the rolling band in a brightened copy. Amber and Matrix
+    // take col_data at 0.26 — a phosphor in the theme's own data color. Here
+    // that comes out grey, col_data being so pale, so Tactical names its green.
+    ImVec4 crt_scanline       = { 0.080f, 0.260f, 0.070f, 1.0f }; // phosphor green #154212
     ImVec4 col_ok             = { 0.592f, 0.918f, 0.537f, 1.0f }; // pale green — nominal state
     ImVec4 col_warning        = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange #E0913A
     ImVec4 col_error          = { 0.937f, 0.510f, 0.443f, 1.0f }; // salmon red #EF8271
@@ -51,7 +63,7 @@ struct ThemeVars {
     // Labels, the console log, and every quiet heading. Brightened from the
     // original #6E7B55, which sat at about 3.6:1 on bg_panel — far under what
     // an olive this desaturated needs to stay readable on a screen in daylight.
-    // #B4C68F is about 9:1, and still a clear step under col_data, so a label
+    // #B4C68F is about 8.4:1, and still a clear step under col_data, so a label
     // never competes with the number next to it.
     ImVec4 col_log            = { 0.706f, 0.776f, 0.561f, 1.0f }; // olive #B4C68F — labels/log
     ImVec4 col_armed          = { 0.937f, 0.420f, 0.353f, 1.0f }; // hot salmon red
@@ -63,23 +75,25 @@ struct ThemeVars {
     // ImGuiCol_TextDisabled, and everything spoken in that voice: "Waiting for
     // GPS…", empty-list notes, the placeholder under a control nothing has
     // filled in yet. Was #475137, which is 2.0:1 on bg_panel — legible only if
-    // you already knew what it said. #93A375 is about 6:1 while staying a step
+    // you already knew what it said. #93A375 is about 5.7:1 while staying a step
     // below col_log, so the hierarchy of label over aside survives.
     ImVec4 col_no_link_muted  = { 0.576f, 0.639f, 0.459f, 1.0f }; // #93A375
     ImVec4 col_reboot         = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange
     ImVec4 col_active_text    = { 0.055f, 0.067f, 0.043f, 1.0f }; // near-black — text on amber
     ImVec4 col_text_on_dark   = { 0.902f, 0.918f, 0.878f, 1.0f }; // bone — text on dark plates (red/olive)
+    // Body text — ImGuiCol_Text, so every control and plain line of copy.
+    ImVec4 col_text           = { 0.812f, 0.831f, 0.769f, 1.0f }; // bone, olive-tinted
 
     // ── Backgrounds ───────────────────────────────────────────────────────────
-    ImVec4 bg_panel           = { 0.106f, 0.125f, 0.071f, 1.0f }; // #1B2012
-    ImVec4 bg_topbar          = { 0.071f, 0.086f, 0.047f, 1.0f }; // #12160C
-    ImVec4 bg_bottombar       = { 0.071f, 0.086f, 0.047f, 1.0f };
-    ImVec4 bg_sidebar_left    = { 0.086f, 0.106f, 0.059f, 1.0f }; // #161B0F
-    ImVec4 bg_video           = { 0.047f, 0.059f, 0.031f, 1.0f }; // #0C0F08
-    ImVec4 bg_map             = { 0.047f, 0.059f, 0.031f, 1.0f };
-    ImVec4 bg_child_dark      = { 0.141f, 0.165f, 0.098f, 1.0f }; // #242A19 — header strips
-    ImVec4 bg_child_darker    = { 0.094f, 0.114f, 0.063f, 1.0f }; // #181D10 — tiles / wells
-    ImVec4 bg_param_list      = { 0.071f, 0.086f, 0.047f, 1.0f };
+    ImVec4 bg_panel           = { 0.129f, 0.152f, 0.087f, 1.0f }; // #212716
+    ImVec4 bg_topbar          = { 0.087f, 0.105f, 0.057f, 1.0f }; // #161B0F
+    ImVec4 bg_bottombar       = { 0.087f, 0.105f, 0.057f, 1.0f };
+    ImVec4 bg_sidebar_left    = { 0.105f, 0.129f, 0.072f, 1.0f }; // #1B2112
+    ImVec4 bg_video           = { 0.057f, 0.072f, 0.038f, 1.0f }; // #0F120A
+    ImVec4 bg_map             = { 0.057f, 0.072f, 0.038f, 1.0f };
+    ImVec4 bg_child_dark      = { 0.172f, 0.201f, 0.120f, 1.0f }; // #2C331F — header strips
+    ImVec4 bg_child_darker    = { 0.115f, 0.139f, 0.077f, 1.0f }; // #1D2314 — tiles / wells
+    ImVec4 bg_param_list      = { 0.087f, 0.105f, 0.057f, 1.0f };
 
     // ── Borders ───────────────────────────────────────────────────────────────
     ImVec4 separator          = { 0.243f, 0.290f, 0.173f, 1.0f }; // #3E4A2C
@@ -89,20 +103,12 @@ struct ThemeVars {
 
     // ── Named buttons ─────────────────────────────────────────────────────────
     ImVec4 btn_arm_base         = { 0.278f, 0.086f, 0.059f, 1.0f };
-    ImVec4 btn_arm_hov          = { 0.420f, 0.129f, 0.090f, 1.0f };
     ImVec4 btn_disarm_base      = { 0.204f, 0.243f, 0.129f, 1.0f };
-    ImVec4 btn_disarm_hov       = { 0.294f, 0.345f, 0.176f, 1.0f };
     ImVec4 btn_disconnect_base  = { 0.278f, 0.086f, 0.059f, 1.0f };
     ImVec4 btn_disconnect_hov   = { 0.420f, 0.129f, 0.090f, 1.0f };
     ImVec4 btn_stop_base        = { 0.310f, 0.098f, 0.067f, 0.90f };
     ImVec4 btn_stop_hov         = { 0.463f, 0.145f, 0.098f, 1.00f };
-    ImVec4 btn_stop_act         = { 0.235f, 0.075f, 0.051f, 1.00f };
-    ImVec4 btn_intlk_on_base    = { 0.353f, 0.259f, 0.086f, 1.0f };
-    ImVec4 btn_intlk_on_hov     = { 0.482f, 0.357f, 0.118f, 1.0f };
-    ImVec4 btn_intlk_off_base   = { 0.110f, 0.133f, 0.075f, 1.0f };
-    ImVec4 btn_intlk_off_hov    = { 0.169f, 0.200f, 0.114f, 1.0f };
-    ImVec4 btn_mode_active_base = { 0.353f, 0.259f, 0.086f, 1.0f };
-    ImVec4 btn_mode_active_hov  = { 0.482f, 0.357f, 0.118f, 1.0f };
+    ImVec4 btn_intlk_off_base   = { 0.134f, 0.162f, 0.091f, 1.0f };
     ImVec4 btn_write_base       = { 0.353f, 0.259f, 0.086f, 1.0f };
     ImVec4 btn_write_hov        = { 0.482f, 0.357f, 0.118f, 1.0f };
     ImVec4 btn_tab_active_base  = { 0.925f, 0.725f, 0.306f, 0.88f };
@@ -142,10 +148,10 @@ struct ThemeVars {
     ImVec4 ah_ground         = { 0.286f, 0.243f, 0.145f, 1.000f }; // #493E25
     ImVec4 ah_horizon_line   = { 0.902f, 0.918f, 0.878f, 0.950f }; // bone
     ImVec4 ah_pitch_ladder   = { 0.722f, 0.761f, 0.702f, 0.800f }; // #B8C2B3
-    ImVec4 ah_pitch_label_bg = { 0.047f, 0.059f, 0.031f, 0.000f };
+    ImVec4 ah_pitch_label_bg = { 0.057f, 0.072f, 0.038f, 0.000f };
     ImVec4 ah_pitch_label    = { 0.827f, 0.855f, 0.812f, 0.850f };
     ImVec4 ah_crosshair      = { 0.969f, 0.812f, 0.396f, 1.000f }; // #F7CF65
-    ImVec4 ah_overlay_bg     = { 0.047f, 0.059f, 0.031f, 0.700f };
+    ImVec4 ah_overlay_bg     = { 0.057f, 0.072f, 0.038f, 0.700f };
     ImVec4 ah_airspeed_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 ah_throttle_text  = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 ah_heading_text   = { 0.925f, 0.725f, 0.306f, 0.950f };
@@ -159,21 +165,29 @@ struct ThemeVars {
     ImVec4 ah_border         = { 0.275f, 0.333f, 0.184f, 0.900f };
 
     // ── Map ───────────────────────────────────────────────────────────────────
-    ImVec4 map_tile_placeholder = { 0.047f, 0.059f, 0.031f, 1.000f };
+    ImVec4 map_tile_placeholder = { 0.057f, 0.072f, 0.038f, 1.000f };
     ImVec4 map_vehicle_fill     = { 0.592f, 0.918f, 0.537f, 1.000f };
     ImVec4 map_vehicle_ring     = { 0.925f, 0.725f, 0.306f, 0.850f };
     ImVec4 map_track            = { 1.000f, 0.282f, 0.282f, 0.850f }; // red #FF4848 — breadcrumb trail, matches the airframe symbol
-    ImVec4 map_attr_bg          = { 0.047f, 0.059f, 0.031f, 0.800f };
+    ImVec4 map_attr_bg          = { 0.057f, 0.072f, 0.038f, 0.800f };
     ImVec4 map_attr_text        = { 0.706f, 0.776f, 0.561f, 0.850f }; // olive, see col_log
 
     // ── EKF ───────────────────────────────────────────────────────────────────
-    ImVec4 ekf_bg      = { 0.094f, 0.114f, 0.063f, 1.000f };
+    ImVec4 ekf_bg      = { 0.115f, 0.139f, 0.077f, 1.000f };
     ImVec4 ekf_outline = { 0.243f, 0.290f, 0.173f, 0.900f };
     ImVec4 ekf_label   = { 0.706f, 0.776f, 0.561f, 0.900f }; // olive, see col_log
 };
 
 // Single runtime-mutable instance — all color functions read from here.
 inline ThemeVars g_theme;
+
+// ThemeVars is nothing but ImVec4s, so two themes are equal exactly when their
+// bytes are — which is how the theme panel tells an edited theme from a saved one.
+static_assert(sizeof(ThemeVars) % sizeof(ImVec4) == 0, "ThemeVars must hold only ImVec4 fields");
+inline bool theme_equal(const ThemeVars& a, const ThemeVars& b)
+{
+    return std::memcmp(&a, &b, sizeof(ThemeVars)) == 0;
+}
 
 // ── Section 2: Color accessor functions ──────────────────────────────────────
 // Thin wrappers so all call sites compile without change.
@@ -236,20 +250,12 @@ inline ImVec4 col_status_severity(int severity)
 // ── Section 4: Named button color accessors ───────────────────────────────────
 
 inline ImVec4 btn_arm_base()           { return g_theme.btn_arm_base; }
-inline ImVec4 btn_arm_hov()            { return g_theme.btn_arm_hov; }
 inline ImVec4 btn_disarm_base()        { return g_theme.btn_disarm_base; }
-inline ImVec4 btn_disarm_hov()         { return g_theme.btn_disarm_hov; }
 inline ImVec4 btn_disconnect_base()    { return g_theme.btn_disconnect_base; }
 inline ImVec4 btn_disconnect_hov()     { return g_theme.btn_disconnect_hov; }
 inline ImVec4 btn_stop_base()          { return g_theme.btn_stop_base; }
 inline ImVec4 btn_stop_hov()           { return g_theme.btn_stop_hov; }
-inline ImVec4 btn_stop_act()           { return g_theme.btn_stop_act; }
-inline ImVec4 btn_intlk_on_base()      { return g_theme.btn_intlk_on_base; }
-inline ImVec4 btn_intlk_on_hov()       { return g_theme.btn_intlk_on_hov; }
 inline ImVec4 btn_intlk_off_base()     { return g_theme.btn_intlk_off_base; }
-inline ImVec4 btn_intlk_off_hov()      { return g_theme.btn_intlk_off_hov; }
-inline ImVec4 btn_mode_active_base()   { return g_theme.btn_mode_active_base; }
-inline ImVec4 btn_mode_active_hov()    { return g_theme.btn_mode_active_hov; }
 inline ImVec4 btn_write_base()         { return g_theme.btn_write_base; }
 inline ImVec4 btn_write_hov()          { return g_theme.btn_write_hov; }
 inline ImVec4 btn_tab_active_base()    { return g_theme.btn_tab_active_base; }
@@ -340,6 +346,8 @@ inline ThemeVars retro_amber_theme_vars()
 
     t.accent                 = { 1.0f,  0.69f, 0.0f,  1.0f }; // bright amber #FFB000
     t.col_data               = { 1.0f,  0.82f, 0.15f, 1.0f }; // gold — telemetry values
+    t.highlight              = { 0.350f, 0.145f, 0.0f, 1.0f }; // rust — selection, scrollbars
+    t.crt_scanline           = { 0.260f, 0.213f, 0.039f, 1.0f }; // dark gold — CRT scanlines
     t.col_ok                 = { 1.0f,  0.85f, 0.18f, 1.0f }; // bright gold — OK/good state
     t.col_warning            = { 1.0f,  0.55f, 0.0f,  1.0f }; // orange-amber
     t.col_error              = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
@@ -372,20 +380,12 @@ inline ThemeVars retro_amber_theme_vars()
 
     // ── Named buttons ─────────────────────────────────────────────────────────
     t.btn_arm_base           = { 0.55f, 0.04f, 0.10f, 1.0f };
-    t.btn_arm_hov            = { 0.78f, 0.08f, 0.16f, 1.0f };
     t.btn_disarm_base        = { 0.38f, 0.23f, 0.0f,  1.0f };
-    t.btn_disarm_hov         = { 0.54f, 0.34f, 0.0f,  1.0f };
     t.btn_disconnect_base    = { 0.38f, 0.04f, 0.08f, 1.0f };
     t.btn_disconnect_hov     = { 0.55f, 0.08f, 0.14f, 1.0f };
     t.btn_stop_base          = { 0.50f, 0.04f, 0.08f, 0.85f };
     t.btn_stop_hov           = { 0.72f, 0.08f, 0.14f, 1.00f };
-    t.btn_stop_act           = { 0.38f, 0.03f, 0.06f, 1.00f };
-    t.btn_intlk_on_base      = { 0.44f, 0.27f, 0.0f,  1.0f };
-    t.btn_intlk_on_hov       = { 0.62f, 0.38f, 0.0f,  1.0f };
     t.btn_intlk_off_base     = { 0.10f, 0.06f, 0.01f, 1.0f };
-    t.btn_intlk_off_hov      = { 0.16f, 0.10f, 0.02f, 1.0f };
-    t.btn_mode_active_base   = { 0.38f, 0.23f, 0.0f,  1.0f };
-    t.btn_mode_active_hov    = { 0.54f, 0.34f, 0.0f,  1.0f };
     t.btn_write_base         = { 0.38f, 0.24f, 0.0f,  1.0f };
     t.btn_write_hov          = { 0.55f, 0.35f, 0.0f,  1.0f };
     t.btn_tab_active_base    = { 1.0f,  0.75f, 0.0f,  0.70f };
@@ -444,6 +444,8 @@ inline ThemeVars matrix_theme_vars()
     // ── Palette ───────────────────────────────────────────────────────────────
     t.accent            = { 0.000f, 1.000f, 0.255f, 1.0f }; // phosphor green #00FF41
     t.col_data          = { 0.000f, 0.800f, 0.200f, 1.0f }; // mid green      #00CC33
+    t.highlight         = { 0.000f, 0.210f, 0.089f, 1.0f }; // deep green — selection, scrollbars
+    t.crt_scanline      = { 0.000f, 0.208f, 0.052f, 1.0f }; // deep green — CRT scanlines
     t.col_ok            = { 0.000f, 1.000f, 0.000f, 1.0f }; // pure green     #00FF00
     t.col_warning       = { 0.667f, 1.000f, 0.000f, 1.0f }; // yellow-green   #AAFF00
     t.col_error         = { 1.000f, 0.133f, 0.200f, 1.0f }; // hot red        #FF2233
@@ -476,20 +478,12 @@ inline ThemeVars matrix_theme_vars()
 
     // ── Named buttons ─────────────────────────────────────────────────────────
     t.btn_arm_base         = { 0.55f,  0.04f,  0.10f,  1.0f }; // dark red
-    t.btn_arm_hov          = { 0.78f,  0.08f,  0.16f,  1.0f };
     t.btn_disarm_base      = { 0.000f, 0.250f, 0.060f, 1.0f }; // dark green
-    t.btn_disarm_hov       = { 0.000f, 0.370f, 0.090f, 1.0f };
     t.btn_disconnect_base  = { 0.38f,  0.04f,  0.08f,  1.0f };
     t.btn_disconnect_hov   = { 0.55f,  0.08f,  0.14f,  1.0f };
     t.btn_stop_base        = { 0.50f,  0.04f,  0.08f,  0.85f };
     t.btn_stop_hov         = { 0.72f,  0.08f,  0.14f,  1.00f };
-    t.btn_stop_act         = { 0.38f,  0.03f,  0.06f,  1.00f };
-    t.btn_intlk_on_base    = { 0.000f, 0.300f, 0.070f, 1.0f }; // dark green
-    t.btn_intlk_on_hov     = { 0.000f, 0.450f, 0.110f, 1.0f };
     t.btn_intlk_off_base   = { 0.016f, 0.055f, 0.016f, 1.0f };
-    t.btn_intlk_off_hov    = { 0.024f, 0.078f, 0.024f, 1.0f };
-    t.btn_mode_active_base = { 0.000f, 0.250f, 0.060f, 1.0f };
-    t.btn_mode_active_hov  = { 0.000f, 0.370f, 0.090f, 1.0f };
     t.btn_write_base       = { 0.000f, 0.250f, 0.060f, 1.0f };
     t.btn_write_hov        = { 0.000f, 0.370f, 0.090f, 1.0f };
     t.btn_tab_active_base  = { 0.000f, 1.000f, 0.255f, 0.65f }; // phosphor semi
@@ -539,6 +533,125 @@ inline ThemeVars matrix_theme_vars()
     return t;
 }
 
+// Gruvbox Light — morhetz's palette, mapped by role: bg0 panels, bg1 bars and
+// header strips, bg0_h wells and fields, fg1 ink; the "faded" accents, which
+// are the ones gruvbox itself uses on a light background. Orange is the accent
+// (5.4:1 on bg0), blue the live data, red danger, purple the plugin rail.
+// Kept faithful at a cost: gruvbox's yellow (warnings) is 3.3:1 on bg0 and its
+// green (OK) 4.3:1 — the palette's own, under the 4.5:1 the rest clears.
+//
+// Being light changes a few derived shades too — see theme_is_light().
+inline ThemeVars gruvbox_light_theme_vars()
+{
+    ThemeVars t;
+
+    // ── Palette ───────────────────────────────────────────────────────────────
+    t.accent            = { 0.686f, 0.227f, 0.012f, 1.0f }; // orange        #AF3A03
+    t.highlight         = { 0.835f, 0.769f, 0.631f, 1.0f }; // bg2 — selection, scrollbars
+    t.crt_scanline      = { 0.741f, 0.682f, 0.576f, 1.0f }; // bg3
+    t.col_data          = { 0.027f, 0.400f, 0.471f, 1.0f }; // blue          #076678
+    t.col_ok            = { 0.475f, 0.455f, 0.055f, 1.0f }; // green         #79740E
+    t.col_warning       = { 0.710f, 0.463f, 0.078f, 1.0f }; // yellow        #B57614
+    t.col_error         = { 0.616f, 0.000f, 0.024f, 1.0f }; // red           #9D0006
+    t.col_error_alt     = { 0.800f, 0.141f, 0.114f, 1.0f }; // neutral red
+    t.col_log           = { 0.314f, 0.286f, 0.271f, 1.0f }; // fg2 — labels/log
+    t.col_armed         = { 0.616f, 0.000f, 0.024f, 1.0f };
+    t.col_disarmed      = { 0.686f, 0.227f, 0.012f, 1.0f };
+    t.col_no_link       = { 0.486f, 0.435f, 0.392f, 1.0f }; // fg4
+    t.col_no_link_muted = { 0.400f, 0.361f, 0.329f, 1.0f }; // fg3
+    t.col_reboot        = { 0.710f, 0.463f, 0.078f, 1.0f };
+    t.col_active_text   = { 0.976f, 0.961f, 0.843f, 1.0f }; // bg0_h — text on the accent
+    t.col_text_on_dark  = { 0.976f, 0.961f, 0.843f, 1.0f };
+    t.col_text          = { 0.235f, 0.220f, 0.212f, 1.0f }; // fg1           #3C3836
+
+    // ── Backgrounds ───────────────────────────────────────────────────────────
+    t.bg_panel          = { 0.984f, 0.945f, 0.780f, 1.0f }; // bg0
+    t.bg_topbar         = { 0.922f, 0.859f, 0.698f, 1.0f }; // bg1
+    t.bg_bottombar      = { 0.922f, 0.859f, 0.698f, 1.0f };
+    t.bg_sidebar_left   = { 0.949f, 0.898f, 0.737f, 1.0f }; // bg0_s
+    t.bg_video          = { 0.835f, 0.769f, 0.631f, 1.0f }; // bg2
+    t.bg_map            = { 0.835f, 0.769f, 0.631f, 1.0f };
+    t.bg_child_dark     = { 0.922f, 0.859f, 0.698f, 1.0f }; // bg1 — header strips
+    t.bg_child_darker   = { 0.976f, 0.961f, 0.843f, 1.0f }; // bg0_h — tiles / wells
+    t.bg_param_list     = { 0.976f, 0.961f, 0.843f, 1.0f };
+
+    // ── Borders ───────────────────────────────────────────────────────────────
+    t.separator         = { 0.741f, 0.682f, 0.576f, 1.0f }; // bg3
+    t.border_tab        = { 0.741f, 0.682f, 0.576f, 0.90f };
+    t.border_form       = { 0.741f, 0.682f, 0.576f, 0.70f };
+    t.panel_border      = { 0.659f, 0.600f, 0.518f, 0.95f }; // bg4
+
+    // ── Named buttons ─────────────────────────────────────────────────────────
+    t.btn_arm_base         = { 0.616f, 0.000f, 0.024f, 1.0f };
+    t.btn_disarm_base      = { 0.400f, 0.361f, 0.329f, 1.0f };
+    t.btn_disconnect_base  = { 0.616f, 0.000f, 0.024f, 1.0f };
+    t.btn_disconnect_hov   = { 0.800f, 0.141f, 0.114f, 1.0f };
+    t.btn_stop_base        = { 0.616f, 0.000f, 0.024f, 1.0f };
+    t.btn_stop_hov         = { 0.800f, 0.141f, 0.114f, 1.0f };
+    t.btn_intlk_off_base   = { 0.976f, 0.961f, 0.843f, 1.0f }; // the plain button plate — bg0_h
+    t.btn_write_base       = { 0.686f, 0.227f, 0.012f, 1.0f };
+    t.btn_write_hov        = { 0.839f, 0.365f, 0.055f, 1.0f };
+    t.btn_tab_active_base  = { 0.686f, 0.227f, 0.012f, 0.95f };
+    t.btn_tab_active_hov   = { 0.839f, 0.365f, 0.055f, 1.0f };
+
+    // ── Plugin rail ───────────────────────────────────────────────────────────
+    t.plugin_accent        = { 0.561f, 0.247f, 0.443f, 1.0f }; // purple
+    t.plugin_accent_dim    = { 0.694f, 0.384f, 0.525f, 1.0f };
+
+    // ── Command flash ─────────────────────────────────────────────────────────
+    t.flash_accepted_base  = { 0.475f, 0.455f, 0.055f, 1.0f };
+    t.flash_accepted_hov   = { 0.596f, 0.592f, 0.102f, 1.0f };
+    t.flash_rejected_base  = { 0.616f, 0.000f, 0.024f, 1.0f };
+    t.flash_rejected_hov   = { 0.800f, 0.141f, 0.114f, 1.0f };
+    t.flash_pending_base   = { 0.710f, 0.463f, 0.078f, 1.0f };
+    t.flash_pending_hov    = { 0.843f, 0.600f, 0.129f, 1.0f };
+    t.flash_normal_hov     = { 0.686f, 0.227f, 0.012f, 0.10f };
+    t.flash_normal_press   = { 0.686f, 0.227f, 0.012f, 0.22f };
+
+    // ── Artificial horizon — gruvbox blue over a warm brown, bg0_h marks ─────
+    t.ah_sky            = { 0.271f, 0.522f, 0.533f, 1.0f };
+    t.ah_ground         = { 0.561f, 0.416f, 0.263f, 1.0f };
+    t.ah_horizon_line   = { 0.976f, 0.961f, 0.843f, 0.950f };
+    t.ah_pitch_ladder   = { 0.976f, 0.961f, 0.843f, 0.850f };
+    t.ah_pitch_label_bg = { 0.235f, 0.220f, 0.212f, 0.000f };
+    t.ah_pitch_label    = { 0.976f, 0.961f, 0.843f, 0.900f };
+    t.ah_crosshair      = { 0.980f, 0.741f, 0.184f, 1.0f };             // bright yellow
+    t.ah_overlay_bg     = { 0.976f, 0.961f, 0.843f, 0.850f };
+    t.ah_airspeed_text  = { 0.027f, 0.400f, 0.471f, 1.0f };
+    t.ah_throttle_text  = { 0.027f, 0.400f, 0.471f, 1.0f };
+    t.ah_heading_text   = { 0.686f, 0.227f, 0.012f, 1.0f };
+    t.ah_roll_arc       = { 0.976f, 0.961f, 0.843f, 0.700f };
+    t.ah_roll_tick      = { 0.976f, 0.961f, 0.843f, 0.950f };
+    t.ah_roll_label     = { 0.976f, 0.961f, 0.843f, 0.920f };
+    t.ah_roll_pointer   = { 0.980f, 0.741f, 0.184f, 0.950f };
+    t.ah_border         = { 0.659f, 0.600f, 0.518f, 0.900f };
+
+    // ── Map — bright marks for the imagery, light chrome over it ─────────────
+    t.map_tile_placeholder = { 0.835f, 0.769f, 0.631f, 1.0f };
+    t.map_vehicle_fill     = { 0.027f, 0.400f, 0.471f, 1.0f };
+    t.map_vehicle_ring     = { 0.980f, 0.741f, 0.184f, 0.900f };
+    t.map_track            = { 0.800f, 0.141f, 0.114f, 0.850f };
+    t.map_attr_bg          = { 0.976f, 0.961f, 0.843f, 0.800f };
+    t.map_attr_text        = { 0.314f, 0.286f, 0.271f, 1.0f };
+
+    // ── EKF ───────────────────────────────────────────────────────────────────
+    t.ekf_bg      = { 0.976f, 0.961f, 0.843f, 1.0f };
+    t.ekf_outline = { 0.741f, 0.682f, 0.576f, 0.900f };
+    t.ekf_label   = { 0.314f, 0.286f, 0.271f, 1.0f };
+
+    return t;
+}
+
+// True when the panel is light. The handful of shades worked out from a base
+// rather than set — the scrollbar trough, input fields, the highlight's
+// emphasis steps, the ink on plates — are tuned for dark panels, and go the
+// other way on a light one. Every dark theme takes exactly the old path.
+inline bool theme_is_light()
+{
+    const ImVec4& b = g_theme.bg_panel;
+    return 0.2126f * b.x + 0.7152f * b.y + 0.0722f * b.z > 0.5f;
+}
+
 // ── Section 6: Global ImGui style application ────────────────────────────────
 // Call once at startup and whenever g_theme changes.
 
@@ -558,6 +671,17 @@ inline void apply_global_theme(ImGuiStyle& s)
     const ImVec4& bg = g_theme.bg_panel;
     const ImVec4& sp = g_theme.separator;
 
+    // A shade of the highlight at alpha `al`, k steps of emphasis away from
+    // it: brighter on a dark panel, darker on a light one, so a hovered or
+    // pressed row always moves further from the background, never back into it.
+    const bool    light = theme_is_light();
+    const ImVec4& h = g_theme.highlight;
+    auto hl = [&](float k, float al) -> ImVec4 {
+        if (light) k = 1.0f / k;
+        return { std::min(1.0f, h.x * k), std::min(1.0f, h.y * k),
+                 std::min(1.0f, h.z * k), al };
+    };
+
     ImVec4* c = s.Colors;
 
     // Backgrounds
@@ -570,29 +694,33 @@ inline void apply_global_theme(ImGuiStyle& s)
     c[ImGuiCol_BorderShadow]          = { 0.0f, 0.0f, 0.0f, 0.0f  };
 
     // Text
-    c[ImGuiCol_Text]                  = { 0.812f, 0.831f, 0.769f, 1.0f }; // bone, olive-tinted
+    c[ImGuiCol_Text]                  = g_theme.col_text;
     c[ImGuiCol_TextDisabled]          = g_theme.col_no_link_muted;
 
     // Frames (input fields, combos)
-    c[ImGuiCol_FrameBg]               = { bg.x + 0.01f, bg.y, bg.z, 1.0f };
-    c[ImGuiCol_FrameBgHovered]        = { a.x * 0.30f, a.y * 0.18f, a.z * 0.30f, 0.50f };
-    c[ImGuiCol_FrameBgActive]         = { a.x * 0.45f, a.y * 0.28f, a.z * 0.45f, 0.70f };
+    // Input fields: on a light panel, the wells' near-white, as paper forms do.
+    c[ImGuiCol_FrameBg]               = light ? g_theme.bg_child_darker
+                                              : ImVec4{ bg.x + 0.01f, bg.y, bg.z, 1.0f };
+    c[ImGuiCol_FrameBgHovered]        = hl(0.86f, 0.50f);
+    c[ImGuiCol_FrameBgActive]         = hl(1.29f, 0.70f);
 
     // Title bars
-    c[ImGuiCol_TitleBg]               = { bg.x, bg.y * 0.7f, bg.z, 1.0f };
-    c[ImGuiCol_TitleBgActive]         = { a.x * 0.20f, a.y * 0.12f, a.z * 0.20f, 1.0f };
+    c[ImGuiCol_TitleBg]               = light ? g_theme.bg_child_dark
+                                              : ImVec4{ bg.x, bg.y * 0.7f, bg.z, 1.0f };
+    c[ImGuiCol_TitleBgActive]         = hl(0.57f, 1.0f);
     c[ImGuiCol_TitleBgCollapsed]      = { bg.x, bg.y, bg.z, 0.75f };
     c[ImGuiCol_MenuBarBg]             = { bg.x, bg.y, bg.z, 1.0f };
 
     // Scrollbar
-    c[ImGuiCol_ScrollbarBg]           = { bg.x * 0.5f, bg.y * 0.5f, bg.z * 0.5f, 1.0f };
-    c[ImGuiCol_ScrollbarGrab]         = { a.x * 0.35f, a.y * 0.21f, a.z * 0.35f, 1.0f };
-    c[ImGuiCol_ScrollbarGrabHovered]  = { a.x * 0.50f, a.y * 0.30f, a.z * 0.50f, 1.0f };
-    c[ImGuiCol_ScrollbarGrabActive]   = { a.x * 0.65f, a.y * 0.40f, a.z * 0.65f, 1.0f };
+    c[ImGuiCol_ScrollbarBg]           = light ? ImVec4{ bg.x * 0.92f, bg.y * 0.92f, bg.z * 0.92f, 1.0f }
+                                              : ImVec4{ bg.x * 0.5f, bg.y * 0.5f, bg.z * 0.5f, 1.0f };
+    c[ImGuiCol_ScrollbarGrab]         = hl(1.00f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabHovered]  = hl(1.43f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabActive]   = hl(1.86f, 1.0f);
 
     // Check / Slider
     c[ImGuiCol_CheckMark]             = g_theme.accent;
-    c[ImGuiCol_SliderGrab]            = { a.x * 0.60f, a.y * 0.37f, a.z * 0.60f, 1.0f };
+    c[ImGuiCol_SliderGrab]            = hl(1.71f, 1.0f);
     c[ImGuiCol_SliderGrabActive]      = g_theme.accent;
 
     // Buttons — dark plate, amber wash on hover
@@ -601,9 +729,9 @@ inline void apply_global_theme(ImGuiStyle& s)
     c[ImGuiCol_ButtonActive]          = g_theme.flash_normal_press;
 
     // Headers (combo rows, selectables)
-    c[ImGuiCol_Header]                = { a.x * 0.35f, a.y * 0.21f, a.z * 0.35f, 0.50f };
-    c[ImGuiCol_HeaderHovered]         = { a.x * 0.52f, a.y * 0.32f, a.z * 0.52f, 0.60f };
-    c[ImGuiCol_HeaderActive]          = { a.x * 0.70f, a.y * 0.43f, a.z * 0.70f, 0.70f };
+    c[ImGuiCol_Header]                = hl(1.00f, 0.50f);
+    c[ImGuiCol_HeaderHovered]         = hl(1.49f, 0.60f);
+    c[ImGuiCol_HeaderActive]          = hl(2.00f, 0.70f);
 
     // Separators
     c[ImGuiCol_Separator]             = { sp.x, sp.y, sp.z, 0.50f };
@@ -611,16 +739,16 @@ inline void apply_global_theme(ImGuiStyle& s)
     c[ImGuiCol_SeparatorActive]       = g_theme.accent;
 
     // Resize grip
-    c[ImGuiCol_ResizeGrip]            = { a.x * 0.55f, a.y * 0.34f, a.z * 0.55f, 0.25f };
-    c[ImGuiCol_ResizeGripHovered]     = { a.x * 0.70f, a.y * 0.43f, a.z * 0.70f, 0.60f };
+    c[ImGuiCol_ResizeGrip]            = hl(1.57f, 0.25f);
+    c[ImGuiCol_ResizeGripHovered]     = hl(2.00f, 0.60f);
     c[ImGuiCol_ResizeGripActive]      = g_theme.accent;
 
     // Tabs
     c[ImGuiCol_Tab]                   = { bg.x + 0.01f, bg.y, bg.z, 1.0f };
-    c[ImGuiCol_TabHovered]            = { a.x * 0.44f, a.y * 0.27f, a.z * 0.44f, 0.70f };
-    c[ImGuiCol_TabActive]             = { a.x * 0.28f, a.y * 0.17f, a.z * 0.28f, 1.0f };
+    c[ImGuiCol_TabHovered]            = hl(1.26f, 0.70f);
+    c[ImGuiCol_TabActive]             = hl(0.80f, 1.0f);
     c[ImGuiCol_TabUnfocused]          = { bg.x, bg.y, bg.z, 1.0f };
-    c[ImGuiCol_TabUnfocusedActive]    = { a.x * 0.16f, a.y * 0.10f, a.z * 0.16f, 1.0f };
+    c[ImGuiCol_TabUnfocusedActive]    = hl(0.46f, 1.0f);
 
     // Tables
     c[ImGuiCol_TableHeaderBg]         = g_theme.bg_child_dark;

@@ -25,7 +25,7 @@ void draw_tab_themes(AppSettings* settings)
     if (!settings) return;
 
     ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "THEMES");
+    ImGui::TextColored(accent_col(), "SETTINGS");
     themed_sep();
     ImGui::Spacing();
 
