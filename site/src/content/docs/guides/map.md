@@ -25,7 +25,8 @@ map back on the aircraft and keeps it there. It follows whichever vehicle is
 selected, so after switching vehicles it centres on the new one.
 
 **GO HERE** — right-click anywhere on the map for a guided position target. The
-menu shows the coordinates under the cursor and an altitude, which starts at the
+menu shows the coordinates under the cursor (click them to copy, as signed
+decimal degrees) and an altitude, which starts at the
 height the vehicle is already holding, and **GO** sends it as
 `SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
 which is the only mode that acts on one; out of GUIDED the button is disabled

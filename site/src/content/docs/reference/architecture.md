@@ -31,6 +31,7 @@ the serial handle, drains them.
 - **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
 - **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
 - **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds
+- **mcp_server.cpp**: the built-in MCP server — Streamable HTTP on loopback, bearer token, the read and action tools, the approval queue the UI thread drains, vehicle claims between agents, and the separation check on takeoff and goto paths
 - **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
@@ -51,6 +52,7 @@ the serial handle, drains them.
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload, and everything drawn over it — the fleet's aircraft symbols and labels, per-vehicle trails, home pads, the mission overlay and the GO HERE menu
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
   - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
+  - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
   - **mavlink_display_generated.cpp**: Auto-generated message field decoders (from MAVLink XML)
 
 ## Plugins (`plugins/`)
@@ -67,7 +69,7 @@ the serial handle, drains them.
 - **MAVLink** (third_party/mavlink): Auto-generated C headers (ardupilotmega dialect)
 - **stb_image / stb_image_write** (FetchContent): PNG/JPG decoding for map tiles, PNG encoding for video snapshots
 - **miniaudio** (FetchContent): header-only audio playback for the cue tones
-- **cpp-httplib** (FetchContent): HTTPS client for tile server requests
+- **cpp-httplib** (FetchContent): HTTPS client for tile server requests, the MCP server, and the adapter's loopback client
 - **nlohmann/json** (FetchContent): JSON parsing for settings and firmware manifests
 
 ## Project Structure
@@ -78,6 +80,7 @@ freebodyproblem/
 │   └── widgets/          # Reusable UI components
 │       └── sidebar_left/ # Per-tab left sidebar modules
 ├── plugins/              # User C++ functions bound to the button rail
+├── adapter/              # freebodyproblem-mcp: stdio bridge for MCP hosts
 ├── scripts/              # Python code generators
 ├── third_party/          # Git submodules (imgui, mavlink)
 └── CMakeLists.txt        # Build configuration

@@ -83,6 +83,21 @@ import paramInfo from '../../../../screens/param_info.png';
   <Image src={paramInfo} alt="A parameter's i popup: ARMING_MIS_ITEMS with its description, the Copter 4.7.1 reference, MANUAL ENTRY, type, group and the bits it takes" width={788} loading="lazy" class="framed" />
 </Section>
 
+<Section title="Bring your own agent" href="guides/agents/" cta="Connect an agent">
+  <Fragment slot="lede">
+    A built-in MCP server lets any AI agent read the fleet, from Claude Code to a small model
+    running on your own machine. If you allow it, the agent can also fly: arm, take off, go to a
+    point, run a mission. You decide which commands need your approval on screen.
+  </Fragment>
+  <Points
+    items={[
+      { title: 'Any agent, any model', text: 'Standard MCP over stdio or HTTP, so it works with whatever host you use. Nothing is tied to one vendor, and nothing leaves the machine.' },
+      { title: 'You approve, or you pre-allow', text: 'Actions are off until you turn them on. Each one either waits for you to click ALLOW, or runs straight away, as you choose per action.' },
+      { title: 'Everything in the log', text: 'Every command an agent sends is in the event log, tagged MCP. Agents sharing a fleet can claim vehicles, and paths that come too close are flagged.' },
+    ]}
+  />
+</Section>
+
 <Section title="Everything else on the panel">
   <Fragment slot="lede">
     Each tab does one job, without a wizard in the way.

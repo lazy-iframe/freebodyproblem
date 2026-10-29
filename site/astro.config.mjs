@@ -62,6 +62,7 @@ export default defineConfig({
 						'guides/mavlink',
 						'guides/audio',
 						'guides/themes',
+						'guides/agents',
 						'guides/screen-sizes',
 					],
 				},

@@ -14,6 +14,10 @@ Prebuilt packages are attached to each release on the
 If you only want to run the application, use these — building from source is
 not required.
 
+Both packages also install `freebodyproblem-mcp`, the small adapter that lets
+AI agents connect to the GCS — see [AI agents (MCP)](../../guides/agents/). It does nothing on its own and
+can be ignored if you do not use agents.
+
 ## Linux (Ubuntu)
 
 **1. Refresh the package index.** The `.deb` does not vendor its runtime

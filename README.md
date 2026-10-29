@@ -16,6 +16,7 @@
   <a href="#install"><b>Install</b></a> &nbsp;·&nbsp;
   <a href="#building-from-source"><b>Build</b></a> &nbsp;·&nbsp;
   <a href="#usage"><b>Usage</b></a> &nbsp;·&nbsp;
+  <a href="#ai-agents-mcp-1"><b>AI Agents</b></a> &nbsp;·&nbsp;
   <a href="#architecture"><b>Architecture</b></a> &nbsp;·&nbsp;
   <a href="plugins/README.md"><b>Plugins</b></a><br><br>
 </p>
@@ -189,6 +190,15 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **No build wiring**: new `.cpp` files in `plugins/` are globbed by CMake; buttons can rename themselves at runtime
 - **Blue-accented rail**: the app's olive panels with blue on the seams, captions and title where the rest of the UI goes amber, so user code is never mistaken for vehicle chrome
 
+### AI Agents (MCP)
+- **Built-in MCP server**: any agent or LLM host that speaks the [Model Context Protocol](https://modelcontextprotocol.io) — Claude Code, opencode, Claude Desktop, or a small model running locally — can read the fleet: telemetry, parameters, missions and status messages. Loopback only, behind a token, and off until you switch it on
+- **Actions you control**: arm, disarm, takeoff, goto, mode changes, mission upload/start/pause, RTL, parameter writes and plugin buttons — off until **Allow actions** is ticked, and each one either waits for you to click **ALLOW** in an on-screen dialog or runs straight away, as you choose per action
+- **Made for small models too**: `goto` takes "100 m north" as `north_m: 100` and the GCS does the coordinate arithmetic; every tool and argument is described in plain language
+- **Your rules for agents**: a free-text box of site rules, sent to every agent when it connects
+- **Several agents, one fleet**: agents can claim vehicles so others cannot command them, and a takeoff or goto whose path comes within 10 m of another vehicle, or of another agent's target, is flagged in the approval dialog
+- **Everything logged**: every agent action and its outcome in the event log, tagged **MCP**
+- **`freebodyproblem-mcp`**: a small stdio adapter installed beside the GCS, for hosts that launch servers as programs; **COPY ADAPTER PATH** in settings gives its exact location. See [AI Agents (MCP)](#ai-agents-mcp-1)
+
 ### Audio
 - **Synthesised cue tones**: PC-speaker square waves in the GRUB `GRUB_INIT_TUNE` idiom — rising on success, falling on failure, for command ACKs, mission upload and link up/down
 - **Armed heartbeat**: a 440 Hz note every fifth HEARTBEAT while armed, mixed well below the alert tones — the vehicle's pulse, so silence means the link dropped
@@ -211,6 +221,10 @@ Prebuilt packages are attached to each release on the
 [Releases page](https://github.com/lazy-iframe/freebodyproblem/releases).
 If you only want to run the application, use these — building from source is
 not required.
+
+Both packages also install `freebodyproblem-mcp`, the small adapter that lets
+AI agents connect to the GCS — see [AI Agents (MCP)](#ai-agents-mcp-1). It does nothing on its own and
+can be ignored if you do not use agents.
 
 ### Linux (Ubuntu)
 
@@ -790,7 +804,8 @@ map back on the aircraft and keeps it there. It follows whichever vehicle is
 selected, so after switching vehicles it centres on the new one.
 
 **GO HERE** — right-click anywhere on the map for a guided position target. The
-menu shows the coordinates under the cursor and an altitude, which starts at the
+menu shows the coordinates under the cursor (click them to copy, as signed
+decimal degrees) and an altitude, which starts at the
 height the vehicle is already holding, and **GO** sends it as
 `SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
 which is the only mode that acts on one; out of GUIDED the button is disabled
@@ -958,6 +973,181 @@ vehicle disarmed.**
 3. Create custom themes by editing color values
 4. Themes persist across sessions via `settings.json`
 
+### AI Agents (MCP)
+
+The GCS has a built-in [Model Context Protocol](https://modelcontextprotocol.io)
+server, so any agent or LLM host that speaks MCP can connect to it: Claude Code,
+opencode, Claude Desktop, Cursor, or your own scripts. That includes small models
+running locally. The agent can read every vehicle's telemetry, parameters,
+mission and messages. If you turn actions on, it can also command vehicles,
+within limits you set and normally with you approving each command on screen.
+
+Nothing is reachable until you switch it on, and actions stay off until you
+switch those on separately.
+
+#### Turning it on
+
+1. Open the **SETTINGS** tab and scroll to **ASSISTANT (MCP)**
+2. Tick **MCP server**. The line beside it should read
+   `listening on 127.0.0.1:8737`
+3. A token is generated the first time. **COPY TOKEN** copies it, and
+   **NEW TOKEN** replaces it, which disconnects every client set up with the
+   old one
+
+The server only listens on this computer (`127.0.0.1`), and every request has
+to carry the token. Requests from web pages on other sites are refused, so a
+website open in your browser cannot reach it either.
+
+#### Connecting an agent
+
+Most hosts start an MCP server as a program and talk to it over stdin and
+stdout. That program is `freebodyproblem-mcp`, the adapter installed beside the
+GCS. It forwards everything to the running GCS, and finds the port and token by
+itself in the GCS's `settings.json`.
+
+**COPY ADAPTER PATH**, in the same settings section, copies its full path:
+
+| Installed from | Adapter |
+|---|---|
+| Linux `.deb` | `/usr/bin/freebodyproblem-mcp` (on `PATH`) |
+| Windows installer | `C:\Program Files\freebodyproblem\bin\freebodyproblem-mcp.exe` |
+| Source build | `build/freebodyproblem-mcp` |
+
+Give that path to your host as the server's command. For example:
+
+**Claude Code**
+
+```sh
+claude mcp add freebodyproblem -- /usr/bin/freebodyproblem-mcp
+```
+
+**opencode** (`~/.config/opencode/opencode.json`)
+
+```json
+{
+  "mcp": {
+    "freebodyproblem": {
+      "type": "local",
+      "command": ["/usr/bin/freebodyproblem-mcp"],
+      "enabled": true,
+      "codemode": false
+    }
+  }
+}
+```
+
+`"codemode": false` matters for small models. With Code Mode on, opencode
+makes the model write JavaScript to call tools, and small models get that
+wrong. It has to be the boolean `false`, not a string. After changing the
+config, restart opencode's background service.
+
+**Other hosts** (Claude Desktop, Cursor and most others use this shape)
+
+```json
+{
+  "mcpServers": {
+    "freebodyproblem": { "command": "/usr/bin/freebodyproblem-mcp" }
+  }
+}
+```
+
+**Over HTTP directly**: hosts that support MCP's Streamable HTTP can skip the
+adapter and use `http://127.0.0.1:8737/mcp` with the header
+`Authorization: Bearer <token>`.
+
+The adapter also takes `--port` and `--token`, or the environment variables
+`FBP_MCP_PORT` and `FBP_MCP_TOKEN`, for a GCS running with a different settings
+file. If the GCS is not running, the agent gets a clear "not reachable" error
+rather than a hang.
+
+#### What an agent can do
+
+**Reading** is always allowed and changes nothing:
+
+| Tool | What it gives |
+|---|---|
+| `get_guidelines` | How the GCS works, your rules for agents, and what is allowed right now |
+| `list_vehicles` | Every vehicle: its number, type, armed state, mode, link and claim |
+| `get_telemetry` | Position, home, attitude, speeds, GPS, battery, estimator health, modes |
+| `get_params` | Parameters by name or prefix, from the table the GCS has fetched |
+| `get_mission` | The mission and geofence, optionally downloaded fresh from the vehicle |
+| `get_messages` | The vehicle's recent status texts: prearm failures, warnings |
+| `list_plugins` | The buttons on the plugin rail |
+
+**Actions** send commands, and only exist once you tick **Allow actions**:
+
+| Tool | What it does |
+|---|---|
+| `arm` / `disarm` | Start or stop the motors |
+| `takeoff` | Climb to a height above home |
+| `goto` | Fly to a point and hold — by latitude/longitude, or as metres north/east/up from where the vehicle is now |
+| `set_mode` | Any mode the vehicle accepts |
+| `start_mission` / `pause_mission` | Fly the stored mission, or stop and hold where it is |
+| `upload_mission` | Replace the stored mission with a list of steps |
+| `return_to_launch` | Fly home |
+| `set_param` | Change one parameter |
+| `run_plugin` | Press a plugin button for a vehicle |
+
+Vehicles are named by the GCS's own number, the `(2)` on the map and callsign
+chip, not by MAVLink system ID. Altitudes are metres above home. Every action
+reports whether the vehicle accepted it, and points the agent at telemetry to
+check what actually happened.
+
+The `goto` offset form exists for agents that think in "100 m north": the GCS
+does the coordinate arithmetic rather than the model, which small models
+frequently get wrong.
+
+#### Approving actions
+
+Under **Allow actions**, each action has a **Run without asking** box.
+
+- **Unticked** (the default for every action): when an agent asks, an
+  **ASSISTANT REQUEST** dialog opens with what it wants to do, to which
+  vehicle, and the reason it gave. **ALLOW** sends it; **REFUSE** or
+  **ESC** turns it down. ALLOW has no keyboard shortcut, on purpose: the
+  dialog opens on its own, and an Enter meant for something you were typing
+  must not approve a command. If you do not answer within 45 seconds, the
+  request is refused.
+- **Ticked**: the action runs as soon as the agent asks. It is still
+  written to the event log.
+
+**ASK FOR ALL** and **ALLOW ALL** set every box at once. Changes take effect
+immediately, even for an agent that is already connected. Unticking **Allow
+actions** removes the action tools from it straight away.
+
+#### Your rules for agents
+
+**Instructions for agents** is a free-text box sent to every agent when it
+connects, after the GCS's own guidance, and again whenever an agent calls
+`get_guidelines`. Use it for site rules: a ceiling, an area to keep out of,
+which vehicles an agent may touch. Agents are told to follow it, but it is
+guidance to the model, not something the GCS enforces. Use the approval
+dialog for anything you need to be certain about.
+
+#### Several agents at once
+
+When more than one agent shares the fleet, an agent can **claim** a vehicle
+with `claim_vehicle`. While the claim holds, other agents' actions on that
+vehicle are refused. A claim ends when the agent releases it or after 15
+minutes without use. Claims only ever stop other agents, never you. The
+settings section lists the current claims, and **RELEASE ALL CLAIMS** clears
+them.
+
+#### Separation warnings
+
+Before a `takeoff` or `goto`, the GCS walks the path the vehicle will fly and
+checks it against every other armed vehicle and every point another agent has
+sent a vehicle to. If they come within 10 m horizontally and 5 m vertically, the
+approval dialog shows a red **SEPARATION** warning, and the agent is told. The
+check is advisory: it does not block the command, you decide.
+
+#### In the event log
+
+Everything agents do appears in the event log, tagged **MCP** in blue: an agent
+connecting, every action with its outcome, and refusals. Reads are logged too,
+but grouped, at most one line per tool and vehicle every 30 seconds. An agent
+polling telemetry cannot push the vehicles' own messages out of the log.
+
 ## Architecture
 
 The process runs one thread per link and one thread per vehicle. A link reads
@@ -988,6 +1178,7 @@ the serial handle, drains them.
 - **mavlink_framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
 - **mavlink_parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
 - **mavlink_sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds
+- **mcp_server.cpp**: the built-in MCP server — Streamable HTTP on loopback, bearer token, the read and action tools, the approval queue the UI thread drains, vehicle claims between agents, and the separation check on takeoff and goto paths
 - **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
@@ -1008,6 +1199,7 @@ the serial handle, drains them.
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload, and everything drawn over it — the fleet's aircraft symbols and labels, per-vehicle trails, home pads, the mission overlay and the GO HERE menu
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
   - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
+  - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
   - **mavlink_display_generated.cpp**: Auto-generated message field decoders (from MAVLink XML)
 
 ### Plugins (`plugins/`)
@@ -1024,7 +1216,7 @@ the serial handle, drains them.
 - **MAVLink** (third_party/mavlink): Auto-generated C headers (ardupilotmega dialect)
 - **stb_image / stb_image_write** (FetchContent): PNG/JPG decoding for map tiles, PNG encoding for video snapshots
 - **miniaudio** (FetchContent): header-only audio playback for the cue tones
-- **cpp-httplib** (FetchContent): HTTPS client for tile server requests
+- **cpp-httplib** (FetchContent): HTTPS client for tile server requests, the MCP server, and the adapter's loopback client
 - **nlohmann/json** (FetchContent): JSON parsing for settings and firmware manifests
 
 ## Project Structure
@@ -1035,6 +1227,7 @@ freebodyproblem/
 │   └── widgets/          # Reusable UI components
 │       └── sidebar_left/ # Per-tab left sidebar modules
 ├── plugins/              # User C++ functions bound to the button rail
+├── adapter/              # freebodyproblem-mcp: stdio bridge for MCP hosts
 ├── scripts/              # Python code generators
 ├── third_party/          # Git submodules (imgui, mavlink)
 └── CMakeLists.txt        # Build configuration
@@ -1062,6 +1255,7 @@ Settings contents:
 - **Custom themes**: User-defined color palettes
 - **Tile server**: URL template and attribution string
 - **Video URL**: Last used stream source
+- **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
 
 Example `settings.json`:
 ```json
