@@ -1,0 +1,66 @@
+---
+title: About
+description: Who Free Body Problem is for, what it leaves out, and how to help.
+---
+
+import license from '../../../../LICENSE?raw';
+import notice from '../../../../NOTICE?raw';
+
+Free Body Problem is a ground control station for ArduPilot and PX4 autopilots.
+It talks to several links and several vehicles at once, each parsed on its own
+thread.
+
+## Who it is for
+
+UAV professionals and enthusiasts already familiar with MAVLink, the
+ArduPilot/PX4 ecosystems and autonomous systems. It puts speed, responsiveness
+and direct access to vehicle internals ahead of guided workflows and safety
+checks. If you want a beginner-friendly interface, QGroundControl is the better
+choice.
+
+ArduPilot is the primary target. PX4 is supported for telemetry and flight
+modes; mission, parameters, RC configuration and sensor calibration are still
+ArduPilot-shaped, and a panel that cannot work on PX4 says so.
+
+## What it leaves out
+
+Only the features needed during a flight are built. Firmware upload and log
+analysis are left to the tools made for them. See
+[Limitations & plans](../reference/limitations/) for what is missing and what is
+coming.
+
+## Status
+
+Free Body Problem is in early development. Expect missing features, rough edges
+and changes between releases. Try it in SITL or on the bench before you trust it
+with an aircraft in flight.
+
+## Licence
+
+Free and open source under the Apache License, Version 2.0. The notice below
+credits the third-party software it is built on; the full licence text follows.
+
+### Notice
+
+<pre class="legal">{notice}</pre>
+
+<details>
+<summary>Apache License, Version 2.0 (full text)</summary>
+<pre class="legal">{license}</pre>
+</details>
+
+## Contributing
+
+This is a personal project built for speed and clarity over feature
+completeness. Pull requests are welcome for:
+
+- Bug fixes
+- Performance improvements
+- Additional MAVLink message handlers
+- macOS support
+- Telemetry graph overlays
+- Other features essential during a flight
+
+Please keep contributions focused on the core philosophy: fast, direct, minimal
+abstraction. The source, issues and releases are on
+[GitHub](https://github.com/lazy-iframe/freebodyproblem).

@@ -1,12 +1,13 @@
 ---
 // The landing page's top, in place of Starlight's two-column hero: the claim,
-// the downloads straight under it, and the app itself at full width. A tool
+// a way into the docs, the downloads, and the app itself at full width. A tool
 // sells on its screenshot, so that is what fills the first screen.
 import { Image } from 'astro:assets';
 import Downloads from './Downloads.astro';
 import cap0 from '../../../screens/cap0.png';
 
 const { title, tagline } = Astro.locals.starlightRoute.entry.data.hero ?? {};
+const base = import.meta.env.BASE_URL;
 ---
 
 <div class="hero not-content">
@@ -18,7 +19,8 @@ const { title, tagline } = Astro.locals.starlightRoute.entry.data.hero ?? {};
 		Expect missing features, rough edges and changes between releases. Try it in SITL or on the
 		bench before you trust it with an aircraft in flight.
 	</p>
-	<Downloads />
+	<a class="start" href={`${base}start/install/`}>Get started <span aria-hidden="true">→</span></a>
+	<div id="downloads" class="dl-anchor"><Downloads /></div>
 	<p class="fine">Free and open source under the Apache 2.0 licence.</p>
 	<Image
 		src={cap0}
@@ -62,8 +64,29 @@ const { title, tagline } = Astro.locals.starlightRoute.entry.data.hero ?? {};
 		font-size: var(--sl-text-xl);
 		line-height: 1.5;
 	}
-	.hero :global(.downloads) {
+	.start {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.75rem 1.75rem;
+		border-radius: 0.5rem;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		font-size: var(--sl-text-lg);
+		font-weight: 650;
+		text-decoration: none;
+		transition: background-color 0.15s;
+	}
+	.start:hover {
+		background: var(--sl-color-accent-high);
+	}
+	.dl-anchor {
 		width: min(100%, 46rem);
+		margin-top: 1rem;
+		/* Clear the fixed header when the Downloads link scrolls here. */
+		scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
+	}
+	.hero :global(.downloads) {
 		text-align: left;
 	}
 	.early {

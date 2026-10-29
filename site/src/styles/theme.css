@@ -133,3 +133,13 @@ body {
 .header .social-icons::after {
 	display: none;
 }
+
+/* LICENSE and NOTICE on the About page, kept to their own 80-column lines:
+ * the box scrolls rather than rewrapping them. */
+pre.legal {
+	max-height: 32rem;
+	overflow: auto;
+	white-space: pre;
+	font-size: var(--sl-text-xs);
+	line-height: 1.5;
+}

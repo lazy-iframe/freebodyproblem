@@ -24,6 +24,7 @@ export default defineConfig({
 			// Dark only: no light theme, and no switch for one. The landing
 			// page's top is our own — see src/components/Hero.astro.
 			components: {
+				Header: './src/components/Header.astro',
 				Hero: './src/components/Hero.astro',
 				ThemeProvider: './src/components/ThemeProvider.astro',
 				ThemeSelect: './src/components/ThemeSelect.astro',
