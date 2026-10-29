@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.6.4 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -331,6 +331,7 @@ add_executable(freebodyproblem
     ${GCS_PLUGIN_SOURCES}
     ${GCS_WIN_RESOURCES}
     frontend/widgets/plugin_rail.cpp
+    frontend/widgets/mcp_approval.cpp
     backend/mavlink_sender.cpp
     backend/vehicle.cpp
     backend/link.cpp
@@ -346,6 +347,7 @@ add_executable(freebodyproblem
     backend/rc_binding.cpp
     backend/firmware_profile.cpp
     backend/geofence.cpp
+    backend/mcp_server.cpp
     frontend/main.cpp
     frontend/settings.cpp
     frontend/param_file.cpp
@@ -423,6 +425,21 @@ if(WIN32)
     )
 endif()
 
+# ── MCP stdio adapter ─────────────────────────────────────────────────────────
+#
+# freebodyproblem-mcp: a small program an MCP host launches over stdio, which
+# forwards each message to the GCS's built-in MCP server on 127.0.0.1. Kept
+# lean on purpose — no GUI, no video, and httplib's header alone rather than
+# the httplib::httplib target, which would drag OpenSSL in for a loopback-only
+# HTTP client.
+add_executable(freebodyproblem-mcp adapter/freebodyproblem_mcp.cpp)
+target_include_directories(freebodyproblem-mcp PRIVATE ${httplib_SOURCE_DIR})
+target_link_libraries(freebodyproblem-mcp PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
+if(WIN32)
+    target_link_libraries(freebodyproblem-mcp PRIVATE ws2_32)
+    target_compile_definitions(freebodyproblem-mcp PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+
 # ── Install ───────────────────────────────────────────────────────────────────
 #
 # Layout is prefix-relative and matches what find_asset() in frontend/main.cpp
@@ -432,7 +449,7 @@ endif()
 
 include(GNUInstallDirs)
 
-install(TARGETS freebodyproblem
+install(TARGETS freebodyproblem freebodyproblem-mcp
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(FILES

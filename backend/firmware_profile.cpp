@@ -286,3 +286,37 @@ void send_set_mode(MavlinkSender& sender, uint8_t tsys, uint8_t tcomp,
     else
         sender.command_long(tsys, tcomp, c.command, c.param1, c.param2, c.param3);
 }
+
+// An operator's plan as it goes on the wire. A stack that keeps home in seq 0
+// gets a home item in front, or the operator's first item would land in that
+// slot and be thrown away — reading back as home, with the plan one short.
+// The vehicle overwrites it with its own home either way; the last one it
+// reported is sent so the upload reads true.
+std::vector<MissionItem> mission_for_wire(const VehicleState& vs,
+                                          const std::vector<MissionItem>& edit)
+{
+    std::vector<MissionItem> out;
+    out.reserve(edit.size() + 1);
+    if (firmware_profile(vs).mission_home_at_seq0()) {
+        MissionItem home{};
+        if (vs.has_mission_home) {
+            home = vs.mission_home;
+        } else {
+            home.command = 16;  // MAV_CMD_NAV_WAYPOINT
+            home.frame   = 0;   // MAV_FRAME_GLOBAL — home altitude is AMSL
+            home.lat     = vs.home_lat;
+            home.lon     = vs.home_lon;
+            home.alt     = vs.home_alt_asl;
+        }
+        out.push_back(home);
+    }
+    out.insert(out.end(), edit.begin(), edit.end());
+    for (size_t i = 0; i < out.size(); ++i) {
+        out[i].seq        = (uint16_t)i;
+        out[i].is_current = false;
+    }
+    // Current is the first item the vehicle will fly: the operator's first,
+    // never the home slot.
+    out[out.size() > edit.size() ? 1 : 0].is_current = true;
+    return out;
+}

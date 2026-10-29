@@ -927,6 +927,7 @@ enum class FleetLogKind : uint8_t {
     RebootRequested,   // the operator asked; the vehicle may not have acted yet
     Rebooted,          // the vehicle's boot clock went back to zero
     LinkLost,          // stopped hearing it, or its link was dropped
+    Assistant,         // an agent's call through MCP; reads like a message, tagged MCP
 };
 
 struct FleetLogEntry {
@@ -1084,6 +1085,12 @@ void event_log_pump(VehicleId id, uint32_t number,
     }
 }
 
+void event_log_assistant(uint8_t severity, const std::string& text)
+{
+    fleet_log_add(FleetLogEntry{ FleetLogKind::Assistant, VehicleId{}, 0, 0,
+                                 severity, wall_stamp(), text });
+}
+
 void event_log_vehicle_gone(VehicleId id, uint32_t number)
 {
     auto it = g_fleet_log_cursors.find(id);
@@ -1129,13 +1136,19 @@ static ImVec4 log_marker_col(const FleetLogEntry& e)
     return (e.kind == FleetLogKind::RebootRequested) ? col_warning() : col_error();
 }
 
+// Indented clear of the band's solid left edge, which the caller draws at the
+// window's edge, inside the padding the other lines start at.
+static constexpr float LOG_MARKER_INDENT = 8.0f;
+
 static void draw_log_marker(const FleetLogEntry& e)
 {
+    ImGui::Indent(LOG_MARKER_INDENT);
     ImGui::PushStyleColor(ImGuiCol_Text, log_marker_col(e));
     ImGui::TextUnformatted(e.stamp.c_str());
     ImGui::SameLine(0, 8);
     ImGui::Text("\xe2\x80\x94 %s \xe2\x80\x94", e.text.c_str());
     ImGui::PopStyleColor();
+    ImGui::Unindent(LOG_MARKER_INDENT);
 }
 
 // ── Selection ─────────────────────────────────────────────────────────────────
@@ -1156,7 +1169,9 @@ static void log_line_append(std::string& out, const FleetLogEntry& e, bool tag_v
 {
     out += e.stamp;
     out += "  ";
-    if (e.kind != FleetLogKind::Message) {
+    if (e.kind == FleetLogKind::Assistant) {
+        out += "[MCP] " + e.text;
+    } else if (e.kind != FleetLogKind::Message) {
         out += "\xe2\x80\x94 " + e.text + " \xe2\x80\x94";
     } else {
         if (tag_vehicles) out += "[" + std::to_string(e.number) + "] ";
@@ -1197,8 +1212,9 @@ static void log_copy(size_t lo, size_t hi, bool tag_vehicles)
 // severity-coloured, pinned to the bottom while the view is already there.
 // `bg_alpha` scales the well behind it, so the overlay can let the map through.
 // `wrap` folds long lines onto the next under their own text rather than
-// scrolling sideways — for the map overlay, whose narrow block would otherwise
-// show the start of every message and hide the part that says what went wrong.
+// scrolling sideways. Every log on screen wraps: a sidebar or overlay is narrow
+// enough that it would otherwise show the start of every message and hide the
+// part that says what went wrong.
 static void draw_event_log_body(float bg_alpha, bool small_text = false,
                                 bool wrap = false)
 {
@@ -1250,7 +1266,21 @@ static void draw_event_log_body(float bg_alpha, bool small_text = false,
                 const float y0 = ImGui::GetCursorScreenPos().y;
 
                 dl->ChannelsSetCurrent(1);
-                if (e.kind != FleetLogKind::Message) {
+                if (e.kind == FleetLogKind::Assistant) {
+                    // The agent's lines: the stamp, an "MCP" tag in the plugin
+                    // rail's blue, then the text in its severity colour.
+                    ImGui::PushStyleColor(ImGuiCol_Text, col_log());
+                    ImGui::TextUnformatted(e.stamp.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 8);
+                    ImGui::PushStyleColor(ImGuiCol_Text, plugin_accent());
+                    ImGui::TextUnformatted("MCP");
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 6);
+                    ImGui::PushStyleColor(ImGuiCol_Text, col_status_severity(e.severity));
+                    ImGui::TextUnformatted(e.text.c_str());
+                    ImGui::PopStyleColor();
+                } else if (e.kind != FleetLogKind::Message) {
                     draw_log_marker(e);
                 } else {
                     ImGui::PushStyleColor(ImGuiCol_Text, col_log());
@@ -1274,7 +1304,7 @@ static void draw_event_log_body(float bg_alpha, bool small_text = false,
                 // sideways. A marker's band is loud on purpose — its whole job
                 // is to be seen while scrolling — with a solid edge on the left.
                 dl->ChannelsSetCurrent(0);
-                if (e.kind != FleetLogKind::Message) {
+                if (e.kind != FleetLogKind::Message && e.kind != FleetLogKind::Assistant) {
                     const ImVec4 mc = log_marker_col(e);
                     dl->AddRectFilled({ win_pos.x, y0 - 2.0f }, { win_r, y1 + 2.0f },
                                       ui_col(mc, 0.16f));
@@ -1355,8 +1385,31 @@ static void draw_event_log_body(float bg_alpha, bool small_text = false,
 
             // Pinned to the newest line while the view is already there — but
             // not while a drag is scrolling it somewhere else.
-            if (!g_log_sel_dragging && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+            //
+            // Whether it is there is remembered per window, across a resize or
+            // a font change: the map overlay does both at once when it shrinks,
+            // the wrapped lines reflow taller, and the old scroll offset is
+            // suddenly far short of the bottom. Judged afresh that frame, the
+            // log would let go of the newest line and sit somewhere in the
+            // middle of the history.
+            ImGuiStorage* st = ImGui::GetStateStorage();
+            const ImGuiID k_pin = ImGui::GetID("##log_pinned");
+            const ImGuiID k_w   = ImGui::GetID("##log_w");
+            const ImGuiID k_h   = ImGui::GetID("##log_h");
+            const ImGuiID k_fs  = ImGui::GetID("##log_fs");
+            const ImVec2  ws    = ImGui::GetWindowSize();
+            const float   fs    = ImGui::GetFontSize();
+            const bool reflowed = st->GetFloat(k_w, -1.0f) != ws.x ||
+                                  st->GetFloat(k_h, -1.0f) != ws.y ||
+                                  st->GetFloat(k_fs, -1.0f) != fs;
+            const bool pinned = reflowed ? st->GetBool(k_pin, true)
+                                         : ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
+            if (!g_log_sel_dragging && pinned)
                 ImGui::SetScrollHereY(1.0f);
+            st->SetBool(k_pin, pinned);
+            st->SetFloat(k_w, ws.x);
+            st->SetFloat(k_h, ws.y);
+            st->SetFloat(k_fs, fs);
         }
         ImGui::PopStyleVar();
         if (pushed_font) ImGui::PopFont();
@@ -1913,7 +1966,7 @@ void draw_sidebar_right(const VehicleState& vs,
             char log_meta[24];
             snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)g_fleet_log.size());
             ui_panel_header("EVENT LOG", log_meta);
-            draw_event_log_body(1.0f);
+            draw_event_log_body(1.0f, /*small_text=*/false, /*wrap=*/true);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();

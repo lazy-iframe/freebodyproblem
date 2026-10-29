@@ -263,6 +263,20 @@ void settings_load(AppSettings& out)
     if (root.contains("crt_vignette_strength") && root["crt_vignette_strength"].is_number())
         out.crt_vignette_strength = root["crt_vignette_strength"].get<float>();
 
+    if (root.contains("mcp_enabled") && root["mcp_enabled"].is_boolean())
+        out.mcp_enabled = root["mcp_enabled"].get<bool>();
+    if (root.contains("mcp_port") && root["mcp_port"].is_number_integer())
+        out.mcp_port = std::clamp(root["mcp_port"].get<int>(), 1, 65535);
+    if (root.contains("mcp_actions_enabled") && root["mcp_actions_enabled"].is_boolean())
+        out.mcp_actions_enabled = root["mcp_actions_enabled"].get<bool>();
+    if (root.contains("mcp_instructions") && root["mcp_instructions"].is_string())
+        out.mcp_instructions = root["mcp_instructions"].get<std::string>();
+    if (root.contains("mcp_auto_allow") && root["mcp_auto_allow"].is_object())
+        for (const auto& [tool, on] : root["mcp_auto_allow"].items())
+            if (on.is_boolean()) out.mcp_auto_allow[tool] = on.get<bool>();
+    if (root.contains("mcp_token") && root["mcp_token"].is_string())
+        out.mcp_token = root["mcp_token"].get<std::string>();
+
     if (root.contains("tile_url") && root["tile_url"].is_string())
         out.tile_url = root["tile_url"].get<std::string>();
     if (root.contains("tile_attribution") && root["tile_attribution"].is_string())
@@ -319,6 +333,12 @@ void settings_save(const AppSettings& s)
     root["crt_scanline_strength"] = s.crt_scanline_strength;
     root["crt_vignette"]          = s.crt_vignette;
     root["crt_vignette_strength"] = s.crt_vignette_strength;
+    root["mcp_enabled"]           = s.mcp_enabled;
+    root["mcp_port"]              = s.mcp_port;
+    root["mcp_actions_enabled"]   = s.mcp_actions_enabled;
+    root["mcp_auto_allow"]        = s.mcp_auto_allow;
+    root["mcp_instructions"]      = s.mcp_instructions;
+    root["mcp_token"]             = s.mcp_token;
 
     json jprofiles = json::array();
     for (const auto& p : s.connection_profiles) {

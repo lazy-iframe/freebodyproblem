@@ -903,6 +903,7 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
 
 static double s_ctx_lat = 0.0;      // where the last right-click landed
 static double s_ctx_lon = 0.0;
+static double s_ctx_copied_at = -10.0;   // ImGui time the coordinates were last copied
 
 // Target altitude, metres above home. Seeded from the vehicle's own altitude
 // the first time the menu opens — "go there, stay at this height" is the
@@ -927,7 +928,29 @@ static void draw_goto_menu(GotoTargetState& go)
         snprintf(coords, sizeof(coords), "%.6f%c   %.6f%c",
                  s_ctx_lat < 0 ? -s_ctx_lat : s_ctx_lat, s_ctx_lat < 0 ? 'S' : 'N',
                  s_ctx_lon < 0 ? -s_ctx_lon : s_ctx_lon, s_ctx_lon < 0 ? 'W' : 'E');
-        ui_dialog_text(coords, ui_col_value());
+        // Click to copy, as signed decimal degrees — what other tools paste.
+        // The line says COPIED for a moment so the click is seen to land.
+        {
+            const bool copied = ImGui::GetTime() - s_ctx_copied_at < 1.2;
+            const char* shown = copied ? "COPIED" : coords;
+            const ImVec2 sz = ImGui::CalcTextSize(coords);
+            ui_dialog_row(sz.x);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##ctx_coords", sz)) {
+                char clip[64];
+                snprintf(clip, sizeof(clip), "%.7f, %.7f", s_ctx_lat, s_ctx_lon);
+                ImGui::SetClipboardText(clip);
+                s_ctx_copied_at = ImGui::GetTime();
+            }
+            const bool hov = ImGui::IsItemHovered();
+            if (hov) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("Click to copy");
+            }
+            const ImU32 col = (hov || copied) ? ui_col_accent() : ui_col_value();
+            const float tx  = p.x + (sz.x - ImGui::CalcTextSize(shown).x) * 0.5f;
+            ImGui::GetWindowDrawList()->AddText({ tx, p.y }, col, shown);
+        }
         ImGui::Spacing();
 
         // Altitude row, centred like everything else in a dialog: label, field,

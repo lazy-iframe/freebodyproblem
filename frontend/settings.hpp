@@ -91,6 +91,21 @@ struct AppSettings {
     bool  crt_vignette          = false;
     float crt_vignette_strength = 0.5f;   // 0..1
 
+    // ── MCP server (backend/mcp_server.hpp) ──────────────────────────────────
+    // Off unless asked for. Loopback only; the token is generated the first
+    // time the server starts and kept, so a configured client keeps working.
+    bool        mcp_enabled         = false;
+    int         mcp_port            = 8737;
+    std::string mcp_token;
+    // Off: the assistant can only read. On: it can act, and each action in
+    // mcp_auto_allow that is true runs without asking — the rest wait for the
+    // operator to ALLOW them on screen. Keyed by MCP tool name (mcp_actions()).
+    bool                        mcp_actions_enabled = false;
+    std::map<std::string, bool> mcp_auto_allow;
+    // Free text from the operator — site rules, limits, how to behave — sent
+    // to every agent when it connects and returned by get_guidelines.
+    std::string                 mcp_instructions;
+
     // ── Map tile source ───────────────────────────────────────────────────────
     std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     std::string tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";

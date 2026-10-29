@@ -200,3 +200,10 @@ void send_set_mode(MavlinkSender& sender, uint8_t tsys, uint8_t tcomp,
 void send_goto(MavlinkSender& sender, uint8_t tsys, uint8_t tcomp,
                const FirmwareProfile& profile,
                double lat, double lon, float altitude_m);
+
+// An operator's plan as it goes on the wire: renumbered from zero, the first
+// planned item marked current, and — on a stack that keeps home in seq 0 — a
+// home item put in front so the plan does not lose its first item to that slot.
+// What the MISSION tab uploads, and what an assistant's upload goes through too.
+std::vector<MissionItem> mission_for_wire(const VehicleState& vs,
+                                          const std::vector<MissionItem>& edit);

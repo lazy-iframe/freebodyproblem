@@ -22,6 +22,8 @@
 #include "../settings.hpp"
 #include "../audio.hpp"
 #include "map_view.hpp"
+#include "mcp_approval.hpp"
+#include "../../backend/mcp_server.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -186,8 +188,13 @@ static void section(const char* title, bool first = false)
 
 static void disabled_tip(const char* text)
 {
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", text);
+    // Wrapped: some, like the MCP action hints, run to a few sentences.
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && ImGui::BeginTooltip()) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
 }
 
 // ── Base colors ───────────────────────────────────────────────────────────────
@@ -846,6 +853,157 @@ void draw_themes_panel(AppSettings& settings)
             settings.tile_attribution = k_default_attr;
             map_view_set_tile_source(settings.tile_url, settings.tile_attribution);
             settings_save(settings);
+        }
+        ImGui::Spacing();
+    }
+
+    section("ASSISTANT (MCP)");
+
+    // ── MCP server ────────────────────────────────────────────────────────────
+    //
+    // Saved on change, like everything above, and applied on the next frame by
+    // main.cpp's mcp_sync() — so switching actions off takes them away from a
+    // client that is already connected, not just from the next one.
+    {
+        bool on = settings.mcp_enabled;
+        if (ImGui::Checkbox("MCP server", &on)) {
+            settings.mcp_enabled = on;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 8);
+        if (!settings.mcp_enabled)
+            ImGui::TextDisabled("off");
+        else if (gcs_mcp_listening())
+            ImGui::TextDisabled("listening on 127.0.0.1:%d", settings.mcp_port);
+        else
+            ImGui::TextColored(g_theme.col_error, "not running \xe2\x80\x94 port in use?");
+
+        // Edited in a buffer and applied on release, so typing "8737" does not
+        // restart the server on 8, 87 and 873 along the way.
+        static int s_port = -1;
+        if (s_port < 0) s_port = settings.mcp_port;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Port");
+        ImGui::SameLine(110.0f);
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::InputInt("##mcp_port", &s_port, 0, 0);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            s_port = std::clamp(s_port, 1024, 65535);
+            settings.mcp_port = s_port;
+            settings_save(settings);
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Token");
+        ImGui::SameLine(110.0f);
+        ImGui::TextDisabled("%s", settings.mcp_token.empty() ? "made on first start"
+                                                             : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
+
+        const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+        ImGui::BeginDisabled(settings.mcp_token.empty());
+        if (ui_grid_button("COPY TOKEN##mcp", { half, 0.0f }))
+            ImGui::SetClipboardText(settings.mcp_token.c_str());
+        ImGui::EndDisabled();
+        ImGui::SameLine(0, 4.0f);
+        // A new token cuts off every client configured with the old one.
+        if (ui_grid_button("NEW TOKEN##mcp", { half, 0.0f })) {
+            settings.mcp_token = mcp_generate_token();
+            settings_save(settings);
+        }
+        disabled_tip("Clients set up with the old token stop working.");
+
+        // Where the adapter is, for the host's config. Most hosts launch an
+        // MCP server as a program over stdio; this is the program. The
+        // Windows installer does not put it on PATH, so the full path is the
+        // one thing a user cannot guess.
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Adapter");
+        ImGui::SameLine(110.0f);
+        const std::string& adapter = gcs_mcp_adapter_path();
+        if (adapter.empty()) {
+            ImGui::TextColored(g_theme.col_error, "not found beside the GCS");
+        } else {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", adapter.c_str());
+            ImGui::PopTextWrapPos();
+            if (ui_grid_button("COPY ADAPTER PATH##mcp", { ImGui::GetContentRegionAvail().x, 0.0f }))
+                ImGui::SetClipboardText(adapter.c_str());
+            disabled_tip("The program an agent host launches to reach this GCS. "
+                         "Give this path as the command in the host's MCP settings; "
+                         "it finds the port and token on its own.");
+        }
+
+
+        // Edited in a buffer and saved when the box loses focus, as the port
+        // is. Agents already connected get it from get_guidelines; the copy
+        // sent at connect time only reaches the next ones.
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Instructions for agents");
+        static char s_rules[4096] = {};
+        static bool s_rules_init  = false;
+        if (!s_rules_init) {
+            std::strncpy(s_rules, settings.mcp_instructions.c_str(), sizeof(s_rules) - 1);
+            s_rules_init = true;
+        }
+        ImGui::InputTextMultiline("##mcp_rules", s_rules, sizeof(s_rules), { -1.0f, 110.0f });
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            settings.mcp_instructions = s_rules;
+            settings_save(settings);
+        }
+        ImGui::TextDisabled("Sent when an agent connects, and by get_guidelines.");
+
+        ImGui::Spacing();
+        bool act = settings.mcp_actions_enabled;
+        if (ImGui::Checkbox("Allow actions", &act)) {
+            settings.mcp_actions_enabled = act;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 8);
+        ImGui::TextDisabled(act ? "the assistant can command vehicles" : "read-only");
+
+        // One row per action. Ticked runs the moment the assistant asks;
+        // unticked puts the ALLOW / REFUSE dialog in front of the operator.
+        ImGui::BeginDisabled(!act);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Run without asking \xe2\x80\x94 the rest ask on screen first:");
+        for (const McpActionInfo& a : mcp_actions()) {
+            bool unasked = false;
+            auto it = settings.mcp_auto_allow.find(a.tool);
+            if (it != settings.mcp_auto_allow.end()) unasked = it->second;
+            ImGui::PushID(a.tool);
+            if (ImGui::Checkbox(a.label, &unasked)) {
+                settings.mcp_auto_allow[a.tool] = unasked;
+                settings_save(settings);
+            }
+            ImGui::PopID();
+            disabled_tip(a.hint);
+        }
+        ImGui::Spacing();
+        const float half2 = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+        if (ui_grid_button("ASK FOR ALL##mcp", { half2, 0.0f })) {
+            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = false;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 4.0f);
+        if (ui_grid_button("ALLOW ALL##mcp", { half2, 0.0f })) {
+            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = true;
+            settings_save(settings);
+        }
+        ImGui::EndDisabled();
+
+        // Vehicles agents have reserved for themselves. A claim keeps other
+        // agents off a vehicle; it never limits the operator, who can also
+        // clear them all here — for an agent that died holding one, say.
+        ImGui::Spacing();
+        const std::vector<McpClaim> claims = gcs_mcp_claims();
+        if (claims.empty()) {
+            ImGui::TextDisabled("Vehicle claims: none");
+        } else {
+            ImGui::TextDisabled("Vehicle claims:");
+            for (const McpClaim& c : claims)
+                ImGui::Text("  (%u)  %s   idle %.0f s", (unsigned)c.vehicle, c.label.c_str(), c.idle_s);
+            if (ui_grid_button("RELEASE ALL CLAIMS##mcp", { -1.0f, 0.0f }))
+                gcs_mcp_release_claims();
         }
         ImGui::Spacing();
     }

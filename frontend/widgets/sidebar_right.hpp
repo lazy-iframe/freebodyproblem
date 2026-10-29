@@ -39,6 +39,11 @@ void event_log_pump(VehicleId id, uint32_t number,
                     const std::vector<StatusText>& status_texts,
                     bool online, uint32_t reboot_requests);
 
+// Something an agent did through MCP, or how it went. `severity` is a
+// MAV_SEVERITY and colours the line as a vehicle's message would be; the line
+// is tagged MCP, so the operator can tell an agent's doing from an aircraft's.
+void event_log_assistant(uint8_t severity, const std::string& text);
+
 // A vehicle has left the fleet: its link was dropped. Marks the log unless its
 // loss is already marked there, and forgets what the log knew about it.
 void event_log_vehicle_gone(VehicleId id, uint32_t number);

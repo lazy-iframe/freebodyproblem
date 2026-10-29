@@ -65,6 +65,7 @@
 #include "../backend/link.hpp"
 #include "../backend/vehicle.hpp"
 #include "../backend/fleet.hpp"
+#include "../backend/mcp_server.hpp"
 
 // Settings
 #include "settings.hpp"
@@ -84,6 +85,7 @@
 #include "widgets/bottombar.hpp"
 #include "widgets/video_player.hpp"
 #include "widgets/splash_screen.hpp"
+#include "widgets/mcp_approval.hpp"
 #include "mission_pick.hpp"
 #include "audio.hpp"
 #include "../plugins/plugin_api.hpp"
@@ -96,6 +98,15 @@ using Clock = std::chrono::steady_clock;
 // to be a single link thread writing a single VehicleState now lives here; this
 // file keeps only the log and whichever vehicle the operator is looking at.
 static Fleet g_fleet;
+
+// The assistant's way in, when the operator has turned it on. Declared after
+// the fleet it reads, so it is destroyed first.
+static McpServer g_mcp(g_fleet);
+
+bool                  gcs_mcp_listening()      { return g_mcp.running(); }
+std::vector<McpClaim> gcs_mcp_claims()         { return g_mcp.claims(); }
+void                  gcs_mcp_release_claims() { g_mcp.release_all_claims(); }
+
 
 // Handed to the widgets when there is no vehicle. Every panel takes a
 // MavlinkSender* unconditionally and always has, so the alternative is a null
@@ -174,12 +185,82 @@ static std::string find_asset(const std::string& relative,
     return {};
 }
 
+// The stdio adapter is installed beside the GCS on every platform — /usr/bin
+// from the .deb, the install's bin folder from the Windows installer, build/ in a dev
+// tree — so its path is this executable's folder. Looked up once: it does not
+// move while the GCS runs.
+const std::string& gcs_mcp_adapter_path()
+{
+    static const std::string path = [] {
+#ifdef _WIN32
+        const std::string p = executable_dir() + "\\freebodyproblem-mcp.exe";
+#else
+        const std::string p = executable_dir() + "/freebodyproblem-mcp";
+#endif
+        std::ifstream f(p, std::ios::binary);
+        return f.good() ? p : std::string();
+    }();
+    return path;
+}
+
 // ── Frame render ──────────────────────────────────────────────────────────────
 
 static ConnectionRequest g_conn_req{};
 static AppSettings       g_settings{};
 static bool              g_close_req = false;
 static MissionPickState  g_mission_pick{};
+
+// Brings the MCP server in line with the SETTINGS tab, then does its per-frame
+// work. Every frame rather than on some APPLY: a switch the operator flips off
+// is off now, under whatever client is connected.
+static void mcp_sync()
+{
+    static bool        applied_on = false;
+    static int         applied_port = 0;
+    static std::string applied_token;
+    static McpPolicy   applied_policy;
+
+    const bool want = g_settings.mcp_enabled;
+    if (want && g_settings.mcp_token.empty()) {
+        g_settings.mcp_token = mcp_generate_token();
+        settings_save(g_settings);
+    }
+
+    McpPolicy policy;
+    policy.actions_enabled = g_settings.mcp_actions_enabled;
+    policy.auto_allow      = g_settings.mcp_auto_allow;
+    policy.instructions    = g_settings.mcp_instructions;
+    if (policy != applied_policy) {
+        g_mcp.set_policy(policy);
+        applied_policy = std::move(policy);
+    }
+
+    // Recorded as applied even when start() fails, so a taken port is reported
+    // once rather than retried every frame. Changing the port tries again.
+    if (want != applied_on ||
+        (want && (g_settings.mcp_port != applied_port || g_settings.mcp_token != applied_token))) {
+        if (want) {
+            McpConfig cfg;
+            cfg.port  = g_settings.mcp_port;
+            cfg.token = g_settings.mcp_token;
+            g_mcp.start(cfg);
+        } else {
+            g_mcp.stop();
+        }
+        applied_on    = want;
+        applied_port  = g_settings.mcp_port;
+        applied_token = g_settings.mcp_token;
+    }
+
+    if (g_mcp.running()) {
+        g_mcp.pump();
+        draw_mcp_approval(g_mcp);
+    }
+
+    // Drained even when stopped, so the last lines before a stop still land.
+    for (const McpEvent& e : g_mcp.take_events())
+        event_log_assistant(e.severity, e.text);
+}
 
 // Every vehicle the map draws, rebuilt each frame from the per-vehicle pump
 // loop below. File scope only so the vector keeps its capacity across frames.
@@ -549,6 +630,26 @@ int main()
     // with the video and settings stack already up behind it.
     gcs_plugins_init();
 
+    // An approved or allowed run_plugin lands here, on the UI thread, with the
+    // same context the rail would build — but for the vehicle the assistant
+    // named, which need not be the one on screen.
+    g_mcp.set_plugin_runner([](int slot, Vehicle& v) {
+        const std::vector<PluginSlot>& slots = gcs_plugins();
+        if (slot < 0 || (size_t)slot >= slots.size()) return false;
+        VehicleSnapshot snap;
+        v.snapshot(snap);
+        PluginContext ctx = center_view_plugin_context(snap.state, &v.sender());
+        ctx.slot = slot;
+        try {
+            slots[slot].fn(ctx);
+        } catch (const std::exception& e) {
+            gcs_log("plugin %s threw: %s", slots[slot].label.c_str(), e.what());
+        } catch (...) {
+            gcs_log("plugin %s threw", slots[slot].label.c_str());
+        }
+        return true;
+    });
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
@@ -578,6 +679,8 @@ int main()
             if (!g_splash_done)
                 g_splash_done = draw_splash_screen(elapsed, g_font_splash_title);
         }
+
+        mcp_sync();
 
         // Last thing drawn, so it lies over the splash and every popup too.
         draw_crt_overlay(g_settings, glfwGetTime());
@@ -627,6 +730,10 @@ int main()
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
+
+    // Before the fleet: an assistant mid-request must not outlive the vehicles
+    // it is reading.
+    g_mcp.stop();
 
     // Links first, then the vehicles they were feeding: once no link thread is
     // running, nothing can push into a vehicle's inbox or reach for its sender.

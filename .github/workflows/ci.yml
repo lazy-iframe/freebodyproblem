@@ -90,6 +90,23 @@ jobs:
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb"
 
+      # The MCP adapter ships beside the GCS, and an agent host fails with no
+      # useful message when it is missing. Check it is in the package and that
+      # it runs: with no GCS listening it must still answer, with JSON-RPC's
+      # "not reachable" error, which is what a host shows the user.
+      - name: Check MCP adapter is packaged and runs
+        run: |
+          deb=$(ls build/packages/*.deb)
+          root=$(mktemp -d)
+          dpkg-deb -x "$deb" "$root"
+          test -x "$root/usr/bin/freebodyproblem-mcp" || {
+            echo "::error::freebodyproblem-mcp is missing from $deb"; exit 1; }
+          out=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' |
+                FBP_MCP_PORT=1 FBP_MCP_TOKEN=x timeout 20 "$root/usr/bin/freebodyproblem-mcp")
+          echo "$out"
+          echo "$out" | grep -q '"code":-32000' || {
+            echo "::error::freebodyproblem-mcp did not answer as expected"; exit 1; }
+
       - uses: actions/upload-artifact@v4
         with:
           name: freebodyproblem-linux-deb
@@ -226,6 +243,21 @@ jobs:
 
       - name: Package
         run: cpack -G NSIS --config build/CPackConfig.cmake -B build/packages
+
+      # As on Linux: the adapter must be in the installer and run. Checked in
+      # CPack's staging tree, which is exactly what the installer unpacks —
+      # including the runtime DLLs it needs beside it.
+      - name: Check MCP adapter is packaged and runs
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build\packages\_CPack_Packages -Recurse -Filter freebodyproblem-mcp.exe |
+                 Where-Object { $_.Directory.Name -eq 'bin' } | Select-Object -First 1
+          if (-not $exe) { throw "freebodyproblem-mcp.exe is missing from the installer's staging tree" }
+          $exe.FullName
+          $env:FBP_MCP_PORT = '1'; $env:FBP_MCP_TOKEN = 'x'
+          $out = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | & $exe.FullName
+          $out
+          if (-not ($out -match '"code":-32000')) { throw "freebodyproblem-mcp did not answer as expected" }
 
       - name: Report installer size
         shell: pwsh
