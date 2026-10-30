@@ -20,6 +20,8 @@
 #include "theme.hpp"
 #include "ui_kit.hpp"
 #include "../settings.hpp"
+#include "../terrain.hpp"
+#include "../terrain_clearance.hpp"
 #include "../audio.hpp"
 #include "map_view.hpp"
 #include "mcp_approval.hpp"
@@ -806,6 +808,76 @@ void draw_themes_panel(AppSettings& settings)
             const float tw = ui_tracked_width(g_font_micro, UI_SZ_MICRO, k_samples[i].label);
             ui_tracked_text(dl, g_font_micro, UI_SZ_MICRO, { (p0.x + p1.x - tw) * 0.5f, p1.y - 16.0f },
                             ui_col_label(), k_samples[i].label);
+        }
+        ImGui::Spacing();
+    }
+
+    section("TERRAIN");
+
+    // ── Terrain clearance ─────────────────────────────────────────────────────
+    // How near the ground a planned path may come before the mission tab, the
+    // 3D map and GO HERE warn about it.
+    {
+        float m = settings.terrain_clearance_m;
+        ImGui::TextDisabled("Warn when a mission leg or GO HERE path comes within");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::SliderFloat("##terrain_clear", &m, 0.0f, 300.0f, "CLEARANCE  %.0f M")) {
+            settings.terrain_clearance_m = m;
+            set_terrain_clearance_m(m);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            settings_save(settings);
+        ImGui::TextDisabled("of the terrain data (bare ground: no trees or buildings)");
+        ImGui::Spacing();
+    }
+
+    // ── Terrain source ────────────────────────────────────────────────────────
+    // Laid out as MAP SOURCE below. The attribution is what the 3D map shows
+    // and the mission tab quotes, so it says how far the data can be trusted.
+    {
+        static char s_turl[512]  = {};
+        static char s_tattr[160] = {};
+        static int  s_tenc       = 0;
+        static bool s_tinit      = false;
+        if (!s_tinit) {
+            strncpy(s_turl,  settings.terrain_url.c_str(),         sizeof(s_turl)  - 1);
+            strncpy(s_tattr, settings.terrain_attribution.c_str(), sizeof(s_tattr) - 1);
+            s_tenc  = settings.terrain_encoding;
+            s_tinit = true;
+        }
+        const auto apply = [&] {
+            settings.terrain_url         = s_turl;
+            settings.terrain_encoding    = s_tenc;
+            settings.terrain_attribution = s_tattr;
+            terrain_set_source(settings.terrain_url, (TerrainEncoding)settings.terrain_encoding,
+                               settings.terrain_attribution);
+            settings_save(settings);
+        };
+
+        ImGui::TextDisabled("Terrain URL  ({z} {x} {y} placeholders, PNG)");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##terrain_url", s_turl, sizeof(s_turl));
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Encoding");
+        static const char* k_encs[] = { "TERRARIUM  (AWS Terrain Tiles)",
+                                        "TERRAIN-RGB  (Mapbox, MapTiler)" };
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo("##terrain_enc", &s_tenc, k_encs, 2);
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Attribution  (include its accuracy)");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##terrain_attr", s_tattr, sizeof(s_tattr));
+
+        ImGui::Spacing();
+        if (ui_grid_button("APPLY##terrain", { -1.0f, 0.0f })) apply();
+        ImGui::Spacing();
+        if (ui_grid_button("RESET TO DEFAULT##terrain", { -1.0f, 0.0f })) {
+            strncpy(s_turl,  TERRAIN_DEFAULT_URL,         sizeof(s_turl)  - 1);
+            strncpy(s_tattr, TERRAIN_DEFAULT_ATTRIBUTION, sizeof(s_tattr) - 1);
+            s_tenc = (int)TerrainEncoding::Terrarium;
+            apply();
         }
         ImGui::Spacing();
     }

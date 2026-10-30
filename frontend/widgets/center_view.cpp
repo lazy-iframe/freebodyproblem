@@ -20,6 +20,7 @@
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "map_view.hpp"
+#include "map_view_3d.hpp"
 #include "vehicle_ui_state.hpp"
 #include "plugin_rail.hpp"
 #include "swarm_view.hpp"
@@ -277,8 +278,10 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     const GcsLayout l = GcsLayout::compute();
 
     // Escape is the way out that does not require finding the button again.
-    // Skipped while a popup owns the key, or it would close both at once.
+    // Skipped while a popup owns the key, or it would close both at once —
+    // and while the 3D map is picking a GO HERE point, whose Esc cancels it.
     if ((s_video_full || s_map_full) &&
+        !map3d_picking_goto() &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
                                      ImGuiPopupFlags_AnyPopupLevel) &&
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {

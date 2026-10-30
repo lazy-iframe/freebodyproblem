@@ -277,6 +277,16 @@ void settings_load(AppSettings& out)
     if (root.contains("mcp_token") && root["mcp_token"].is_string())
         out.mcp_token = root["mcp_token"].get<std::string>();
 
+    if (root.contains("terrain_clearance_m") && root["terrain_clearance_m"].is_number())
+        out.terrain_clearance_m = std::clamp(root["terrain_clearance_m"].get<float>(), 0.0f, 1000.0f);
+
+    if (root.contains("terrain_url") && root["terrain_url"].is_string())
+        out.terrain_url = root["terrain_url"].get<std::string>();
+    if (root.contains("terrain_encoding") && root["terrain_encoding"].is_number_integer())
+        out.terrain_encoding = std::clamp(root["terrain_encoding"].get<int>(), 0, 1);
+    if (root.contains("terrain_attribution") && root["terrain_attribution"].is_string())
+        out.terrain_attribution = root["terrain_attribution"].get<std::string>();
+
     if (root.contains("tile_url") && root["tile_url"].is_string())
         out.tile_url = root["tile_url"].get<std::string>();
     if (root.contains("tile_attribution") && root["tile_attribution"].is_string())
@@ -322,6 +332,10 @@ void settings_save(const AppSettings& s)
     }
     root["grid_cells"] = jcells;
 
+    root["terrain_clearance_m"] = s.terrain_clearance_m;
+    root["terrain_url"]         = s.terrain_url;
+    root["terrain_encoding"]    = s.terrain_encoding;
+    root["terrain_attribution"] = s.terrain_attribution;
     root["tile_url"]         = s.tile_url;
     root["tile_attribution"] = s.tile_attribution;
     root["audio_enabled"]    = s.audio_enabled;

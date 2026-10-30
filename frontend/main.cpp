@@ -69,6 +69,9 @@
 
 // Settings
 #include "settings.hpp"
+#include "mission_alt.hpp"
+#include "terrain.hpp"
+#include "terrain_clearance.hpp"
 
 // Widgets
 #include "widgets/app_icon.hpp"
@@ -77,6 +80,7 @@
 #include "widgets/vehicle_ui_state.hpp"
 #include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
+#include "widgets/map_view_3d.hpp"
 #include "widgets/sidebar_left.hpp"
 #include "widgets/center_view.hpp"
 #include "widgets/sidebar_right.hpp"
@@ -409,10 +413,20 @@ static void render_ui()
             mv.has_pos = vsnap.state.has_global_pos;
             mv.heading = (float)vsnap.state.heading;
             mv.has_hdg = vsnap.state.has_vfr;
+            mv.roll    = vsnap.state.roll;
+            mv.pitch   = vsnap.state.pitch;
+            mv.yaw     = vsnap.state.yaw;
+            mv.has_att = vsnap.state.has_attitude;
             mv.active   = veh && (v->id() == veh->id());
             mv.home_lat = vsnap.state.home_lat;
             mv.home_lon = vsnap.state.home_lon;
             mv.has_home = vsnap.state.has_home;
+            mv.alt_amsl = vsnap.state.alt_asl;
+            mv.has_alt  = vsnap.state.has_global_pos;
+            if (auto h = home_amsl(&vsnap.state)) {
+                mv.home_alt_amsl = *h;
+                mv.has_home_alt  = true;
+            }
             mv.fence    = vsnap.state.fence_params;
             mv.checked  = swarm && swarm_is_checked(v->id());
             mv.mav_type = (uint8_t)vsnap.state.type;
@@ -568,6 +582,9 @@ int main()
     settings_load(g_settings);
     map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
+    set_terrain_clearance_m(g_settings.terrain_clearance_m);
+    terrain_set_source(g_settings.terrain_url, (TerrainEncoding)g_settings.terrain_encoding,
+                       g_settings.terrain_attribution);
     if (!theme_lookup(g_settings, g_settings.active_theme, g_theme)) {
         // A name that no longer exists — a built-in theme dropped from the
         // build stays behind in settings.json. The defaults apply, so the name
@@ -743,7 +760,9 @@ int main()
 
     audio_shutdown();
     center_view_shutdown();   // stop video pipeline + delete GL texture
+    map3d_shutdown();
     map_view_shutdown();
+    terrain_shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

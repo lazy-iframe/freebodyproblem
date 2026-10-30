@@ -56,8 +56,12 @@ struct MapVehicle {
     double    lat     = 0.0;
     double    lon     = 0.0;
     bool      has_pos = false;
+    float     alt_amsl = 0.0f;            // GLOBAL_POSITION_INT, for the 3D view
+    bool      has_alt  = false;
     float     heading = 0.0f;
     bool      has_hdg = false;
+    float     roll = 0.0f, pitch = 0.0f, yaw = 0.0f;   // ATTITUDE, degrees — the 3D model and gizmo
+    bool      has_att = false;
     bool      active  = false;    // the vehicle every other panel is showing
     bool      checked = false;    // in the SWARM view's command set
     uint8_t   mav_type = MAV_TYPE_GENERIC;   // HEARTBEAT type — picks the symbol
@@ -67,6 +71,8 @@ struct MapVehicle {
     double    home_lat = 0.0;
     double    home_lon = 0.0;
     bool      has_home = false;
+    float     home_alt_amsl = 0.0f;       // what relative altitudes are above
+    bool      has_home_alt  = false;
 
     // The parameter-set geofence, drawn as a ring around home.
     FenceParams fence;

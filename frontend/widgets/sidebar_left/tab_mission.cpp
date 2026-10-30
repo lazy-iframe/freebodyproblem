@@ -22,11 +22,15 @@
 #include "../sidebar_themes.hpp"
 #include "../../app_log.hpp"
 #include "../../audio.hpp"
+#include "../../mission_alt.hpp"
+#include "../../terrain.hpp"
+#include "../../terrain_clearance.hpp"
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <optional>
 
 // ── Command metadata ──────────────────────────────────────────────────────────
 
@@ -228,8 +232,81 @@ static void labeled_double(const char* label, double* v, const char* unit = null
     ImGui::InputDouble(id, v, 0.0, 0.0, "%.6f");
 }
 
-// Draw expanded parameter fields for one waypoint
-static void draw_wp_fields(MissionItem& item)
+// ── Terrain ───────────────────────────────────────────────────────────────────
+//
+// The ground under a waypoint and how high above it the waypoint is. The
+// height needs the item's altitude in AMSL, which its frame decides: absolute
+// is AMSL already, relative is above home — so it needs home's own AMSL, by
+// the planning rule of plan_home_amsl() — and terrain frames are height above
+// ground by definition.
+
+struct ItemTerrain {
+    std::optional<float> ground;   // metres AMSL under the item
+    std::optional<float> agl;      // the item's height above that
+    bool                 relative = false;   // agl missing for want of home
+};
+
+static ItemTerrain item_terrain(const MissionItem& item, std::optional<float> home)
+{
+    ItemTerrain t;
+    if (!mission_frame_is_global(item.frame)) return t;   // not a place on the map
+    t.ground = terrain_amsl(item.lat, item.lon);
+    if (!t.ground) return t;
+    if (auto amsl = mission_item_amsl(item, home, t.ground)) t.agl = *amsl - *t.ground;
+    else                                                    t.relative = true;
+    return t;
+}
+
+// The line under Alt in an open item.
+static void draw_terrain_line(const MissionItem& item, std::optional<float> home)
+{
+    if (!mission_frame_is_global(item.frame)) return;
+    const ItemTerrain t = item_terrain(item, home);
+    if (!t.ground) {
+        ImGui::TextDisabled("Ground  loading...");
+        return;
+    }
+    if (t.agl) {
+        ImGui::TextDisabled("Ground  %.0f m AMSL  \xc2\xb7", (double)*t.ground);
+        ImGui::SameLine(0, 4);
+        if (*t.agl < 0.0f)
+            ImGui::TextColored(col_error(), "%.0f m BELOW GROUND", (double)-*t.agl);
+        else
+            ImGui::TextDisabled("%.0f m AGL", (double)*t.agl);
+    } else {
+        ImGui::TextDisabled("Ground  %.0f m AMSL", (double)*t.ground);
+        if (t.relative && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("Height above ground needs home's altitude from the vehicle");
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !t.relative)
+        ImGui::SetTooltip("%s\nThe bare ground: no trees or buildings.", terrain_attribution().c_str());
+}
+
+// The line under that, for an item a leg arrives at: how near the ground the
+// leg from the item before comes, against the clearance set in settings.
+static void draw_leg_line(const MissionLeg& leg)
+{
+    const Clearance& c = leg.c;
+    if (!c.has_min) {
+        ImGui::TextDisabled("Leg from #%d  checking terrain...", leg.from);
+    } else if (c.collides()) {
+        ImGui::TextColored(col_error(), "Leg from #%d  HITS TERRAIN (%.0f m into it)",
+                           leg.from, (double)-c.min_m);
+    } else if (c.too_close()) {
+        ImGui::TextColored(col_warning(), "Leg from #%d  within %.0f m of terrain",
+                           leg.from, (double)c.min_m);
+    } else {
+        ImGui::TextDisabled("Leg from #%d  clears terrain by %.0f m", leg.from, (double)c.min_m);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip("Closest point at %.6f, %.6f, the path %.0f m AMSL.\n"
+                          "Warns inside %.0f m (Settings \xe2\x86\x92 Terrain).",
+                          c.lat, c.lon, (double)c.path_amsl, (double)terrain_clearance_m());
+}
+
+// Draw expanded parameter fields for one waypoint. `leg` is the leg arriving
+// at it, if one does.
+static void draw_wp_fields(MissionItem& item, std::optional<float> home, const MissionLeg* leg)
 {
     ImGui::Indent(12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 4.0f, 3.0f });
@@ -248,6 +325,10 @@ static void draw_wp_fields(MissionItem& item)
         if (m->show_alt || m->show_latlon) {
             labeled_float("Alt (m)", &item.alt);
         }
+        if (m->show_latlon)
+            draw_terrain_line(item, home);
+        if (m->show_latlon && leg)
+            draw_leg_line(*leg);
     } else {
         // Unknown command — show all fields generically
         labeled_float("Param1", &item.param1);
@@ -257,6 +338,8 @@ static void draw_wp_fields(MissionItem& item)
         labeled_double("Lat",  &item.lat);
         labeled_double("Lon",  &item.lon);
         labeled_float("Alt (m)", &item.alt);
+        draw_terrain_line(item, home);
+        if (leg) draw_leg_line(*leg);
     }
 
     // Frame selector
@@ -285,8 +368,9 @@ static void draw_wp_fields(MissionItem& item)
 }
 
 // Append a new item. `lat`/`lon` are where the map was clicked, or 0/0 for a
-// command that has no position.
-static void append_item(uint16_t cmd, double lat, double lon)
+// command that has no position; `alt` is the height the 3D map set, if it did.
+static void append_item(uint16_t cmd, double lat, double lon,
+                        std::optional<float> alt = std::nullopt)
 {
     MissionItem ni{};
     ni.seq     = (uint16_t)st().edit.size();
@@ -300,6 +384,7 @@ static void append_item(uint16_t cmd, double lat, double lon)
         const CmdMeta* pm = find_meta(prev.command);
         if (!pm || pm->show_alt || pm->show_latlon) { ni.alt = prev.alt; break; }
     }
+    if (alt) ni.alt = *alt;
     // The new item opens and every other one closes: what was just added is
     // what is about to be filled in, and the list stays one item tall else.
     st().edit.push_back(ni);
@@ -742,12 +827,19 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         pick->pick_done = false;
     } else if (pick && pick->pick_done) {
         if (pick->add_command != 0) {
-            append_item(pick->add_command, pick->picked_lat, pick->picked_lon);
-            gcs_log("mission: added %s at %.6f, %.6f",
-                    cmd_short(pick->add_command), pick->picked_lat, pick->picked_lon);
+            std::optional<float> alt;
+            if (pick->has_picked_alt) alt = pick->picked_alt;
+            append_item(pick->add_command, pick->picked_lat, pick->picked_lon, alt);
+            if (alt)
+                gcs_log("mission: added %s at %.6f, %.6f, %.0f m",
+                        cmd_short(pick->add_command), pick->picked_lat, pick->picked_lon, (double)*alt);
+            else
+                gcs_log("mission: added %s at %.6f, %.6f",
+                        cmd_short(pick->add_command), pick->picked_lat, pick->picked_lon);
         }
-        pick->pick_done   = false;
-        pick->add_command = 0;
+        pick->pick_done      = false;
+        pick->has_picked_alt = false;
+        pick->add_command    = 0;
     }
 
     // ── Escape: cancel a pending pick, else leave EDIT ────────────────────────
@@ -867,6 +959,46 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
 
     ImGui::Spacing();
     ImGui::TextDisabled("%d items", (int)st().edit.size());
+
+    // ── Terrain clearance ─────────────────────────────────────────────────────
+    // Every leg against the ground, the worst named here; the items they
+    // arrive at are marked in the list below.
+    const std::optional<float> plan_home =
+        plan_home_amsl(home_amsl(vs),
+                       vs && vs->has_home ? &vs->home_lat : nullptr,
+                       vs && vs->has_home ? &vs->home_lon : nullptr, &st().edit);
+    const std::vector<MissionLeg> legs = mission_legs(st().edit, plan_home);
+    std::vector<const MissionLeg*> leg_to(st().edit.size(), nullptr);
+    const MissionLeg* worst = nullptr;
+    int n_bad = 0;
+    bool checking = false;
+    for (const MissionLeg& lg : legs) {
+        leg_to[lg.to] = &lg;
+        checking = checking || !lg.c.complete;
+        if (!lg.c.too_close()) continue;
+        ++n_bad;
+        if (!worst || lg.c.min_m < worst->c.min_m) worst = &lg;
+    }
+    if (worst) {
+        ImGui::SameLine(0, 10);
+        char more[24] = "";
+        if (n_bad > 1) snprintf(more, sizeof(more), "  (+%d more)", n_bad - 1);
+        if (worst->c.collides())
+            ImGui::TextColored(col_error(), "! #%d\xe2\x86\x92#%d HITS TERRAIN%s",
+                               worst->from, worst->to, more);
+        else
+            ImGui::TextColored(col_warning(), "! #%d\xe2\x86\x92#%d within %.0f m of terrain%s",
+                               worst->from, worst->to, (double)worst->c.min_m, more);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("%d leg%s closer to the terrain than %.0f m (Settings \xe2\x86\x92 Terrain)",
+                              n_bad, n_bad == 1 ? "" : "s", (double)terrain_clearance_m());
+    } else if (checking) {
+        ImGui::SameLine(0, 10);
+        ImGui::TextDisabled("checking terrain...");
+    } else if (!legs.empty()) {
+        ImGui::SameLine(0, 10);
+        ImGui::TextDisabled("clears terrain by %.0f m+", (double)terrain_clearance_m());
+    }
     ImGui::Spacing();
 
     // ── Waypoint list ─────────────────────────────────────────────────────────
@@ -906,19 +1038,39 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             const ImVec2 del_sz = { del_w, ImGui::GetFontSize() + 2.0f };
             const float  row_w  = ImGui::GetContentRegionAvail().x - del_w - 4.0f;
 
-            char hdr[64];
+            // A placed item also gets its height above ground, and the row
+            // turns red when that is below it — or when the leg arriving at
+            // it goes through the ground, amber when that only comes too near.
+            char hdr[80];
             const CmdMeta* m = find_meta(item.command);
-            if (m && m->show_alt)
+            std::optional<float> agl;
+            if (m && m->show_latlon) agl = item_terrain(item, plan_home).agl;
+            if (m && m->show_alt && agl)
+                snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm  (%.0f AGL)", i, m->name,
+                         (double)item.alt, (double)*agl);
+            else if (m && m->show_alt)
                 snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm", i, m->name, (double)item.alt);
             else
                 snprintf(hdr, sizeof(hdr), "#%u  %s", i, m ? m->name : cmd_short(item.command));
 
-            if (item.is_current)
+            const MissionLeg* leg  = leg_to[i];
+            const bool        hits = leg && leg->c.collides();
+            const bool        near = leg && leg->c.too_close() && !hits;
+            if (hits || near) {
+                const size_t len = strlen(hdr);
+                snprintf(hdr + len, sizeof(hdr) - len, "  !");
+            }
+            const bool below = (agl && *agl < 0.0f) || hits;
+            if (below)
+                ImGui::PushStyleColor(ImGuiCol_Text, col_error());
+            else if (near)
+                ImGui::PushStyleColor(ImGuiCol_Text, col_warning());
+            else if (item.is_current)
                 ImGui::PushStyleColor(ImGuiCol_Text, accent_col());
             if (ImGui::Selectable(hdr, st().open[i], ImGuiSelectableFlags_AllowOverlap,
                                   { row_w, del_sz.y }))
                 st().open[i] = !st().open[i];
-            if (item.is_current)
+            if (below || near || item.is_current)
                 ImGui::PopStyleColor();
 
             ImGui::SameLine(0, 4);
@@ -948,7 +1100,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
                 }
                 ImGui::Unindent(12.0f);
 
-                draw_wp_fields(item);
+                draw_wp_fields(item, plan_home, leg);
             }
 
             ImGui::Separator();

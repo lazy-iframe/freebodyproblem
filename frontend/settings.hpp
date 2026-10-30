@@ -20,6 +20,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "terrain.hpp"
 #include "widgets/theme.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +106,18 @@ struct AppSettings {
     // Free text from the operator — site rules, limits, how to behave — sent
     // to every agent when it connects and returned by get_guidelines.
     std::string                 mcp_instructions;
+
+    // ── Terrain ───────────────────────────────────────────────────────────────
+    // The least height above the terrain data a planned path may come: a
+    // mission leg or a GO HERE line closer than this warns.
+    float terrain_clearance_m = 30.0f;
+
+    // Where terrain heights come from: a {z}/{x}/{y} URL of PNG tiles, how
+    // their pixels encode height (TerrainEncoding: 0 Terrarium, 1 Terrain-RGB),
+    // and the line the map credits it with — its accuracy included.
+    std::string terrain_url         = TERRAIN_DEFAULT_URL;
+    int         terrain_encoding    = (int)TerrainEncoding::Terrarium;
+    std::string terrain_attribution = TERRAIN_DEFAULT_ATTRIBUTION;
 
     // ── Map tile source ───────────────────────────────────────────────────────
     std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
