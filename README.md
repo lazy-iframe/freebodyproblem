@@ -51,6 +51,12 @@ A modern, fast ground control station for ArduPilot and PX4 autopilots. Several 
       <sub><b>VIDEO FULL</b> — the feed takes the whole window below the topbar</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <a href="#3d-view"><img src="screens/map_3d.png" alt="The map in 3D: a quadcopter in GUIDED over terrain, its body axes and pink line to the ground, labelled with its name and height above the terrain, and a GO HERE target with its own line to the ground" width="100%"></a><br>
+      <sub><b>3D</b> — the aircraft over the terrain it flies above: its height off the ground, its attitude, and a GO HERE point picked in place and height</sub>
+    </td>
+  </tr>
 </table>
 
 <table>
@@ -125,6 +131,8 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ### Mission Planning
 - **Interactive map view**: slippy map with OpenStreetMap tile support (configurable tile server)
+- **3D view**: the map's **3D** button stands the imagery on real terrain — the aircraft as 3D models at their altitude, the mission as a path with its shadow cast on the ground, the geofence as walls. Missions and GO HERE points are placed in it in place and height. See [3D view](#3d-view)
+- **Terrain reference**: every vehicle labelled with its height above the terrain data, not only above home, and every mission leg and GO HERE line checked against the ground — a leg that comes within the clearance set in Settings (30 m by default) is marked, one that goes into the ground is marked red. Terrain from AWS Terrain Tiles (SRTM, ±25 m) by default, or any `{z}/{x}/{y}` PNG source
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
 - **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it
@@ -752,7 +760,14 @@ precision so a saved value reloads as the same float rather than as an edit.
 7. Click **CLEAR** to empty the editor
 
 New items take the altitude of the last item that has one, or 20 m. Leaving
-the MISSION tab cancels a pending **LOC?** and turns **EDIT** off.
+the MISSION tab cancels a pending **LOC?** and turns **EDIT** off. With the map
+in [3D](#3d-view), **LOC?** takes two clicks: the ground for the place, then
+the height along its vertical line.
+
+Each item's header shows its height above the terrain data under it, and each
+leg is checked against the terrain along its length: one that comes within the
+clearance set in **Settings → TERRAIN** (30 m by default) is marked amber, one
+that goes into the ground red.
 
 ### Geofence
 The parameter fence needs no editing here: set `FENCE_ENABLE`, `FENCE_TYPE`,
@@ -782,10 +797,12 @@ a fetch and upload but not edited.
 
 ### The Map
 The map draws every vehicle that has a position, not only the one the panels
-are following. Each aircraft carries a label — `(2) SYS 1`, the GCS's number
-then the sysid it reports — and the selected one keeps full colour and a heading
-line run out to the edge of the panel, while the rest are dimmed with a short
-stub so three aircraft do not lay three dotted lines across the imagery.
+are following. Each aircraft carries a label above it — `(2) SYS 1`, the GCS's
+number then the sysid it reports — and under that its height above the terrain
+data, red and saying **BELOW TERRAIN** when it is inside it. The selected
+aircraft keeps full colour and a heading line run out to the edge of the panel,
+while the rest are dimmed with a short stub so three aircraft do not lay three
+dotted lines across the imagery.
 
 <p align="center">
   <a href="screens/cap3.png"><img src="screens/cap3.png" alt="MAP: five vehicles on the map, the selected one with its heading line and the parameter fence ring" width="100%"></a>
@@ -810,10 +827,9 @@ then move up or down its line and click again for the height (Esc or a
 right-click gives it up). The small menu at the pointer shows the
 coordinates under the cursor (click them to copy, as signed decimal degrees)
 and an altitude, which starts at the height the vehicle is already holding,
-and **GO** sends it as
-`SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
-which is the only mode that acts on one; out of GUIDED the button is disabled
-and says why, rather than sending into silence. The target stays drawn as a
+and **GO** sends it as `SET_POSITION_TARGET_GLOBAL_INT`. It only sends while
+the vehicle is in GUIDED, which is the only mode that acts on one; out of
+GUIDED the button is disabled and says why, rather than sending into silence. The target stays drawn as a
 ringed crosshair joined to the aircraft by a line until **Clear target** in
 the map's right-click menu, which also carries **Clear track** for the trail.
 
@@ -829,6 +845,40 @@ small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
 <p align="center">
   <a href="screens/cap2.png"><img src="screens/cap2.png" alt="MAP FULL: the map takes the right sidebar, with attitude and the event log in its corner" width="100%"></a>
 </p>
+
+#### 3D view
+**3D**, under **CENTER** in the map's top-left corner, stands the map on the
+terrain. Drag to orbit, right-drag to pan, wheel to zoom; the camera keeps
+above the ground between it and what it looks at, so a valley never turns the
+view into rock. The button under **3D** — **×1.5** to begin with — steps the
+vertical exaggeration through 1, 1.5 and 2, and **TEX** swaps the imagery for
+the bare elevation mesh. The view needs
+OpenGL 3.3; where the driver lacks it, the button says so and stays off.
+
+<p align="center">
+  <a href="screens/map_3d.png"><img src="screens/map_3d.png" alt="The map in 3D: a quadcopter in GUIDED over terrain, its body axes and pink line to the ground, labelled with its name and height above the terrain, and a GO HERE target with its own line to the ground" width="100%"></a>
+</p>
+
+- **Aircraft** are drawn as models of their type — multicopter, plane or
+  helicopter — at their reported altitude and attitude, white with the livery
+  in red and navigation lights red to port, green to starboard. Propellers and
+  rotors turn while the vehicle is armed. Each carries its body axes (X forward
+  in amber, Y right in green, Z down in blue), a pink line down to the ground
+  under it, and above it its name and height above the terrain. Any part of an
+  aircraft inside the terrain shows through the ground as an amber cage, and
+  its label says **BELOW TERRAIN**.
+- **The mission** is drawn as its path with a translucent blue band hanging
+  from it to the ground, so how high each leg runs over the terrain — and where
+  the ground rises to meet it — reads from any angle. Legs too close to the
+  terrain are marked as in the mission tab.
+- **The geofence** stands as walls: green for inclusion zones and the
+  parameter cylinder, red for exclusion zones, up to `FENCE_ALT_MAX` above home
+  where a ceiling is set. A fence that is not enabled is not drawn.
+- **Placing a point** takes two clicks: the first on the ground fixes where,
+  then the point rides its vertical line with the pointer and the second click
+  sets its height. A mission item's **LOC?** works this way in 3D, and so does
+  **GO HERE**, which then opens its menu with that height filled in. Fence
+  drawing and **EDIT** drags are flat-map work and leave 3D.
 
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is

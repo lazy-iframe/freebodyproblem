@@ -18,6 +18,7 @@ import cap1 from '../../../../screens/cap1.png';
 import cap2 from '../../../../screens/cap2.png';
 import cap3 from '../../../../screens/cap3.png';
 import cap4 from '../../../../screens/cap4.png';
+import map3d from '../../../../screens/map_3d.png';
 import swarm from '../../../../screens/swarm.png';
 import paramInfo from '../../../../screens/param_info.png';
 
@@ -40,7 +41,7 @@ import paramInfo from '../../../../screens/param_info.png';
   <Fragment slot="lede">
     The centre view is the map, the feed, or both stacked or side by side. Press the mode again
     and it goes fullscreen; the topbar always stays, so link state and arming are never out of
-    sight.
+    sight. Press 3D and the map stands on the terrain.
   </Fragment>
   <Gallery
     min="22rem"
@@ -49,6 +50,13 @@ import paramInfo from '../../../../screens/param_info.png';
       { src: cap4, alt: 'VIDEO: the video feed alone in the centre view', caption: 'VIDEO — the feed alone in the centre', href: 'guides/video/' },
       { src: cap2, alt: 'MAP FULL: the map takes the right sidebar, attitude and the event log in its corner', caption: 'MAP FULL — attitude and the log float in the corner', href: 'guides/map/' },
       { src: cap1, alt: 'VIDEO FULL: the feed takes the whole window below the topbar', caption: 'VIDEO FULL — everything below the topbar', href: 'guides/video/' },
+    ]}
+  />
+  <Gallery
+    min="22rem"
+    width={1600}
+    items={[
+      { src: map3d, alt: 'The map in 3D: a quadcopter in GUIDED over terrain, its body axes and pink line to the ground, labelled with its name and height above the terrain, and a GO HERE target with its own line to the ground', caption: '3D — the aircraft over the terrain it flies above, its height off the ground, and a GO HERE point picked in place and height', href: 'guides/map/#3d-view' },
     ]}
   />
 </Section>

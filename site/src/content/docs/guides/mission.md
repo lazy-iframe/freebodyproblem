@@ -19,7 +19,14 @@ description: Plan missions and geofences on the map.
 7. Click **CLEAR** to empty the editor
 
 New items take the altitude of the last item that has one, or 20 m. Leaving
-the MISSION tab cancels a pending **LOC?** and turns **EDIT** off.
+the MISSION tab cancels a pending **LOC?** and turns **EDIT** off. With the map
+in [3D](../map/#3d-view), **LOC?** takes two clicks: the ground for the place,
+then the height along its vertical line.
+
+Each item's header shows its height above the terrain data under it, and each
+leg is checked against the terrain along its length: one that comes within the
+clearance set in **Settings → TERRAIN** (30 m by default) is marked amber, one
+that goes into the ground red.
 
 ## Geofence
 The parameter fence needs no editing here: set `FENCE_ENABLE`, `FENCE_TYPE`,

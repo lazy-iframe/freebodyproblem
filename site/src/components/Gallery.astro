@@ -13,16 +13,17 @@ interface Item {
 }
 interface Props {
 	items: Item[];
-	min?: string; // narrowest a column may get
+	min?: string;   // narrowest a column may get
+	width?: number; // px the images are encoded at; raise it for a gallery of one
 }
-const { items, min = '14rem' } = Astro.props;
+const { items, min = '14rem', width = 720 } = Astro.props;
 const base = import.meta.env.BASE_URL;
 ---
 
 <div class="gallery not-content" style={`--min:${min}`}>
 	{
 		items.map(({ src, alt, caption, href }) => {
-			const img = <Image src={src} alt={alt} width={720} loading="lazy" decoding="async" />;
+			const img = <Image src={src} alt={alt} width={width} loading="lazy" decoding="async" />;
 			return (
 				<figure>
 					{href ? <a href={`${base}${href}`}>{img}</a> : img}
