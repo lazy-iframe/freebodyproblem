@@ -42,6 +42,11 @@ static constexpr float BTN_W_ARM   = 184.0f;
 static constexpr float BTN_GAP     =  6.0f;
 static constexpr float BTN_CLOSE   = 22.0f;   // × exit button
 
+// Set by topbar_request_close(), taken by the next draw_topbar().
+static bool s_close_pending = false;
+
+void topbar_request_close() { s_close_pending = true; }
+
 static constexpr float CELL_PAD    = 13.0f;   // horizontal padding inside a cell
 static constexpr float LABEL_Y     = 10.0f;   // baseline row for the tiny label
 static constexpr float VALUE_Y     = 28.0f;   // baseline row for the value
@@ -290,8 +295,12 @@ void draw_topbar(const VehicleState& vs,
         const float close_x = 8.0f;
         const float close_y = (TOPBAR_H - BTN_CLOSE) * 0.5f;
         ImGui::SetCursorPos({ close_x, close_y });
-        if (ui_solid_button("\xc3\x97##close", { BTN_CLOSE, BTN_CLOSE },
-                            btn_stop_base(), btn_stop_hov())) {
+        // The button and a quit asked for from outside (topbar_request_close)
+        // take one path, so neither can skip the confirmation.
+        const bool close_clicked = ui_solid_button("\xc3\x97##close", { BTN_CLOSE, BTN_CLOSE },
+                                                   btn_stop_base(), btn_stop_hov());
+        if (close_clicked || s_close_pending) {
+            s_close_pending = false;
             const bool has_link = (link_status == LinkStatus::Connecting ||
                                    link_status == LinkStatus::Connected);
             if (has_link)

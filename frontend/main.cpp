@@ -81,6 +81,9 @@
 
 // Widgets
 #include "widgets/app_icon.hpp"
+#ifdef __APPLE__
+#include "platform/macos_window.hpp"
+#endif
 #include "widgets/theme.hpp"
 #include "widgets/crt_overlay.hpp"
 #include "widgets/vehicle_ui_state.hpp"
@@ -550,9 +553,15 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 #ifdef __APPLE__
+    // Decorated on macOS, unlike everywhere else: AppKit will not zoom,
+    // resize or take full screen a borderless window, so without its title
+    // bar the window is stuck at whatever size and place it opened with. The
+    // bar is coloured to match the top bar instead (platform/macos_window).
+    glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#else
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 #endif
 
     // How a desktop environment ties this window back to its .desktop file, and
@@ -595,6 +604,24 @@ int main()
     }
 
     glfwMakeContextCurrent(window);
+    // The window manager's close — the red button and Cmd-Q on macOS, Alt-F4
+    // or the taskbar elsewhere — is turned back and handed to the top bar,
+    // which treats it as a click on its own ×: it quits at once with no live
+    // link and asks first with one. Quitting after the answer goes through
+    // glfwSetWindowShouldClose(), which does not come back here.
+    glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
+        glfwSetWindowShouldClose(w, GLFW_FALSE);
+        topbar_request_close();
+    });
+
+#ifdef __APPLE__
+    // Before the zoom, so the window never shows a default grey bar.
+    const ImVec4 tb0 = g_theme.bg_topbar;
+    macos_match_titlebar(window, tb0.x, tb0.y, tb0.z);
+#endif
+    // On macOS this is the green button's zoom: the window fills the screen
+    // between the menu bar and the Dock. Full screen proper is the green
+    // button itself, or Ctrl-Cmd-F.
     glfwMaximizeWindow(window);
     glfwSwapInterval(1);
 
@@ -723,6 +750,12 @@ int main()
 
         // Last thing drawn, so it lies over the splash and every popup too.
         draw_crt_overlay(g_settings);
+
+#ifdef __APPLE__
+        // Follows a theme change; a no-op otherwise.
+        macos_match_titlebar(window, g_theme.bg_topbar.x, g_theme.bg_topbar.y,
+                             g_theme.bg_topbar.z);
+#endif
 
         if (g_close_req)
             glfwSetWindowShouldClose(window, GLFW_TRUE);

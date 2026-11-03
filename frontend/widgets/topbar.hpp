@@ -49,6 +49,12 @@ void draw_topbar(const VehicleState& vs,
                  // Null everywhere else.
                  const std::vector<FlightTarget>* swarm_targets = nullptr);
 
+// A request to quit from outside the app's own × button — the window's close
+// button, Cmd-Q, Alt-F4, the taskbar. Handled on the next draw_topbar() exactly
+// as a click on ×: straight to *close_requested with no live link, through the
+// "Link is active. Exit anyway?" confirmation with one.
+void topbar_request_close();
+
 // The vehicle's current flight mode as the topbar shows it: its own
 // AVAILABLE_MODES name when it published one, its stack's table otherwise.
 std::string mode_display_name(const VehicleState& vs);

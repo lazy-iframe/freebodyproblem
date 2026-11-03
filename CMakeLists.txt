@@ -522,9 +522,15 @@ if(WIN32)
 endif()
 
 if(APPLE)
+    # The title bar's colour (frontend/platform/macos_window.mm). Objective-C++
+    # by flag rather than enable_language(OBJCXX), which needs CMake 3.16.
+    target_sources(freebodyproblem PRIVATE frontend/platform/macos_window.mm)
+    set_source_files_properties(frontend/platform/macos_window.mm PROPERTIES
+        COMPILE_FLAGS "-x objective-c++ -fobjc-arc")
     # IOKit and CoreFoundation: serial port enumeration in backend/connection.cpp.
+    # Cocoa: the title bar.
     target_link_libraries(freebodyproblem PRIVATE
-        "-framework IOKit" "-framework CoreFoundation")
+        "-framework IOKit" "-framework CoreFoundation" "-framework Cocoa")
     set_target_properties(freebodyproblem PROPERTIES
         # Where the bundled libraries are looked up once installed. The build
         # tree keeps CMake's build rpath, pointing at the originals.
