@@ -36,6 +36,18 @@ extern ImFont* g_font_micro;   // 13 px mono — cell labels, log timestamps
 extern ImFont* g_font_mono_bold; // 13 px bold mono — HUD lettering; null if missing
 extern ImFont* g_font_value;   // 26 px mono — big readouts / annunciators
 
+// The face the UI is set in, chosen in Settings. main.cpp loads every face it
+// finds and registers it; choosing one repoints the fonts above (and the
+// default font) at it, from the next frame. The HUD's bold lettering stays
+// Geist Mono Bold in either: its tapes are laid out for fixed-width digits.
+enum class UiFace { GeistMono = 0, Roboto = 1, Count };
+struct UiFontSet { ImFont* ui = nullptr; ImFont* micro = nullptr; ImFont* value = nullptr; ImFont* title = nullptr; };
+const char* ui_face_name(UiFace face);
+void        ui_face_register(UiFace face, const UiFontSet& set);
+bool        ui_face_available(UiFace face);
+// Falls back to any face loaded when `face` is not. The set now in use.
+const UiFontSet& ui_face_select(UiFace face);
+
 // Font sizes used across panels.
 constexpr float UI_SZ_MICRO = 13.0f;
 constexpr float UI_SZ_BODY  = 16.0f;

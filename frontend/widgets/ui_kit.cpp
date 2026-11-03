@@ -27,6 +27,36 @@ ImFont* g_font_micro = nullptr;
 ImFont* g_font_mono_bold = nullptr;
 ImFont* g_font_value = nullptr;
 
+static UiFontSet s_faces[(int)UiFace::Count];
+
+const char* ui_face_name(UiFace face)
+{
+    switch (face) {
+    case UiFace::GeistMono: return "Geist Mono";
+    case UiFace::Roboto:    return "Roboto";
+    default:                return "?";
+    }
+}
+
+void ui_face_register(UiFace face, const UiFontSet& set) { s_faces[(int)face] = set; }
+bool ui_face_available(UiFace face) { return s_faces[(int)face].ui != nullptr; }
+
+const UiFontSet& ui_face_select(UiFace face)
+{
+    int i = std::clamp((int)face, 0, (int)UiFace::Count - 1);
+    if (!s_faces[i].ui)
+        for (int k = 0; k < (int)UiFace::Count; ++k)
+            if (s_faces[k].ui) { i = k; break; }
+    const UiFontSet& f = s_faces[i];
+    if (f.ui) {
+        g_font_ui    = f.ui;
+        g_font_micro = f.micro ? f.micro : f.ui;
+        g_font_value = f.value ? f.value : f.ui;
+        ImGui::GetIO().FontDefault = f.ui;
+    }
+    return f;
+}
+
 // ── Tracked text ─────────────────────────────────────────────────────────────
 
 // Advance `p` past one UTF-8 code point; returns the byte length of that glyph.

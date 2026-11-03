@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(freebodyproblem VERSION 0.7.0 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.7.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -351,6 +351,9 @@ add_executable(freebodyproblem
     frontend/main.cpp
     frontend/settings.cpp
     frontend/param_file.cpp
+    frontend/cache_dir.cpp
+    frontend/terrain.cpp
+    frontend/terrain_clearance.cpp
     frontend/audio.cpp
     frontend/widgets/topbar.cpp
     frontend/widgets/swarm_view.cpp
@@ -371,6 +374,8 @@ add_executable(freebodyproblem
     frontend/widgets/splash_screen.cpp
     frontend/widgets/video_player.cpp
     frontend/widgets/map_view.cpp
+    frontend/widgets/map_view_3d.cpp
+    frontend/widgets/gl3.cpp
     frontend/widgets/stb_impl.cpp
     frontend/widgets/app_icon.cpp
     frontend/widgets/sidebar_right.cpp

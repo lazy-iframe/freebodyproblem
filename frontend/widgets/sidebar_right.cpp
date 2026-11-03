@@ -1729,9 +1729,9 @@ static void draw_picker_popup(const VehicleState* vs, MavlinkSender* sender,
             sender && vs->has_heartbeat &&
             requested_msgs().find(s_picker_sel_msg) == requested_msgs().end())
         {
-            sender->request_message_interval(vs->sysid, vs->compid,
-                                              s_picker_sel_msg,
-                                              200000 /* 5 Hz */);
+            sender->request_message_interval_at_least(vs->sysid, vs->compid,
+                                                       s_picker_sel_msg,
+                                                       200000 /* 5 Hz */);
             requested_msgs().insert(s_picker_sel_msg);
         }
 
@@ -1834,12 +1834,15 @@ static void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
             ui_readout_tile(dl, p0, p1, lbl_buf, val_buf,
                             has_data ? col_val : col_no_data, hovered);
 
-            // If this message is configured but not yet received, request it once.
+            // If this message is configured but not yet received, request it
+            // once — at 5 Hz unless something already asked for it faster: the
+            // connect burst's requests go out in the same moment the tiles
+            // first see no data, and a flat 5 Hz here would overwrite them.
             if (!has_data && sender && vs && vs->has_heartbeat &&
                 requested_msgs().find(cell.msg_id) == requested_msgs().end())
             {
-                sender->request_message_interval(vs->sysid, vs->compid,
-                                                  cell.msg_id, 200000 /* 5 Hz */);
+                sender->request_message_interval_at_least(vs->sysid, vs->compid,
+                                                           cell.msg_id, 200000 /* 5 Hz */);
                 requested_msgs().insert(cell.msg_id);
             }
         }

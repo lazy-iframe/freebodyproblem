@@ -124,17 +124,27 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
     // Store last raw message per ID for the MAVLink inspector tab.
     state_.last_messages[msg.msgid] = msg;
 
-    // Update per-message-ID stats with an EMA rate estimate
+    // Per-message-ID stats: the count, and the rate over a window (see
+    // MessageStats). Until the first window closes, its count so far stands
+    // in once it spans a quarter second, so a new message shows a rate within
+    // a few arrivals — but not from a burst that landed in one batch, whose
+    // span is next to nothing. A message back after a long silence starts
+    // again, rather than showing the rate it had before.
     auto  now  = std::chrono::steady_clock::now();
     auto& stat = msg_stats_[msg.msgid];
-    if (stat.count > 0) {
-        double dt = std::chrono::duration<double>(now - stat.last_seen).count();
-        if (dt > 0.0) {
-            // Cap instantaneous rate to 500 Hz to prevent burst-arrival spikes
-            // from inflating the EMA when buffered messages are processed at once.
-            constexpr double kMaxInstHz = 500.0;
-            double inst_hz = std::min(1.0 / dt, kMaxInstHz);
-            stat.rate_hz = 0.2 * inst_hz + 0.8 * stat.rate_hz;
+    if (stat.count == 0 || now - stat.last_seen > std::chrono::seconds(10)) {
+        stat.win_start = now;
+        stat.win_count = 0;
+        stat.rate_hz   = 0.0;
+    } else {
+        ++stat.win_count;
+        const double el = std::chrono::duration<double>(now - stat.win_start).count();
+        if (el >= MessageStats::RATE_WINDOW_S) {
+            stat.rate_hz   = stat.win_count / el;
+            stat.win_start = now;
+            stat.win_count = 0;
+        } else if (stat.rate_hz <= 0.0 && stat.win_count >= 3 && el >= 0.25) {
+            stat.rate_hz = stat.win_count / el;
         }
     }
     stat.last_seen = now;

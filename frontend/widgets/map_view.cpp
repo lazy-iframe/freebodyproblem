@@ -34,6 +34,11 @@
 //   - Parent-tile fallback rendering while tiles load
 
 #include "map_view.hpp"
+#include "map_view_3d.hpp"
+#include "map_view_internal.hpp"
+#include "../terrain.hpp"
+#include "../terrain_clearance.hpp"
+#include "../cache_dir.hpp"
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "vehicle_ui_state.hpp"
@@ -48,13 +53,10 @@
 
 #include "stb_image.h"
 
+// Windows' <GL/gl.h> needs the WINGDIAPI/APIENTRY macros from <windows.h>.
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
-#  include <shlobj.h>
-#else
-#  include <errno.h>
-#  include <sys/stat.h>
 #endif
 
 // macOS ships OpenGL as a framework, so the header is <OpenGL/gl.h>.
@@ -68,6 +70,7 @@
 #  define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -75,6 +78,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <thread>
@@ -152,43 +156,7 @@ static std::string g_cache_dir;
 
 static void init_cache_dir()
 {
-#ifdef _WIN32
-    char buf[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, buf)))
-        g_cache_dir = std::string(buf) + "\\freebodyproblem\\tiles";
-    else
-        g_cache_dir = ".\\tile_cache";
-#else
-    const char* xdg = getenv("XDG_CACHE_HOME");
-    if (xdg && *xdg) {
-        g_cache_dir = std::string(xdg) + "/freebodyproblem/tiles";
-    } else {
-        const char* home = getenv("HOME");
-        g_cache_dir = home ? std::string(home) + "/.cache/freebodyproblem/tiles"
-                           : "./.tile_cache";
-    }
-#endif
-}
-
-// Recursively create directories (best-effort).
-static void mkdirs_for_file(const std::string& filepath)
-{
-    size_t sep = filepath.rfind('/');
-#ifdef _WIN32
-    if (sep == std::string::npos) sep = filepath.rfind('\\');
-#endif
-    if (sep == std::string::npos) return;
-    std::string dir = filepath.substr(0, sep);
-    for (size_t i = 1; i <= dir.size(); ++i) {
-        if (i == dir.size() || dir[i] == '/' || dir[i] == '\\') {
-            std::string sub = dir.substr(0, i);
-#ifdef _WIN32
-            CreateDirectoryA(sub.c_str(), nullptr);
-#else
-            mkdir(sub.c_str(), 0755);
-#endif
-        }
-    }
+    g_cache_dir = app_cache_dir("tiles");
 }
 
 static std::string tile_cache_path(const TileKey& k)
@@ -389,6 +357,31 @@ static void queue_tile(const TileKey& key)
     g_fetch_cv.notify_one();
 }
 
+void map_tile_queue_retain(const std::vector<MapTileId>& keep)
+{
+    std::unordered_set<TileKey, TileKeyHash> wanted;
+    for (const MapTileId& t : keep) wanted.insert({ t.x, t.y, t.z });
+
+    std::lock_guard<std::mutex> lk(g_fetch_mtx);
+    std::queue<TileKey> kept;
+    while (!g_fetch_queue.empty()) {
+        const TileKey k = g_fetch_queue.front();
+        g_fetch_queue.pop();
+        if (wanted.count(k)) kept.push(k);
+        else                 g_pending.erase(k);   // free to be asked for again
+    }
+    g_fetch_queue = std::move(kept);
+}
+
+unsigned map_tile_texture(int z, int x, int y, bool queue)
+{
+    const TileKey key{ x, y, z };
+    const auto it = g_textures.find(key);
+    if (it != g_textures.end()) return it->second;
+    if (queue) queue_tile(key);
+    return 0;
+}
+
 // Drop queued requests for zoom levels other than keep_zoom.
 // Called on the main thread whenever zoom changes.
 static void flush_stale_requests(int keep_zoom)
@@ -457,8 +450,6 @@ static bool draw_fallback_tile(ImDrawList* dl,
 
 namespace {
 
-struct TrackPoint { double lat, lon; };
-
 struct VehicleTrack {
     std::deque<TrackPoint> pts;
 };
@@ -513,18 +504,27 @@ void map_track_pump(const VehicleState& vs)
     if (vs.lat == 0.0 && vs.lon == 0.0)  return;
 
     auto& pts = g_tracks.by_vehicle[ui_bound_vehicle()].pts;
+    // Height counts as movement too: the 3D view draws the climb out of a
+    // vertical takeoff, which never moves the aircraft across the ground.
     if (!pts.empty() &&
         rough_metres(pts.back().lat, pts.back().lon, vs.lat, vs.lon)
-            < TRACK_MIN_STEP_M)
+            < TRACK_MIN_STEP_M &&
+        std::fabs(pts.back().alt_amsl - vs.alt_asl) < TRACK_MIN_STEP_M)
         return;
 
-    pts.push_back({ vs.lat, vs.lon });
+    pts.push_back({ vs.lat, vs.lon, vs.alt_asl });
     if (pts.size() > TRACK_MAX_POINTS) pts.pop_front();
 }
 
 void map_track_clear()
 {
     g_tracks.by_vehicle[ui_bound_vehicle()].pts.clear();
+}
+
+const std::deque<TrackPoint>* map_track_of(VehicleId id)
+{
+    const auto it = g_tracks.by_vehicle.find(id);
+    return it == g_tracks.by_vehicle.end() ? nullptr : &it->second.pts;
 }
 
 // ── Home symbol ───────────────────────────────────────────────────────────────
@@ -554,6 +554,8 @@ static void draw_home(ImDrawList* dl, ImVec2 c, bool active)
     dl->AddLine({ c.x - HW, c.y      }, { c.x + HW, c.y      }, col, 2.0f);
 }
 
+void map_draw_home_symbol(ImDrawList* dl, ImVec2 c, bool active) { draw_home(dl, c, active); }
+
 // ── Vehicle symbols ───────────────────────────────────────────────────────────
 //
 // Top-down silhouettes, one per airframe family, or the legacy arrow. All of
@@ -569,7 +571,6 @@ static MapIconStyle g_icon_style = MapIconStyle::ByType;
 
 void map_view_set_icon_style(MapIconStyle s) { g_icon_style = s; }
 
-enum class SymbolKind { Arrow, Plane, Multicopter, Helicopter };
 
 static SymbolKind symbol_kind(uint8_t mav_type, MapIconStyle style)
 {
@@ -752,6 +753,8 @@ static float draw_symbol(ImDrawList* dl, ImVec2 c, SymbolKind kind, float headin
     return draw_arrow(dl, f, port, stbd, edge);
 }
 
+SymbolKind map_symbol_kind(uint8_t mav_type) { return symbol_kind(mav_type, g_icon_style); }
+
 void map_draw_vehicle_symbol(ImDrawList* dl, ImVec2 c, uint8_t mav_type, MapIconStyle style,
                              float heading_deg, float alpha, float scale)
 {
@@ -778,7 +781,7 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
     // vehicle's own dimming, so the set a batch command will reach can be read
     // off the map before the button is pressed.
     if (mv.checked)
-        dl->AddCircle(c, 34.0f, ui_col(g_theme.accent), 0, 2.0f);
+        dl->AddCircle(c, 34.0f, map_amber_u32(), 0, 2.0f);
 
     if (mv.has_hdg) {
         // Heading (degrees CW from north) as a screen vector. Screen Y grows
@@ -867,43 +870,28 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
     // "(2) SYS 1" — Fleet's number, then what the aircraft calls itself. The
     // number is there because the sysid is not a name: two airframes fresh off
     // the bench both answer to 1, and the map would show two identical labels.
+    // Under it, its height above the terrain data.
     //
-    // Held below the symbol at a fixed offset rather than swung around with the
+    // Held above the symbol at a fixed offset rather than swung around with the
     // heading, so a turning aircraft does not drag its own label round with it.
-    // A backing plate, because white-on-satellite is unreadable over anything
-    // pale and this sits on imagery.
-    if (mv.number != 0 || mv.sysid != 0) {
-        char lbl[32];
-        snprintf(lbl, sizeof(lbl), "(%u) SYS %u",
-                 (unsigned)mv.number, (unsigned)mv.sysid);
-
-        ImFont*     fm = g_font_micro ? g_font_micro : ImGui::GetFont();
-        const float tw = ui_tracked_width(fm, UI_SZ_MICRO, lbl);
-        const ImVec2 p0 = { c.x - tw * 0.5f - 5.0f, c.y + 30.0f };
-        const ImVec2 p1 = { p0.x + tw + 10.0f, p0.y + UI_SZ_MICRO + 6.0f };
-
-        // The plate is there for legibility over imagery, not as chrome. The
-        // active aircraft's label is amber and carries itself, so it wants less
-        // plate behind it and less of the map hidden under it; the dim ones
-        // need the backing to stay readable at all.
-        const float plate_a = mv.active ? 0.40f : 0.78f * A;
-        dl->AddRectFilled(p0, p1, ui_col(g_theme.bg_topbar, plate_a));
-        ui_frame(dl, p0, p1, ui_col(g_theme.separator, 0.7f * A));
-        ui_tracked_text(dl, fm, UI_SZ_MICRO, { p0.x + 5.0f, p0.y + 3.0f },
-                        mv.active ? ui_col(g_theme.accent, A)
-                                  : ui_col(g_theme.col_log, A), lbl);
-    }
+    // Boxed, because text straight on satellite imagery is unreadable over
+    // anything pale.
+    map_draw_vehicle_tags(dl, c, 38.0f, mv);
 }
 
-// ── GO HERE context menu ──────────────────────────────────────────────────────
+// ── GO HERE and CLEAR menus ───────────────────────────────────────────────────
 //
-// A right-click on the map names a point; this is what the operator does with
-// it. The menu only reads and writes GotoTargetState — the send itself belongs
-// to the caller, which is the one holding a sender.
+// A click on the map names a point — in 3D, picked in place and height — and
+// the GO HERE menu is what the operator does with it. A right-click opens
+// CLEAR, for what the map is drawing that the operator has finished with.
+// Both are small popups at the pointer, as a context menu is. They only read
+// and write GotoTargetState — the send itself belongs to the caller, which is
+// the one holding a sender.
 
-static double s_ctx_lat = 0.0;      // where the last right-click landed
+static double s_ctx_lat = 0.0;      // the point the GO HERE menu is for
 static double s_ctx_lon = 0.0;
 static double s_ctx_copied_at = -10.0;   // ImGui time the coordinates were last copied
+static bool   s_go_press = false;        // the left press may be a GO HERE click
 
 // Target altitude, metres above home. Seeded from the vehicle's own altitude
 // the first time the menu opens — "go there, stay at this height" is the
@@ -915,27 +903,55 @@ static bool  s_goto_alt_seeded = false;
 static constexpr float GOTO_ALT_MIN_M = 0.0f;
 static constexpr float GOTO_ALT_MAX_M = 1000.0f;
 
-static void draw_goto_menu(GotoTargetState& go)
+// The vehicle every other panel is showing, from the map's fleet list.
+static const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet)
 {
-    constexpr float MENU_W = 250.0f;
+    if (fleet)
+        for (const MapVehicle& mv : *fleet)
+            if (mv.active) return &mv;
+    return nullptr;
+}
 
-    ui_push_dialog_style();
-    if (ImGui::BeginPopup("##map_ctx", ImGuiWindowFlags_AlwaysAutoResize |
-                                       ImGuiWindowFlags_NoTitleBar)) {
-        ui_dialog_title("GO HERE", MENU_W);
+// Tight, as a context menu: little padding, the theme's panel behind it and
+// a hairline of the accent round it.
+static void push_menu_style()
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    { 8.0f, 6.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      { 6.0f, 4.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     { 5.0f, 2.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, g_theme.bg_panel);
+    ImGui::PushStyleColor(ImGuiCol_Border,  ui_col(g_theme.accent, 0.55f));
+}
+static void pop_menu_style()
+{
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(4);
+}
 
-        char coords[80];
-        snprintf(coords, sizeof(coords), "%.6f%c   %.6f%c",
-                 s_ctx_lat < 0 ? -s_ctx_lat : s_ctx_lat, s_ctx_lat < 0 ? 'S' : 'N',
-                 s_ctx_lon < 0 ? -s_ctx_lon : s_ctx_lon, s_ctx_lon < 0 ? 'W' : 'E');
-        // Click to copy, as signed decimal degrees — what other tools paste.
-        // The line says COPIED for a moment so the click is seen to land.
+// `active` and `mission` put the target in height for the terrain check: the
+// target's altitude is above home, and home's AMSL comes from them by the
+// planning rule of plan_home_amsl().
+static void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
+                           const std::vector<MissionItem>* mission)
+{
+    constexpr float ROW_H = 22.0f;
+
+    push_menu_style();
+    if (ImGui::BeginPopup("##map_go", ImGuiWindowFlags_AlwaysAutoResize |
+                                      ImGuiWindowFlags_NoTitleBar)) {
+        // The point, as a heading. Click to copy, as signed decimal degrees —
+        // what other tools paste. It says COPIED for a moment so the click is
+        // seen to land.
         {
-            const bool copied = ImGui::GetTime() - s_ctx_copied_at < 1.2;
-            const char* shown = copied ? "COPIED" : coords;
+            char coords[80];
+            snprintf(coords, sizeof(coords), "%.6f%c  %.6f%c",
+                     s_ctx_lat < 0 ? -s_ctx_lat : s_ctx_lat, s_ctx_lat < 0 ? 'S' : 'N',
+                     s_ctx_lon < 0 ? -s_ctx_lon : s_ctx_lon, s_ctx_lon < 0 ? 'W' : 'E');
+            const bool  copied = ImGui::GetTime() - s_ctx_copied_at < 1.2;
+            const char* shown  = copied ? "COPIED" : coords;
             const ImVec2 sz = ImGui::CalcTextSize(coords);
-            ui_dialog_row(sz.x);
-            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const ImVec2 p  = ImGui::GetCursorScreenPos();
             if (ImGui::InvisibleButton("##ctx_coords", sz)) {
                 char clip[64];
                 snprintf(clip, sizeof(clip), "%.7f, %.7f", s_ctx_lat, s_ctx_lon);
@@ -947,46 +963,57 @@ static void draw_goto_menu(GotoTargetState& go)
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 ImGui::SetTooltip("Click to copy");
             }
-            const ImU32 col = (hov || copied) ? ui_col_accent() : ui_col_value();
-            const float tx  = p.x + (sz.x - ImGui::CalcTextSize(shown).x) * 0.5f;
-            ImGui::GetWindowDrawList()->AddText({ tx, p.y }, col, shown);
+            ImGui::GetWindowDrawList()->AddText(p, (hov || copied) ? ui_col_accent() : ui_col_value(), shown);
         }
-        ImGui::Spacing();
 
-        // Altitude row, centred like everything else in a dialog: label, field,
-        // unit. The number is the only argument the target carries beyond the
-        // click, so it sits with the button that uses it.
+        // The height, the only argument the target carries beyond the point.
         {
-            constexpr float LBL_W = 34.0f, FLD_W = 72.0f, UNIT_W = 96.0f, GAP = 6.0f;
-            ui_dialog_row(LBL_W + FLD_W + UNIT_W + GAP * 2.0f);
-
             ImGui::AlignTextToFramePadding();
             ImGui::PushStyleColor(ImGuiCol_Text, ui_col_label());
             ImGui::TextUnformatted("ALT");
             ImGui::PopStyleColor();
-
-            ImGui::SameLine(0, GAP);
-            ImGui::SetNextItemWidth(FLD_W);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(64.0f);
             ImGui::InputFloat("##goto_alt", &s_goto_alt_m, 0.f, 0.f, "%.1f");
-            s_goto_alt_m = std::max(GOTO_ALT_MIN_M,
-                                    std::min(GOTO_ALT_MAX_M, s_goto_alt_m));
-
-            ImGui::SameLine(0, GAP);
+            s_goto_alt_m = std::max(GOTO_ALT_MIN_M, std::min(GOTO_ALT_MAX_M, s_goto_alt_m));
+            ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("M ABOVE HOME");
+            ImGui::TextDisabled("m above home");
         }
 
-        ImGui::Spacing();
+        // The straight line from the vehicle to the target, against the
+        // terrain and the clearance set in settings. Advice, not a lock: GO
+        // stays live — the terrain data is ~30 m SRTM, and the operator may
+        // know the ground better than it does.
+        if (active && active->has_pos && active->has_alt) {
+            std::optional<float> reported;
+            if (active->has_home_alt) reported = active->home_alt_amsl;
+            const std::optional<float> home =
+                plan_home_amsl(reported, active->has_home ? &active->home_lat : nullptr,
+                               active->has_home ? &active->home_lon : nullptr, mission);
+            if (home) {
+                const Clearance c = path_clearance(active->lat, active->lon, active->alt_amsl,
+                                                   s_ctx_lat, s_ctx_lon, *home + s_goto_alt_m);
+                char t[64];
+                ImU32 col = ui_col_label();
+                if (!c.has_min)          snprintf(t, sizeof(t), "Checking terrain...");
+                else if (c.collides())   { snprintf(t, sizeof(t), "Path hits terrain (%.0f m into it)", (double)-c.min_m);
+                                           col = ui_col(g_theme.col_error); }
+                else if (c.too_close())  { snprintf(t, sizeof(t), "Path within %.0f m of terrain", (double)c.min_m);
+                                           col = ui_col(g_theme.col_warning); }
+                else                     snprintf(t, sizeof(t), "Clears terrain by %.0f m", (double)c.min_m);
+                ImGui::PushStyleColor(ImGuiCol_Text, col);
+                ImGui::TextUnformatted(t);
+                ImGui::PopStyleColor();
+            }
+        }
 
         // The vehicle discards a position target it is not in GUIDED for, and
         // says nothing about having done so. Better to refuse here and name the
         // reason than to send one into silence.
-        const bool sendable = go.sendable;
-
-        constexpr float BW = 150.0f;
-        ui_dialog_row(BW);
-        ImGui::BeginDisabled(!sendable);
-        if (ui_grid_button("GO", { BW, UI_DIALOG_BH })) {
+        const float w = ImGui::GetContentRegionAvail().x;
+        ImGui::BeginDisabled(!go.sendable);
+        if (ui_grid_button("GO", { w, ROW_H })) {
             go.req_lat   = s_ctx_lat;
             go.req_lon   = s_ctx_lon;
             go.req_alt_m = s_goto_alt_m;
@@ -994,42 +1021,43 @@ static void draw_goto_menu(GotoTargetState& go)
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
-
-        if (!sendable) {
-            ImGui::Spacing();
-            ui_dialog_text(go.reason ? go.reason : "UNAVAILABLE",
-                           ui_col(g_theme.col_error));
-        }
-
-        // Neither of these is a command — they only stop the map drawing
-        // something the operator has finished with.
-        if (go.has_target) {
-            ImGui::Spacing();
-            ui_dialog_row(BW);
-            if (ui_grid_button("CLEAR TARGET", { BW, UI_DIALOG_BH })) {
-                go.has_target = false;
-                ImGui::CloseCurrentPopup();
-            }
-        }
-
-        if (!g_tracks.by_vehicle[ui_bound_vehicle()].pts.empty()) {
-            ImGui::Spacing();
-            ui_dialog_row(BW);
-            if (ui_grid_button("CLEAR TRACK", { BW, UI_DIALOG_BH })) {
-                map_track_clear();
-                ImGui::CloseCurrentPopup();
-            }
+        if (!go.sendable) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ui_col(g_theme.col_error));
+            ImGui::TextUnformatted(go.reason ? go.reason : "Unavailable");
+            ImGui::PopStyleColor();
         }
 
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
-
         ImGui::EndPopup();
     }
-    ui_pop_dialog_style();
+    pop_menu_style();
+}
+
+// Neither is a command — they only stop the map drawing something the
+// operator has finished with. Each is greyed out when there is nothing to
+// clear.
+static void draw_clear_menu(GotoTargetState& go)
+{
+    push_menu_style();
+    if (ImGui::BeginPopup("##map_clear", ImGuiWindowFlags_NoTitleBar)) {
+        if (ImGui::MenuItem("Clear target", nullptr, false, go.has_target))
+            go.has_target = false;
+        if (ImGui::MenuItem("Clear track", nullptr, false,
+                            !g_tracks.by_vehicle[ui_bound_vehicle()].pts.empty()))
+            map_track_clear();
+        ImGui::EndPopup();
+    }
+    pop_menu_style();
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+std::string map_tile_attribution()
+{
+    std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+    return g_tile_attribution;
+}
 
 void map_view_set_tile_source(const std::string& url, const std::string& attribution)
 {
@@ -1127,47 +1155,329 @@ static void draw_fence_shape(ImDrawList* dl, const Project& project,
 }
 
 // The parameter-set fence: a ring around home of FENCE_RADIUS (PX4:
-// GF_MAX_HOR_DIST), amber, labelled with its radius and ceiling. Drawn even
-// when the fence is off, faded and marked so, since a fence configured but
-// not enabled is worth knowing about before take-off.
+// GF_MAX_HOR_DIST), amber, labelled with its radius and ceiling. Not drawn
+// when the fence is off.
 template <class Project>
 static void draw_fence_cylinder(ImDrawList* dl, const Project& project,
                                 const MapVehicle& mv)
 {
     const FenceParams& f = mv.fence;
-    if (!mv.has_home || !f.circle_configured()) return;
+    if (!mv.has_home || !f.circle_configured() || f.disabled()) return;
 
-    const bool   on    = !f.has_enable || f.enabled;
-    const float  alpha = (on ? 1.0f : 0.45f) * (mv.active ? 1.0f : 0.5f);
+    const float  alpha = mv.active ? 1.0f : 0.5f;
     const ImU32  col   = ui_col(g_theme.col_warning, 0.9f * alpha);
     const ImVec2 c     = project(mv.home_lat, mv.home_lon);
     const float  r     = metres_to_px(project, mv.home_lat, mv.home_lon, f.radius_m);
 
-    // Dashed when off: 48 dashes round the ring.
-    if (on) {
-        dl->AddCircle(c, r, col, 96, 2.5f);
-    } else {
-        constexpr int DASHES = 48;
-        for (int i = 0; i < DASHES; ++i) {
-            const float a0 = (float)i / DASHES * 6.2831853f;
-            const float a1 = a0 + 0.5f / DASHES * 6.2831853f;
-            dl->PathArcTo(c, r, a0, a1, 4);
-            dl->PathStroke(col, 0, 2.0f);
-        }
-    }
+    dl->AddCircle(c, r, col, 96, 2.5f);
 
     char lbl[64];
     if (f.ceiling_configured())
-        snprintf(lbl, sizeof(lbl), "FENCE %.0f M  \xe2\x89\xa4 %.0f M%s",
-                 (double)f.radius_m, (double)f.alt_max_m, on ? "" : "  (OFF)");
+        snprintf(lbl, sizeof(lbl), "FENCE %.0f M  \xe2\x89\xa4 %.0f M",
+                 (double)f.radius_m, (double)f.alt_max_m);
     else
-        snprintf(lbl, sizeof(lbl), "FENCE %.0f M%s", (double)f.radius_m, on ? "" : "  (OFF)");
+        snprintf(lbl, sizeof(lbl), "FENCE %.0f M", (double)f.radius_m);
     ImFont*      fm = g_font_micro ? g_font_micro : ImGui::GetFont();
     const float  tw = ui_tracked_width(fm, UI_SZ_MICRO, lbl);
     const ImVec2 tp = { c.x - tw * 0.5f, c.y - r - UI_SZ_MICRO - 6.0f };
     dl->AddRectFilled({ tp.x - 3.0f, tp.y - 1.0f }, { tp.x + tw + 3.0f, tp.y + UI_SZ_MICRO + 1.0f },
                       IM_COL32(0, 0, 0, 150), 2.0f);
     ui_tracked_text(dl, fm, UI_SZ_MICRO, tp, col, lbl);
+}
+
+// ── Overlay chrome shared by the flat map and the 3D view ─────────────────────
+
+constexpr float OVL_M   = 8.0f;    // from the map's edges
+constexpr float AC_H    = 55.0f;   // the A/C block's height
+constexpr float BTN_W   = 72.0f;   // the control column, under the A/C block
+constexpr float BTN_H   = 30.0f;
+constexpr float BTN_GAP = 6.0f;
+
+// The 3D view in place of the flat map. Off while placing or dragging
+// anything, which only the flat map does.
+static bool s_3d = false;
+
+// The control column, top left under the A/C block, one button a row:
+// CENTER, 3D, and in 3D the exaggeration and the imagery switch. Fixed in
+// place — turning 3D on adds rows below and moves nothing. r[2i..2i+1] is
+// row i's rectangle.
+static void overlay_button_rects(ImVec2 wp, ImVec2 r[8])
+{
+    for (int i = 0; i < 4; ++i) {
+        r[2 * i]     = { wp.x + OVL_M, wp.y + OVL_M + AC_H + BTN_GAP + i * (BTN_H + BTN_GAP) };
+        r[2 * i + 1] = { r[2 * i].x + BTN_W, r[2 * i].y + BTN_H };
+    }
+}
+
+static bool over_overlay_buttons(ImVec2 wp)
+{
+    ImVec2 r[8];
+    overlay_button_rects(wp, r);
+    const int rows = s_3d ? 4 : 2;
+    for (int i = 0; i < rows; ++i)
+        if (ImGui::IsMouseHoveringRect(r[2 * i], r[2 * i + 1], false)) return true;
+    return false;
+}
+
+// CENTER, lit while the map is following, and 3D under it; in 3D, the
+// vertical exaggeration under that, pressed to step through its values,
+// and TEX, lit while imagery covers the terrain.
+static void draw_overlay_buttons(ImVec2 wp, bool has_pos, double lat, double lon)
+{
+    ImVec2 r[8];
+    overlay_button_rects(wp, r);
+
+    // Without a position there is nothing to centre on.
+    ImGui::SetCursorScreenPos(r[0]);
+    ImGui::BeginDisabled(!has_pos);
+    if (ui_tab_button("CENTER##map_center", { BTN_W, BTN_H }, g_map.follow) &&
+        has_pos) {
+        g_map.follow     = true;
+        g_map.center_lat = lat;
+        g_map.center_lon = lon;
+    }
+    ImGui::EndDisabled();
+
+    const bool avail = map3d_available();
+    ImGui::SetCursorScreenPos(r[2]);
+    ImGui::BeginDisabled(!avail);
+    if (ui_tab_button("3D##map_3d", { BTN_W, BTN_H }, s_3d)) s_3d = !s_3d;
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(avail ? "Terrain in 3D: drag to orbit, right-drag to pan, wheel to zoom"
+                                : "3D needs OpenGL 3.3, which this driver does not offer");
+    if (s_3d) {
+        char ex[32];
+        snprintf(ex, sizeof(ex), "\xc3\x97%g##map_exag", (double)map3d_exaggeration());
+        ImGui::SetCursorScreenPos(r[4]);
+        if (ui_tab_button(ex, { BTN_W, BTN_H }, false)) map3d_cycle_exaggeration();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("Vertical exaggeration: heights drawn this many times their size");
+
+        ImGui::SetCursorScreenPos(r[6]);
+        if (ui_tab_button("TEX##map_tex", { BTN_W, BTN_H }, map3d_textures())) map3d_toggle_textures();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("Imagery on the terrain; off shows the bare elevation mesh");
+    }
+}
+
+// The active vehicle's height above the terrain under it: its own AMSL
+// altitude less the terrain data's ground there — so it is the GCS's word on
+// the ground, not the vehicle's, and disagrees with the vehicle's own
+// "AGL" (above home) wherever home and the ground there differ. nullopt
+// without a position and altitude, or while the terrain tile loads.
+static std::optional<float> active_terrain_agl(const std::vector<MapVehicle>* fleet)
+{
+    if (!fleet) return std::nullopt;
+    for (const MapVehicle& mv : *fleet) {
+        if (!mv.active || !mv.has_pos || !mv.has_alt) continue;
+        if (auto g = terrain_amsl(mv.lat, mv.lon)) return mv.alt_amsl - *g;
+    }
+    return std::nullopt;
+}
+
+static float s_ac_right = 0.0f;   // see map_ac_block_right()
+
+float map_ac_block_right() { return s_ac_right; }
+
+// `text` split into lines no wider than `wrap_w`, as the radio tab's notice
+// splits its own: the longest run of whole words that fits, a word too long
+// for a line broken by character, no line opening or closing on a space.
+static std::vector<std::pair<const char*, const char*>> wrap_lines(const char* text, float wrap_w)
+{
+    std::vector<std::pair<const char*, const char*>> lines;
+    for (const char* p = text; *p; ) {
+        while (*p == ' ') ++p;
+        if (!*p) break;
+        const char* fit = nullptr;
+        for (const char* q = p; ; ) {
+            while (*q && *q != ' ') ++q;
+            if (ImGui::CalcTextSize(p, q).x > wrap_w) break;
+            fit = q;
+            while (*q == ' ') ++q;
+            if (!*q) break;
+        }
+        if (!fit) {
+            fit = p + 1;
+            while (*fit && *fit != ' ' && ImGui::CalcTextSize(p, fit + 1).x <= wrap_w) ++fit;
+        }
+        lines.push_back({ p, fit });
+        p = fit;
+    }
+    return lines;
+}
+
+constexpr float TAG_PAD_X = 5.0f, TAG_PAD_Y = 3.0f;
+
+ImVec2 map_tag_size(const char* text)
+{
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    return { ts.x + TAG_PAD_X * 2.0f, ts.y + TAG_PAD_Y * 2.0f };
+}
+
+// The tags over the map are drawn at this opacity, box and text alike, so the
+// imagery under them shows through a little.
+constexpr float TAG_OPACITY = 0.8f;
+
+void map_draw_tag(ImDrawList* dl, ImVec2 left_mid, const char* text, ImVec4 col, float alpha)
+{
+    alpha *= TAG_OPACITY;
+    const ImVec2 sz  = map_tag_size(text);
+    const ImVec2 a   = { left_mid.x, left_mid.y - sz.y * 0.5f };
+    const ImVec2 b   = { a.x + sz.x, a.y + sz.y };
+    const float  rnd = ImGui::GetStyle().ChildRounding;
+    dl->AddRectFilled(a, b, ui_col(g_theme.bg_topbar, alpha), rnd);
+    dl->AddRectFilled(a, b, ImGui::GetColorU32({ col.x, col.y, col.z, 0.14f * alpha }), rnd);
+    dl->AddRect      (a, b, ImGui::GetColorU32({ col.x, col.y, col.z, alpha }), rnd, 0, FRAME_BORDER_NORMAL);
+    dl->AddText({ a.x + TAG_PAD_X, a.y + TAG_PAD_Y }, ImGui::GetColorU32({ col.x, col.y, col.z, alpha }), text);
+}
+
+void map_draw_tag(ImDrawList* dl, ImVec2 left_mid, const char* text)
+{
+    map_draw_tag(dl, left_mid, text, col_ok());
+}
+
+void map_draw_vehicle_tags(ImDrawList* dl, ImVec2 centre, float above, const MapVehicle& mv)
+{
+    if (mv.number == 0 && mv.sysid == 0) return;
+    const float A = mv.active ? 1.0f : 0.55f;
+
+    // The GCS's word on the ground, not the vehicle's: its AMSL less the
+    // terrain data there, so it differs from the vehicle's own "AGL" (above
+    // home) wherever home and the ground under it differ.
+    char t[40] = "";
+    float agl = 0.0f;
+    if (mv.has_pos && mv.has_alt)
+        if (const std::optional<float> g = terrain_amsl(mv.lat, mv.lon)) {
+            agl = mv.alt_amsl - *g;
+            if (agl < 0.0f) snprintf(t, sizeof(t), "BELOW TERRAIN %.0f m", (double)-agl);
+            else            snprintf(t, sizeof(t), "%.0f m AGL", (double)agl);
+        }
+
+    // Stacked upward from the vehicle: the height nearest it, the name on top.
+    float bottom = centre.y - above;
+    if (*t) {
+        const ImVec2 ts = map_tag_size(t);
+        map_draw_tag(dl, { centre.x - ts.x * 0.5f, bottom - ts.y * 0.5f }, t,
+                     agl < 0.0f ? g_theme.col_error : col_ok(), A);
+        bottom -= ts.y + 2.0f;
+    }
+    char lbl[32];
+    snprintf(lbl, sizeof(lbl), "(%u) SYS %u", (unsigned)mv.number, (unsigned)mv.sysid);
+    const ImVec2 ls = map_tag_size(lbl);
+    map_draw_tag(dl, { centre.x - ls.x * 0.5f, bottom - ls.y * 0.5f }, lbl, col_ok(), A);
+}
+
+void map_draw_instruction(ImVec2 p0, ImVec2 size, const char* text)
+{
+    constexpr float PAD_X = 6.0f, PAD_Y = 5.0f;
+    ImDrawList*  dl  = ImGui::GetForegroundDrawList();
+    const ImVec4 ok  = col_ok();
+
+    // At most half the map's width: the text wrapped to that and centred line
+    // by line, the box only as wide as its widest line and as tall as the
+    // lines it took.
+    const float max_w = std::floor(size.x * 0.5f);
+    const auto  lines = wrap_lines(text, max_w - PAD_X * 2.0f);
+    float       text_w = 0.0f;
+    for (const auto& ln : lines) text_w = std::max(text_w, ImGui::CalcTextSize(ln.first, ln.second).x);
+    const float bw    = std::min(max_w, std::ceil(text_w) + PAD_X * 2.0f);
+    const float lh    = ImGui::GetTextLineHeight();
+    const float bh    = lines.size() * lh + PAD_Y * 2.0f;
+    const float x     = std::max(p0.x + (size.x - bw) * 0.5f, s_ac_right + 8.0f);
+    const float y     = p0.y + OVL_M;
+    const float rnd   = ImGui::GetStyle().ChildRounding;
+
+    // The notice's tint is over a panel; here it is over imagery, so a dark
+    // backing first, or the tint would vanish into whatever is under it.
+    dl->AddRectFilled({ x, y }, { x + bw, y + bh }, ui_col(g_theme.bg_topbar, 0.92f), rnd);
+    dl->AddRectFilled({ x, y }, { x + bw, y + bh }, ImGui::GetColorU32({ ok.x, ok.y, ok.z, 0.14f }), rnd);
+    dl->AddRect      ({ x, y }, { x + bw, y + bh }, ImGui::GetColorU32(ok), rnd, 0, FRAME_BORDER_NORMAL);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const float lw = ImGui::CalcTextSize(lines[i].first, lines[i].second).x;
+        dl->AddText({ x + (bw - lw) * 0.5f, y + PAD_Y + i * lh }, ImGui::GetColorU32(ok),
+                    lines[i].first, lines[i].second);
+    }
+}
+
+// The A/C state block, top left. Its third line is height above the terrain
+// data, `ter_agl`; red, and saying so, when the vehicle is below it.
+static void draw_ac_block(ImDrawList* dl, ImVec2 wp, bool has_pos,
+                          double lat, double lon, float heading, bool has_hdg,
+                          float alt_rel, float gs, std::optional<float> ter_agl)
+{
+    ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
+    const ImU32 lbl = ui_col_label();
+    const ImU32 val = ui_col_value();
+
+    char l1[64], l2[64];
+    if (has_pos)
+        snprintf(l1, sizeof(l1), "A/C  %.5f%c %.5f%c",
+                 lat < 0 ? -lat : lat, lat < 0 ? 'S' : 'N',
+                 lon < 0 ? -lon : lon, lon < 0 ? 'W' : 'E');
+    else
+        snprintf(l1, sizeof(l1), "A/C  NO POSITION");
+    snprintf(l2, sizeof(l2), "HDG %s  ALT %.0f AGL  GS %.0f",
+             has_hdg ? "" : "---", (double)alt_rel, (double)gs);
+    if (has_hdg)
+        snprintf(l2, sizeof(l2), "HDG %03d  ALT %.0f AGL  GS %.0f",
+                 (int)heading, (double)alt_rel, (double)gs);
+
+    char l3[64];
+    const bool below = ter_agl && *ter_agl < 0.0f;
+    if (!ter_agl)    snprintf(l3, sizeof(l3), "TER AGL ---");
+    else if (below)  snprintf(l3, sizeof(l3), "BELOW TERRAIN %.0f m", (double)-*ter_agl);
+    else             snprintf(l3, sizeof(l3), "TER AGL %.0f", (double)*ter_agl);
+
+    const float w1 = ui_tracked_width(fm, UI_SZ_MICRO, l1);
+    const float w2 = ui_tracked_width(fm, UI_SZ_MICRO, l2);
+    const float w3 = ui_tracked_width(fm, UI_SZ_MICRO, l3);
+    const float bw = std::max({ w1, w2, w3 }) + 16.0f;
+
+    const ImVec2 b0 = { wp.x + OVL_M, wp.y + OVL_M };
+    const ImVec2 b1 = { b0.x + std::max(bw, BTN_W), b0.y + AC_H };
+    s_ac_right = b1.x;
+    dl->AddRectFilled(b0, b1, ui_col(g_theme.bg_topbar, 0.78f));
+    ui_frame(dl, b0, b1, ui_col(g_theme.separator, 0.7f));
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 8.0f },
+                    has_pos ? val : lbl, l1);
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 23.0f },
+                    lbl, l2);
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 38.0f },
+                    below ? ui_col(g_theme.col_error) : ter_agl ? val : lbl, l3);
+}
+
+// North, bottom-right above the attribution, `lift` px higher when that runs
+// to a second line; `rot_deg` turns it for a view that does not have north up.
+static void draw_north_pointer(ImDrawList* dl, ImVec2 wp, float win_w, float win_h,
+                               float rot_deg, float lift = 0.0f)
+{
+    ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
+    const float nx  = wp.x + win_w - 22.0f;
+    const float ny  = wp.y + win_h - 40.0f - lift;
+    const float r   = rot_deg * (float)(M_PI / 180.0);
+    const float cs  = std::cos(r), sn = std::sin(r);
+    const auto  at  = [&](float x, float y) { return ImVec2{ nx + x * cs - y * sn, ny + x * sn + y * cs }; };
+    dl->AddTriangleFilled(at(0.0f, -10.0f), at(-5.0f, 4.0f), at(5.0f, 4.0f), map_amber_u32());
+    ui_tracked_text(dl, fm, UI_SZ_MICRO, { nx - 3.0f, ny + 6.0f }, ui_col_label(), "N");
+}
+
+// The imagery's attribution, bottom-right, with `extra` on a line above it.
+static void draw_attribution(ImDrawList* dl, ImVec2 wp, float win_w, float win_h, const char* extra)
+{
+    float bottom = wp.y + win_h - 4.0f;
+    const std::string attr_str = map_tile_attribution();
+    for (const char* line : { attr_str.c_str(), extra }) {
+        if (!line) continue;
+        const ImVec2 asz = ImGui::CalcTextSize(line);
+        const float  ax  = wp.x + win_w - asz.x - 6.0f;
+        const float  ay  = bottom - asz.y;
+        dl->AddRectFilled({ax - 4.0f, ay - 2.0f},
+                           {ax + asz.x + 4.0f, ay + asz.y + 2.0f},
+                           map_attr_bg());
+        dl->AddText({ax, ay}, map_attr_text(), line);
+        bottom = ay - 6.0f;
+    }
 }
 
 void draw_map_view(double lat, double lon, bool has_pos,
@@ -1208,14 +1518,16 @@ void draw_map_view(double lat, double lon, bool has_pos,
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2      wp = ImGui::GetWindowPos();
 
-    // CENTER, top-left: puts the map back on the active vehicle and keeps it
-    // there, which a drag gives up. Its rect is fixed so the input below can
-    // leave it alone — a press on it must not also pan, pick or open GO HERE.
-    constexpr float CTR_W = 64.0f, CTR_H = 40.0f, OVL_M = 8.0f;
-    const ImVec2 ctr0 = { wp.x + OVL_M, wp.y + OVL_M };
-    const ImVec2 ctr1 = { ctr0.x + CTR_W, ctr0.y + CTR_H };
-    const bool   map_hovered = ImGui::IsWindowHovered() &&
-                               !ImGui::IsMouseHoveringRect(ctr0, ctr1, false);
+    // The control row, top right — CENTER puts the map back on the active
+    // vehicle and keeps it there, which a drag gives up. Its rects are fixed
+    // so the input below can leave them alone: a press on a button must not
+    // also pan, pick or open GO HERE.
+    const bool map_hovered = ImGui::IsWindowHovered() && !over_overlay_buttons(wp);
+
+    // A mission item can be placed in 3D, ground then height. Fences and the
+    // EDIT drags are flat-map work; starting any of them leaves 3D.
+    if (pick && (pick->fence_drawing() || pick->drag_edit || pick->fence_edit))
+        s_3d = false;
 
     // ── Keep centered on vehicle until user pans ───────────────────────────────
     if (has_pos && (!g_map.initialized || g_map.follow)) {
@@ -1225,6 +1537,69 @@ void draw_map_view(double lat, double lon, bool has_pos,
             g_map.zoom        = 15;
             g_map.initialized = true;
         }
+    }
+
+    // ── 3D ────────────────────────────────────────────────────────────────────
+    // The same window, inputs and overlay chrome, with the 3D view where the
+    // tiles would be. Should it fail to draw, the flat map takes over.
+    if (s_3d && g_map.initialized) {
+        std::vector<MapVehicle> solo;
+        const std::vector<MapVehicle>* draw_list = fleet;
+        if (!draw_list || draw_list->empty()) {
+            MapVehicle one;
+            one.id      = ui_bound_vehicle();
+            one.lat     = lat;
+            one.lon     = lon;
+            one.has_pos = has_pos;
+            one.heading = heading;
+            one.has_hdg = has_hdg;
+            one.active  = true;
+            solo.push_back(one);
+            draw_list = &solo;
+        }
+        Map3DScene scene;
+        scene.fleet   = draw_list;
+        scene.mission = (pick && pick->edit_mission) ? pick->edit_mission : mission;
+        scene.pick    = pick;
+        scene.go      = go;
+        FencePlan downloaded;
+        scene.fence = (pick && pick->edit_fence) ? pick->edit_fence : nullptr;
+        if (!scene.fence && fence && !fence->empty()) {
+            downloaded  = fence_from_items(*fence);
+            scene.fence = &downloaded;
+        }
+        if (map3d_draw(dl, wp, { win_w, win_h }, map_hovered,
+                       { g_map.center_lat, g_map.center_lon, g_map.follow }, scene)) {
+            draw_overlay_buttons(wp, has_pos, lat, lon);
+            draw_ac_block(dl, wp, has_pos, lat, lon, heading, has_hdg, alt_rel, gs,
+                          active_terrain_agl(fleet));
+            draw_north_pointer(dl, wp, win_w, win_h, -map3d_yaw_deg(),
+                               ImGui::GetTextLineHeight() + 6.0f);
+            draw_attribution(dl, wp, win_w, win_h, terrain_attribution().c_str());
+
+            // GO HERE, picked in 3D place and height: the same menu as a 2D
+            // click, at that point, its altitude filled in. A right-click
+            // outside the pick: the same CLEAR menu.
+            double glat, glon;
+            float  galt;
+            if (go && map3d_take_goto(glat, glon, galt)) {
+                s_ctx_lat         = glat;
+                s_ctx_lon         = glon;
+                s_goto_alt_m      = std::clamp(galt, GOTO_ALT_MIN_M, GOTO_ALT_MAX_M);
+                s_goto_alt_seeded = true;
+                ImGui::OpenPopup("##map_go");
+            }
+            if (go && map3d_take_clear()) ImGui::OpenPopup("##map_clear");
+            if (go) {
+                draw_goto_menu(*go, active_vehicle(draw_list), scene.mission);
+                draw_clear_menu(*go);
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+            return;
+        }
+        s_3d = false;
     }
 
     // ── Input ─────────────────────────────────────────────────────────────────
@@ -1406,11 +1781,18 @@ void draw_map_view(double lat, double lon, bool has_pos,
             }
         }
 
-        // ── Right-click → GO HERE menu ────────────────────────────────────────
-        // Not while picking a waypoint: the mouse belongs to that gesture, and a
-        // second target offered mid-pick is one the operator did not ask for.
-        if (go && !pick_active && map_hovered &&
-            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        // ── Click → GO HERE, right-click → CLEAR ──────────────────────────────
+        // A click is a press and release that barely moved, so a drag still
+        // pans. Not while picking a waypoint or a fence point — the mouse
+        // belongs to that gesture, and a target offered mid-pick is one the
+        // operator did not ask for — nor on a press that picked up a waypoint
+        // or a fence point to drag.
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            s_go_press = map_hovered && !pick_active && s_drag_wp < 0 && s_drag_fence.shape < 0;
+        if (go && s_go_press && map_hovered && !pick_active &&
+            ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+            ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < 16.0f) {
+            s_go_press = false;
             const ImVec2 mouse = ImGui::GetMousePos();
             double gx = ((double)(mouse.x - wp.x) + tl_px) / TILE_PX;
             double gy = ((double)(mouse.y - wp.y) + tl_py) / TILE_PX;
@@ -1419,9 +1801,15 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 s_goto_alt_m = std::max(2.0f, std::round(go->current_alt_m));
                 s_goto_alt_seeded = true;
             }
-            ImGui::OpenPopup("##map_ctx");
+            ImGui::OpenPopup("##map_go");
         }
-        if (go) draw_goto_menu(*go);
+        if (go && !pick_active && map_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            ImGui::OpenPopup("##map_clear");
+        if (go) {
+            draw_goto_menu(*go, active_vehicle(fleet),
+                           (pick && pick->edit_mission) ? pick->edit_mission : mission);
+            draw_clear_menu(*go);
+        }
 
         int tx0 = (int)std::floor(tl_px / TILE_PX);
         int ty0 = (int)std::floor(tl_py / TILE_PX);
@@ -1495,7 +1883,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
         // trails, the aircraft and the mission are all read against them.
         //
         // Uploaded zones: the fence editor's plan while it has one, else the
-        // active vehicle's fence as last downloaded.
+        // active vehicle's fence as last downloaded, unless the fence is off.
         {
             FencePlan downloaded;
             const FencePlan* zones = (pick && pick->edit_fence) ? pick->edit_fence : nullptr;
@@ -1667,7 +2055,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
             const ImVec2 tp = { wp.x + (float)(gx * TILE_PX - tl_px),
                                 wp.y + (float)(gy * TILE_PX - tl_py) };
             constexpr float R = 10.0f;
-            const ImU32 col = ui_col_accent();
+            const ImU32 col = map_amber_u32();
             dl->AddCircle(tp, R,        col, 0, 2.0f);
             dl->AddCircle(tp, R * 0.35f, col, 0, 2.0f);
             dl->AddLine({ tp.x - R - 5.0f, tp.y }, { tp.x - R + 2.0f, tp.y }, col, 2.0f);
@@ -1677,10 +2065,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
 
             char tlbl[32];
             snprintf(tlbl, sizeof(tlbl), "GOTO  %.0f M", (double)go->target_alt_m);
-            ImFont* fm = g_font_micro ? g_font_micro : ImGui::GetFont();
-            ui_tracked_text(dl, fm, UI_SZ_MICRO,
-                            { tp.x + R + 8.0f, tp.y - UI_SZ_MICRO * 0.5f },
-                            col, tlbl);
+            map_draw_tag(dl, { tp.x + R + 8.0f, tp.y }, tlbl);
 
             // A line from the aircraft to the target: at a glance it says both
             // which vehicle the target belongs to and how far it has to run.
@@ -1689,7 +2074,7 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 lat_lon_to_tile_frac(lat, lon, g_map.zoom, vx2, vy2);
                 dl->AddLine({ wp.x + (float)(vx2 * TILE_PX - tl_px),
                               wp.y + (float)(vy2 * TILE_PX - tl_py) },
-                            tp, ui_col(g_theme.accent, 0.45f), 1.5f);
+                            tp, map_amber_u32(0.45f), 1.5f);
             }
         }
 
@@ -1716,59 +2101,17 @@ void draw_map_view(double lat, double lon, bool has_pos,
             else
                 snprintf(hint, sizeof(hint),
                          "  EDIT  \xe2\x80\x94  drag a waypoint to move it  ");
-            const ImVec2 hsz = ImGui::CalcTextSize(hint);
-            const float  hx  = wp.x + (win_w - hsz.x) * 0.5f;
-            const float  hy  = wp.y + 8.0f;
-            dl->AddRectFilled({ hx,          hy          },
-                              { hx + hsz.x,  hy + hsz.y  },
-                              IM_COL32(0, 0, 0, 180), 4.0f);
-            dl->AddText({ hx, hy }, IM_COL32(255, 230, 60, 255), hint);
+            map_draw_instruction(wp, { win_w, win_h }, hint);
         }
 
         // ── Tactical overlay: A/C block, scale bar, north pointer ─────────────
         {
             ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
             const ImU32 lbl = ui_col_label();
-            const ImU32 val = ui_col_value();
 
-            // A/C state block, top-left.
-            char l1[64], l2[64];
-            if (has_pos)
-                snprintf(l1, sizeof(l1), "A/C  %.5f%c %.5f%c",
-                         lat < 0 ? -lat : lat, lat < 0 ? 'S' : 'N',
-                         lon < 0 ? -lon : lon, lon < 0 ? 'W' : 'E');
-            else
-                snprintf(l1, sizeof(l1), "A/C  NO POSITION");
-            snprintf(l2, sizeof(l2), "HDG %s  ALT %.0f AGL  GS %.0f",
-                     has_hdg ? "" : "---", (double)alt_rel, (double)gs);
-            if (has_hdg)
-                snprintf(l2, sizeof(l2), "HDG %03d  ALT %.0f AGL  GS %.0f",
-                         (int)heading, (double)alt_rel, (double)gs);
-
-            const float w1 = ui_tracked_width(fm, UI_SZ_MICRO, l1);
-            const float w2 = ui_tracked_width(fm, UI_SZ_MICRO, l2);
-            const float bw = std::max(w1, w2) + 16.0f;
-
-            // CENTER, lit while the map is following. Without a position there
-            // is nothing to centre on.
-            ImGui::SetCursorScreenPos(ctr0);
-            ImGui::BeginDisabled(!has_pos);
-            if (ui_tab_button("CENTER##map_center", { CTR_W, CTR_H }, g_map.follow) &&
-                has_pos) {
-                g_map.follow     = true;
-                g_map.center_lat = lat;
-                g_map.center_lon = lon;
-            }
-            ImGui::EndDisabled();
-
-            const ImVec2 b0 = { ctr1.x + 6.0f, wp.y + OVL_M };
-            const ImVec2 b1 = { b0.x + bw,   b0.y + 40.0f };
-            dl->AddRectFilled(b0, b1, ui_col(g_theme.bg_topbar, 0.78f));
-            ui_frame(dl, b0, b1, ui_col(g_theme.separator, 0.7f));
-            ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 8.0f },
-                            has_pos ? val : lbl, l1);
-            ui_tracked_text(dl, fm, UI_SZ_MICRO, { b0.x + 8.0f, b0.y + 23.0f },
-                            lbl, l2);
+            draw_overlay_buttons(wp, has_pos, lat, lon);
+            draw_ac_block(dl, wp, has_pos, lat, lon, heading, has_hdg, alt_rel, gs,
+                          active_terrain_agl(fleet));
 
             // Scale bar, bottom-left: 120 px of ground truth at this latitude.
             {
@@ -1789,29 +2132,10 @@ void draw_map_view(double lat, double lon, bool has_pos,
                 ui_tracked_text(dl, fm, UI_SZ_MICRO, { sx, sy - 17.0f }, lbl, scale_s);
             }
 
-            // North pointer, bottom-right above the attribution line.
-            {
-                const float nx = wp.x + win_w - 22.0f;
-                const float ny = wp.y + win_h - 40.0f;
-                dl->AddTriangleFilled({ nx, ny - 10.0f },
-                                      { nx - 5.0f, ny + 4.0f },
-                                      { nx + 5.0f, ny + 4.0f },
-                                      ui_col_accent());
-                ui_tracked_text(dl, fm, UI_SZ_MICRO, { nx - 3.0f, ny + 6.0f }, lbl, "N");
-            }
+            draw_north_pointer(dl, wp, win_w, win_h, 0.0f);
         }
 
-        // ── Tile source attribution ───────────────────────────────────────────
-        std::string attr_str;
-        { std::lock_guard<std::mutex> lk(g_tile_cfg_mtx); attr_str = g_tile_attribution; }
-        const char* attr = attr_str.c_str();
-        ImVec2 asz = ImGui::CalcTextSize(attr);
-        float  ax  = wp.x + win_w - asz.x - 6.0f;
-        float  ay  = wp.y + win_h - asz.y - 4.0f;
-        dl->AddRectFilled({ax - 4.0f, ay - 2.0f},
-                           {ax + asz.x + 4.0f, ay + asz.y + 2.0f},
-                           map_attr_bg());
-        dl->AddText({ax, ay}, map_attr_text(), attr);
+        draw_attribution(dl, wp, win_w, win_h, nullptr);
     }
 
     ImGui::End();

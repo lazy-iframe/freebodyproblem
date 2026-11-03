@@ -80,9 +80,11 @@ struct FenceParams {
     static constexpr uint32_t TYPE_POLYGON = 1u << 2;
     static constexpr uint32_t TYPE_ALT_MIN = 1u << 3;
 
+    // Known to be switched off. The map draws nothing of a fence that is.
+    bool disabled() const { return has_enable && !enabled; }
+
     // A horizontal cylinder is configured: a radius, and on ArduPilot the
-    // circle bit set. Whether it is enforced is `enabled`, separately — the map
-    // draws a configured but disabled one too, dimmed.
+    // circle bit set. Whether it is enforced is `enabled`, separately.
     bool circle_configured() const {
         if (!has_radius || radius_m <= 0.0f) return false;
         return px4 || !has_type || (type & TYPE_CIRCLE);
@@ -162,20 +164,30 @@ struct CommandAck {
 
 struct MessageStats {
     uint64_t count   = 0;
-    double   rate_hz = 0.0;   // exponential moving average
+    double   rate_hz = 0.0;   // messages per second over the last whole window
     std::chrono::steady_clock::time_point last_seen{};
 
-    // Returns rate decayed by elapsed silence since the last message.
-    // Prevents the displayed rate from staying non-zero when messages stop.
+    // The window being counted: opened at a message, closed at the first one
+    // RATE_WINDOW_S or more later, the rate then the intervals counted over
+    // the time they took. A count, not a smoothed instantaneous rate: the
+    // messages reach the parser in batches, so the gap between two of them
+    // says little about the rate, while the count over a second is exact.
+    std::chrono::steady_clock::time_point win_start{};
+    uint32_t win_count = 0;
+    static constexpr double RATE_WINDOW_S = 1.0;
+
+    // The rate, unless the message has stopped: then it falls as the silence
+    // grows, so a stream that ends does not stay on the screen. Overdue only
+    // past two of its intervals and a quarter second more — the screen reads
+    // a snapshot up to a publish interval old, and judging a message late by
+    // that would mark every steady stream down.
     double effective_rate_hz() const {
         if (count == 0 || rate_hz <= 0.0) return 0.0;
-        auto   now = std::chrono::steady_clock::now();
-        double dt  = std::chrono::duration<double>(now - last_seen).count();
-        if (dt <= 0.0) return rate_hz;
-        // Each "missed" expected interval decays the EMA by factor (1 - alpha).
-        // alpha = 0.2  →  decay = 0.8 ^ (dt * rate_hz)
-        double n_missed = dt * rate_hz;
-        return rate_hz * std::pow(0.8, n_missed);
+        const auto   now = std::chrono::steady_clock::now();
+        const double dt  = std::chrono::duration<double>(now - last_seen).count();
+        const double due = 2.0 / rate_hz + 0.25;
+        if (dt <= due) return rate_hz;
+        return std::min(rate_hz, 1.0 / (dt - due + 1.0 / rate_hz));
     }
 };
 

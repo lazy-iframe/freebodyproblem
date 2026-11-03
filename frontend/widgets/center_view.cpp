@@ -20,6 +20,7 @@
 #include "layout.hpp"
 #include "ui_kit.hpp"
 #include "map_view.hpp"
+#include "map_view_3d.hpp"
 #include "vehicle_ui_state.hpp"
 #include "plugin_rail.hpp"
 #include "swarm_view.hpp"
@@ -248,7 +249,7 @@ static void draw_video_picker(const VehicleState& vs, MavlinkSender* sender,
 
 // ── GO HERE ───────────────────────────────────────────────────────────────────
 //
-// The map draws the right-click menu and hands back a point; the send happens
+// The map draws the GO HERE menu and hands back a point; the send happens
 // here, where the sender is.
 
 // Keyed by vehicle rather than held flat: a target belongs to the aircraft it
@@ -277,8 +278,10 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
     const GcsLayout l = GcsLayout::compute();
 
     // Escape is the way out that does not require finding the button again.
-    // Skipped while a popup owns the key, or it would close both at once.
+    // Skipped while a popup owns the key, or it would close both at once —
+    // and while the 3D map is picking a GO HERE point, whose Esc cancels it.
     if ((s_video_full || s_map_full) &&
+        !map3d_picking_goto() &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
                                      ImGuiPopupFlags_AnyPopupLevel) &&
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -686,7 +689,7 @@ void draw_center_view(const VehicleState& vs, MavlinkSender* sender,
                       s_map_w, s_map_h,
                       map_mission, pick,
                       vs.alt_rel, vs.groundspeed, &s_goto, fleet,
-                      vs.has_fence ? &vs.fence : nullptr);
+                      vs.has_fence && !vs.fence_params.disabled() ? &vs.fence : nullptr);
 
         // Consume the map's request. Guarded again rather than trusting the
         // menu's own check: the flags it read were a frame old, and a mode

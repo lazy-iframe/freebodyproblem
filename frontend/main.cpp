@@ -69,6 +69,9 @@
 
 // Settings
 #include "settings.hpp"
+#include "mission_alt.hpp"
+#include "terrain.hpp"
+#include "terrain_clearance.hpp"
 
 // Widgets
 #include "widgets/app_icon.hpp"
@@ -77,6 +80,7 @@
 #include "widgets/vehicle_ui_state.hpp"
 #include "widgets/ui_kit.hpp"
 #include "widgets/topbar.hpp"
+#include "widgets/map_view_3d.hpp"
 #include "widgets/sidebar_left.hpp"
 #include "widgets/center_view.hpp"
 #include "widgets/sidebar_right.hpp"
@@ -409,10 +413,20 @@ static void render_ui()
             mv.has_pos = vsnap.state.has_global_pos;
             mv.heading = (float)vsnap.state.heading;
             mv.has_hdg = vsnap.state.has_vfr;
+            mv.roll    = vsnap.state.roll;
+            mv.pitch   = vsnap.state.pitch;
+            mv.yaw     = vsnap.state.yaw;
+            mv.has_att = vsnap.state.has_attitude;
             mv.active   = veh && (v->id() == veh->id());
             mv.home_lat = vsnap.state.home_lat;
             mv.home_lon = vsnap.state.home_lon;
             mv.has_home = vsnap.state.has_home;
+            mv.alt_amsl = vsnap.state.alt_asl;
+            mv.has_alt  = vsnap.state.has_global_pos;
+            if (auto h = home_amsl(&vsnap.state)) {
+                mv.home_alt_amsl = *h;
+                mv.has_home_alt  = true;
+            }
             mv.fence    = vsnap.state.fence_params;
             mv.checked  = swarm && swarm_is_checked(v->id());
             mv.mav_type = (uint8_t)vsnap.state.type;
@@ -568,6 +582,9 @@ int main()
     settings_load(g_settings);
     map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
+    set_terrain_clearance_m(g_settings.terrain_clearance_m);
+    terrain_set_source(g_settings.terrain_url, (TerrainEncoding)g_settings.terrain_encoding,
+                       g_settings.terrain_attribution);
     if (!theme_lookup(g_settings, g_settings.active_theme, g_theme)) {
         // A name that no longer exists — a built-in theme dropped from the
         // build stays behind in settings.json. The defaults apply, so the name
@@ -589,31 +606,29 @@ int main()
     };
     ImFontAtlas* atlas = ImGui::GetIO().Fonts;
 
-    const std::string mono = find_asset("fonts/GeistMono-Regular.ttf", GCS_FONT_PATH);
-    if (!mono.empty()) {
-        g_font_ui           = atlas->AddFontFromFileTTF(mono.c_str(), UI_SZ_BODY,  nullptr, kGlyphRanges);
-        g_font_micro        = atlas->AddFontFromFileTTF(mono.c_str(), UI_SZ_MICRO, nullptr, kGlyphRanges);
-        g_font_value        = atlas->AddFontFromFileTTF(mono.c_str(), 26.0f,       nullptr, kGlyphRanges);
-        g_font_splash_title = atlas->AddFontFromFileTTF(mono.c_str(), 38.0f,       nullptr, kGlyphRanges);
-    }
+    // Every face found is loaded, so Settings can switch between them without
+    // touching the atlas; glyphs are only rasterized as they are drawn.
+    const auto load_face = [&](UiFace face, const char* rel, const char* built) {
+        const std::string path = find_asset(rel, built);
+        if (path.empty()) return;
+        UiFontSet set;
+        set.ui    = atlas->AddFontFromFileTTF(path.c_str(), UI_SZ_BODY,  nullptr, kGlyphRanges);
+        set.micro = atlas->AddFontFromFileTTF(path.c_str(), UI_SZ_MICRO, nullptr, kGlyphRanges);
+        set.value = atlas->AddFontFromFileTTF(path.c_str(), 26.0f,       nullptr, kGlyphRanges);
+        set.title = atlas->AddFontFromFileTTF(path.c_str(), 38.0f,       nullptr, kGlyphRanges);
+        ui_face_register(face, set);
+    };
+    load_face(UiFace::GeistMono, "fonts/GeistMono-Regular.ttf", GCS_FONT_PATH);
+    load_face(UiFace::Roboto,    "fonts/Roboto-Medium.ttf",     GCS_FONT_FALLBACK_PATH);
     // The HUD's lettering. Fonts scale freely in this ImGui, so one size
     // serves every HUD size; without the file the HUD keeps the regular face.
     const std::string mono_bold = find_asset("fonts/GeistMono-Bold.ttf", GCS_FONT_BOLD_PATH);
     if (!mono_bold.empty())
         g_font_mono_bold = atlas->AddFontFromFileTTF(mono_bold.c_str(), UI_SZ_MICRO,
                                                      nullptr, kGlyphRanges);
-    if (!g_font_ui) {   // font file missing — fall back to the bundled Roboto
-        const std::string alt = find_asset("fonts/Roboto-Medium.ttf", GCS_FONT_FALLBACK_PATH);
-        if (!alt.empty()) {
-            g_font_ui           = atlas->AddFontFromFileTTF(alt.c_str(), UI_SZ_BODY);
-            g_font_micro        = g_font_ui;
-            g_font_value        = atlas->AddFontFromFileTTF(alt.c_str(), 26.0f);
-            g_font_splash_title = atlas->AddFontFromFileTTF(alt.c_str(), 38.0f);
-        }
-    }
-    // Both missing: leave FontDefault null so ImGui uses its built-in font
-    // rather than rendering nothing.
-    if (g_font_ui) ImGui::GetIO().FontDefault = g_font_ui;
+    // The chosen face, else whichever was found. None found: FontDefault stays
+    // null, so ImGui uses its built-in font rather than rendering nothing.
+    g_font_splash_title = ui_face_select((UiFace)g_settings.ui_font).title;
 #endif
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -743,7 +758,9 @@ int main()
 
     audio_shutdown();
     center_view_shutdown();   // stop video pipeline + delete GL texture
+    map3d_shutdown();
     map_view_shutdown();
+    terrain_shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

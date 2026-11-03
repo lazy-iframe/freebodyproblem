@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "timesync.hpp"
@@ -295,6 +296,18 @@ void Vehicle::loop()
     auto last_timesync_req = Clock::now() - std::chrono::hours(1);
     auto last_publish      = Clock::now() - std::chrono::hours(1);
 
+    // Rate watchdog. What arrives from the autopilot, by message id, over the
+    // current window — set against what was asked for at its end.
+    std::unordered_map<uint32_t, uint32_t> rx_counts;
+    uint32_t rx_total     = 0;
+    auto     rate_window  = Clock::now();
+    struct RateWatch { int misses = 0; Clock::time_point next_try{}; };
+    std::unordered_map<uint32_t, RateWatch> rate_watch;
+    constexpr double RATE_WINDOW_S   = 5.0;
+    constexpr double RATE_SHORT_FRAC = 0.7;    // under this share of the rate asked is short
+    constexpr int    RATE_FAST_TRIES = 3;      // then one try every RATE_SLOW_S
+    constexpr auto   RATE_SLOW_S     = std::chrono::seconds(30);
+
     std::vector<mavlink_message_t> batch;
 
     while (running_.load(std::memory_order_relaxed)) {
@@ -318,6 +331,7 @@ void Vehicle::loop()
         for (const auto& msg : batch) {
             parser_.handle(msg);
             if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) attitude_in = true;
+            if (msg.compid == autopilot_compid_) { ++rx_counts[msg.msgid]; ++rx_total; }
             if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT &&
                 msg.compid == autopilot_compid_)
                 last_heartbeat_ns_.store(now_ns(), std::memory_order_relaxed);
@@ -349,9 +363,9 @@ void Vehicle::loop()
 
             const FirmwareProfile& prof = firmware_profile(parser_.state().autopilot);
 
-            sender_.request_message_interval(tsys, tcomp,  30,  50000); // ATTITUDE            @ 20 Hz
+            sender_.request_message_interval(tsys, tcomp,  30, 100000); // ATTITUDE            @ 10 Hz
             sender_.request_message_interval(tsys, tcomp,  74, 100000); // VFR_HUD             @ 10 Hz
-            sender_.request_message_interval(tsys, tcomp,  33, 200000); // GLOBAL_POSITION_INT @  5 Hz
+            sender_.request_message_interval(tsys, tcomp,  33, 100000); // GLOBAL_POSITION_INT @ 10 Hz
             sender_.request_message_interval(tsys, tcomp,   1, 500000); // SYS_STATUS          @  2 Hz
             sender_.request_message_interval(tsys, tcomp,  24, 500000); // GPS_RAW_INT         @  2 Hz
             // Estimator health @ 5 Hz — EKF_STATUS_REPORT (#193) on ArduPilot,
@@ -390,6 +404,79 @@ void Vehicle::loop()
                     for (const char* id : PX4_FENCE) sender_.request_param_read(tsys, tcomp, id);
             }
             gcs_log("[sys%u] telemetry rates configured (%s)", tsys, prof.name());
+
+            // The watchdog's first window starts with the burst, so the rates
+            // the vehicle ran at before it are not held against it.
+            rx_counts.clear();
+            rx_total    = 0;
+            rate_window = Clock::now();
+            rate_watch.clear();
+        }
+
+        // ── Rate watchdog ─────────────────────────────────────────────────────
+        //
+        // The burst goes out once, and an interval asked for is not an interval
+        // kept: a request can be lost on the way, and anything else on the
+        // vehicle's channel can set the rates again — a REQUEST_DATA_STREAM
+        // from MAVProxy or another ground station puts every streamed message
+        // back to the stream's rate. So each window, every message this GCS
+        // asked a rate for that is arriving well short of it is asked for
+        // again. A vehicle that still does not keep it — a slow radio cannot
+        // carry every rate asked for — is asked every RATE_SLOW_S after a few
+        // tries, rather than flooding the link.
+        //
+        // A window with nothing from the autopilot at all is the link down,
+        // not the rates, and judges nothing. Messages a vehicle sends only on
+        // an event are left out: HOME_POSITION before home is set, and the
+        // compass calibration's two outside a calibration.
+        {
+            const double win = std::chrono::duration<double>(Clock::now() - rate_window).count();
+            if (rates_requested && win >= RATE_WINDOW_S) {
+                const auto now = Clock::now();
+                if (rx_total > 0)
+                    for (const auto& [id, us] : sender_.requested_intervals()) {
+                        if (us <= 0) continue;
+                        if (id == MAVLINK_MSG_ID_HOME_POSITION ||
+                            id == MAVLINK_MSG_ID_MAG_CAL_PROGRESS ||
+                            id == MAVLINK_MSG_ID_MAG_CAL_REPORT) continue;
+                        char name[24];
+                        switch (id) {
+                        case MAVLINK_MSG_ID_ATTITUDE:            snprintf(name, sizeof(name), "ATTITUDE");            break;
+                        case MAVLINK_MSG_ID_VFR_HUD:             snprintf(name, sizeof(name), "VFR_HUD");             break;
+                        case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: snprintf(name, sizeof(name), "GLOBAL_POSITION_INT"); break;
+                        case MAVLINK_MSG_ID_SYS_STATUS:          snprintf(name, sizeof(name), "SYS_STATUS");          break;
+                        case MAVLINK_MSG_ID_GPS_RAW_INT:         snprintf(name, sizeof(name), "GPS_RAW_INT");         break;
+                        case MAVLINK_MSG_ID_EKF_STATUS_REPORT:   snprintf(name, sizeof(name), "EKF_STATUS_REPORT");   break;
+                        case MAVLINK_MSG_ID_ESTIMATOR_STATUS:    snprintf(name, sizeof(name), "ESTIMATOR_STATUS");    break;
+                        case MAVLINK_MSG_ID_RC_CHANNELS:         snprintf(name, sizeof(name), "RC_CHANNELS");         break;
+                        default:                                 snprintf(name, sizeof(name), "msg %u", (unsigned)id);
+                        }
+                        const double want = 1e6 / us;
+                        const double got  = rx_counts[id] / win;
+                        RateWatch&   w    = rate_watch[id];
+                        if (got >= RATE_SHORT_FRAC * want) {
+                            if (w.misses > 0)
+                                gcs_log("[sys%u] %s back at %.1f Hz", tsys, name, got);
+                            w = {};
+                            continue;
+                        }
+                        if (now < w.next_try) continue;
+                        ++w.misses;
+                        sender_.request_message_interval(tsys, tcomp, id, us);
+                        if (w.misses == 1)
+                            gcs_log("[sys%u] %s at %.1f Hz, asked for %.0f Hz \xe2\x80\x94 asking again",
+                                    tsys, name, got, want);
+                        else if (w.misses == RATE_FAST_TRIES)
+                            gcs_log("[sys%u] %s still at %.1f Hz after %d requests \xe2\x80\x94 "
+                                    "the vehicle or the link is holding it down; asking every %d s",
+                                    tsys, name, got, RATE_FAST_TRIES,
+                                    (int)RATE_SLOW_S.count());
+                        if (w.misses >= RATE_FAST_TRIES) w.next_try = now + RATE_SLOW_S;
+                    }
+                rx_counts.clear();
+                rx_total    = 0;
+                rate_window = now;
+            }
         }
 
         // Firmware version, until it is in hand. A reboot reruns the burst

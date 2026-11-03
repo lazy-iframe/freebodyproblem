@@ -37,6 +37,12 @@ struct MissionPickState {
     double picked_lat = 0.0;
     double picked_lon = 0.0;
 
+    // The 3D map places an item's height too: set with pick_done, the
+    // altitude above home (GLOBAL_RELATIVE_ALT, the frame new items take).
+    // Left false by the 2D map, where the item gets the altitude before it.
+    bool   has_picked_alt = false;
+    float  picked_alt     = 0.0f;
+
     // EDIT on the mission tab: the map lets any waypoint be dragged to a new
     // position. map_view writes the moved coordinates straight into
     // edit_mission, so the list follows the drag as it happens.

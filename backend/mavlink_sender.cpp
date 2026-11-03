@@ -572,7 +572,25 @@ void MavlinkSender::request_message_interval(uint8_t tsys, uint8_t tcomp,
 
     std::lock_guard<std::mutex> lk(mtx_);
     queue_.emplace(buf, buf + len);
+    intervals_[message_id] = interval_us;
     // No cmd_states_ entry — stream rate requests don't need UI flash feedback
+}
+
+void MavlinkSender::request_message_interval_at_least(uint8_t tsys, uint8_t tcomp,
+                                                      uint32_t message_id, int32_t interval_us)
+{
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        const auto it = intervals_.find(message_id);
+        if (it != intervals_.end() && it->second > 0 && it->second <= interval_us) return;
+    }
+    request_message_interval(tsys, tcomp, message_id, interval_us);
+}
+
+std::unordered_map<uint32_t, int32_t> MavlinkSender::requested_intervals() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    return intervals_;
 }
 
 // ── Transport ─────────────────────────────────────────────────────────────────

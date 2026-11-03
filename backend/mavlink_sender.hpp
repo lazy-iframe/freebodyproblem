@@ -153,6 +153,18 @@ public:
     void request_message_interval(uint8_t target_sysid, uint8_t target_compid,
                                   uint32_t message_id, int32_t interval_us);
 
+    // As request_message_interval, but never slowing a message down: a no-op
+    // when it has already been asked for at `interval_us` or faster. For a
+    // panel that only needs a message to arrive at all — it must not undo a
+    // faster rate the connect burst or the operator set.
+    void request_message_interval_at_least(uint8_t target_sysid, uint8_t target_compid,
+                                           uint32_t message_id, int32_t interval_us);
+
+    // Every interval asked for above, by message id, the latest for each —
+    // whoever asked: the connect burst, or the operator on the MAVLink tab.
+    // The vehicle thread holds the vehicle to the positive ones.
+    std::unordered_map<uint32_t, int32_t> requested_intervals() const;
+
     // Request AUTOPILOT_VERSION (#148) through MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES
     // (520). Deprecated in the common set in favour of request_message(148),
     // which is what the connect burst sends first; PX4 after v1.17 no longer
@@ -474,6 +486,7 @@ private:
     std::atomic<uint32_t>                   reboot_requests_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;
     std::vector<Retry>                      retries_;    // under mtx_
+    std::unordered_map<uint32_t, int32_t>   intervals_;  // under mtx_; see requested_intervals()
 
     // Indexed by MAV_MISSION_TYPE: mission, fence, rally.
     std::vector<MissionItem>                upload_items_[3];

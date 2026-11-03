@@ -128,13 +128,13 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
 - **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it
-- **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling, dashed and marked OFF when the fence is not enabled. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
-- **GO HERE**: right-click anywhere on the map for a guided position target — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared
+- **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling. Nothing of the fence — ring, ceiling or uploaded zones — is drawn while it is not enabled. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
+- **GO HERE**: click anywhere on the map for a guided position target (in 3D, the click starts a pick of the point's place, then its height) — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared from the map's right-click menu
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
 - **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
 - **Fullscreen map**: a second press of the map mode button (relabelled **MAP FULL**) gives the map the right sidebar's width and the plugin rail's column, keeping the left sidebar — the tabs are how a mission is planned and the map is what it is planned on. Attitude and the event log come back as a semi-transparent block in the map's top-right corner, small enough to read past — click either half and it grows back to the size it had in the sidebar, text and all, until you click somewhere else, and it comes back small every time the map goes fullscreen again; **ESC** or **EXIT FULL** restores
 - **Home**: each vehicle's `HOME_POSITION` drawn as a helipad — the H inside its circle, in green so it reads as neither the aircraft nor an instruction to it. Streamed at 0.5 Hz on connect rather than waited for: a vehicle announces home when it sets it, and that announcement is long gone by the time a GCS joins
-- **Position trail**: where each aircraft has been, thinned to a point every 3 m so a vehicle standing still does not smudge, and recorded per vehicle off the live stream — an aircraft that flew while you were watching another one still has its track when you switch back. Cleared from the map's right-click menu
+- **Position trail**: where each aircraft has been, thinned to a point every 3 m so a vehicle standing still does not smudge, and recorded per vehicle off the live stream — an aircraft that flew while you were watching another one still has its track when you switch back. Cleared from the map's right-click menu (**Clear track**)
 
 ### Radio
 - **Live channel monitor**: a bar per channel with its PWM, marked with the stick or switch it is bound to, listing only the channels the receiver is actually sending
@@ -549,8 +549,9 @@ The layout is worked out from the screen and the font each frame, not from
 fixed fractions of the window, so a laptop, a 4K screen and an ultrawide each
 get a layout that uses their space rather than a stretched copy of one.
 
-**Sidebars are as wide as their text.** The UI font is monospaced, so a column
-is measured in characters: each sidebar has a minimum — its widest row that
+**Sidebars are as wide as their text.** A column is measured in characters —
+digits, for Roboto (Settings → FONT), whose digits are fixed width though its
+letters are not: each sidebar has a minimum — its widest row that
 cannot shrink, such as a parameter ID beside its value and WRITE — and a
 maximum, the width it has on a 1080p screen. Past the maximum they stop
 growing, and every extra pixel goes to the centre.
@@ -803,15 +804,18 @@ nor an instruction to it.
 map back on the aircraft and keeps it there. It follows whichever vehicle is
 selected, so after switching vehicles it centres on the new one.
 
-**GO HERE** — right-click anywhere on the map for a guided position target. The
-menu shows the coordinates under the cursor (click them to copy, as signed
-decimal degrees) and an altitude, which starts at the
-height the vehicle is already holding, and **GO** sends it as
+**GO HERE** — click anywhere on the map for a guided position target; a drag
+still pans. In 3D the click starts a pick: click the ground for the place,
+then move up or down its line and click again for the height (Esc or a
+right-click gives it up). The small menu at the pointer shows the
+coordinates under the cursor (click them to copy, as signed decimal degrees)
+and an altitude, which starts at the height the vehicle is already holding,
+and **GO** sends it as
 `SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
 which is the only mode that acts on one; out of GUIDED the button is disabled
 and says why, rather than sending into silence. The target stays drawn as a
-ringed crosshair joined to the aircraft by a line until **CLEAR TARGET**. The
-same menu carries **CLEAR TRACK** for the trail.
+ringed crosshair joined to the aircraft by a line until **Clear target** in
+the map's right-click menu, which also carries **Clear track** for the trail.
 
 **MAP FULL** — with the map alone in the centre view, the map button relabels
 itself. Press it and the map takes the right sidebar's width and the plugin
@@ -1193,7 +1197,7 @@ the serial handle, drains them.
 - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
 - **widgets/**: Modular UI components (topbar, sidebars, map, video, telemetry panels)
   - **layout_rules.hpp**: The screen layout as plain arithmetic, free of ImGui — sidebar widths in glyphs, the narrow cutoff, and the stacked or side-by-side split of MAP + VIDEO and of the SWARM map. **layout.hpp** feeds it the live window and the measured width of a glyph
-  - **goto_target.hpp** / **mission_pick.hpp**: The two-way state the map is driven through — a right-clicked position target and a waypoint being picked. The map never holds a sender; it reports what the operator asked for and the panel that owns the vehicle sends it
+  - **goto_target.hpp** / **mission_pick.hpp**: The two-way state the map is driven through — a clicked position target and a waypoint being picked. The map never holds a sender; it reports what the operator asked for and the panel that owns the vehicle sends it
   - **vehicle_ui_state.hpp**: Panel state that belongs to a vehicle rather than a panel — a calibration in progress, staged parameter edits, the mission being planned — keyed by vehicle instead of held in a file-scope static, and dropped when that vehicle goes
   - **sidebar_left/**: Tab-based left panel (connection, flight, params, themes, mission, MAVLink, radio, sensors)
   - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload, and everything drawn over it — the fleet's aircraft symbols and labels, per-vehicle trails, home pads, the mission overlay and the GO HERE menu
