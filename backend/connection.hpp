@@ -32,6 +32,7 @@ struct SerialPortInfo {
 
 // Enumerate available serial ports.
 // Linux:   scans /dev/ttyUSB*, /dev/ttyACM*, real /dev/ttyS* (with sysfs device node).
+// macOS:   asks IOKit for serial BSD devices, listing their /dev/cu.* nodes.
 // Windows: enumerates the GUID_DEVCLASS_PORTS setup class, skipping LPT ports.
 std::vector<SerialPortInfo> list_serial_ports();
 

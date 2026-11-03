@@ -347,60 +347,63 @@ void draw_tab_connection(MavlinkSender* sender,
     if (links.empty()) {
         ImGui::TextDisabled("No links. Connect above.");
     } else {
-        constexpr float btn_w = 22.0f;
+        // Laid out as the VEHICLES list below lays out its rows — two lines of
+        // text, a state box, an action block — and with the same box width, so
+        // the two lists' columns line up one above the other.
+        const float btn_w  = ui_vehicle_box_width("REBOOT");
+        const float row_h  = ui_vehicle_row_height();
+        const float line_h = ImGui::GetTextLineHeight();
 
         for (const auto& li : links) {
             ImGui::PushID((int)li.id);
 
-            // The disconnect button leads the row: it is the only action here,
-            // and lining the buttons up on the left keeps them in one column
-            // whatever the link names happen to be.
+            // State: the box's caption, the word spelled out on hover, and the
+            // colour. Only a dead link gets a loud frame.
+            const char* cap  = "IDLE";
+            const char* word = "idle";
+            ImVec4      col  = g_theme.col_log;
+            bool        loud = false;
+            switch (li.status) {
+            case LinkStatus::Connecting: cap = "WAIT"; word = "connecting...";            col = col_warning(); break;
+            case LinkStatus::Connected:  cap = "LIVE"; word = "connected";                col = col_ok();      break;
+            case LinkStatus::Timeout:    cap = "LOST"; word = "timeout \xe2\x80\x94 nothing heard"; col = col_error(); loud = true; break;
+            case LinkStatus::Error:      cap = "ERR";  word = "error \xe2\x80\x94 could not open";  col = col_error(); loud = true; break;
+            default: break;
+            }
+
+            // Name on the first line, what it found underneath. Clipped to the
+            // text column, since a serial device path alone can fill it.
+            const float  text_w = ImGui::GetContentRegionAvail().x - btn_w * 2.0f - 4.0f - 6.0f;
+            const ImVec2 r0     = ImGui::GetCursorScreenPos();
+            const ImVec2 r1     = { r0.x + text_w, r0.y + row_h };
+            ImGui::Dummy({ text_w, row_h });
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", li.name.c_str());
+            {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->PushClipRect(r0, r1, true);
+                dl->AddText({ r0.x + 4.0f, r0.y + 1.0f },
+                            ui_col(g_theme.col_text_on_dark), li.name.c_str());
+                char sub[32];
+                if (li.vehicles == 1) snprintf(sub, sizeof(sub), "1 vehicle");
+                else                  snprintf(sub, sizeof(sub), "%d vehicles", li.vehicles);
+                dl->AddText({ r0.x + 4.0f, r0.y + line_h + 3.0f }, ui_col_label(), sub);
+                dl->PopClipRect();
+            }
+
+            ImGui::SameLine(0, 6);
+            ui_state_box(cap, word, col, loud, { btn_w, row_h });
+
             // Offered for dead links too, not just live ones: a link that
             // timed out or failed to open stays listed so the operator can see
             // why, and this is how it is cleared away.
-            if (ui_solid_button("X##drop", { btn_w, 0.0f },
+            ImGui::SameLine(0, 4);
+            if (ui_solid_button("CLOSE", { btn_w, row_h },
                                 btn_disconnect_base(), btn_disconnect_hov())) {
                 conn_out->disconnect         = true;
                 conn_out->disconnect_link_id = li.id;
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Disconnect %s", li.name.c_str());
-
-            ImGui::SameLine(0, 6);
-            ImGui::AlignTextToFramePadding();
-
-            switch (li.status) {
-            case LinkStatus::Connecting:
-                ImGui::TextColored(col_warning(), "\xe2\x97\x8f"); break;
-            case LinkStatus::Connected:
-                ImGui::TextColored(col_ok(),      "\xe2\x97\x8f"); break;
-            case LinkStatus::Timeout:
-            case LinkStatus::Error:
-                ImGui::TextColored(col_error(),   "\xe2\x97\x8f"); break;
-            default:
-                ImGui::TextDisabled("\xe2\x97\x8f");               break;
-            }
-
-            ImGui::SameLine(0, 6);
-            ImGui::TextUnformatted(li.name.c_str());
-
-            // Second line: what the link is doing and what it found. Indented
-            // under the name rather than beside it, because a serial device path
-            // already fills the width of this sidebar.
-            const char* st = "idle";
-            switch (li.status) {
-            case LinkStatus::Connecting: st = "connecting..."; break;
-            case LinkStatus::Connected:  st = "connected";     break;
-            case LinkStatus::Timeout:    st = "timeout";       break;
-            case LinkStatus::Error:      st = "error";         break;
-            default: break;
-            }
-            ImGui::Indent(btn_w + 6.0f);
-            if (li.vehicles == 1)
-                ImGui::TextDisabled("%s \xc2\xb7 1 vehicle", st);
-            else
-                ImGui::TextDisabled("%s \xc2\xb7 %d vehicles", st, li.vehicles);
-            ImGui::Unindent(btn_w + 6.0f);
 
             ImGui::PopID();
         }

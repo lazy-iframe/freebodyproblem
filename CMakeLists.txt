@@ -270,6 +270,13 @@ else()
         gstreamer-1.0
         gstreamer-app-1.0
     )
+    # pkg-config's bare library names (gstreamer-1.0, glib-2.0) only link when
+    # their directory is on the linker's default path. It is on Linux; on macOS
+    # Homebrew's /opt/homebrew/lib is not. The full paths work on both, but are
+    # only swapped in where needed.
+    if(APPLE)
+        set(GST_LIBRARIES ${GST_LINK_LIBRARIES})
+    endif()
 endif()
 
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
@@ -287,6 +294,11 @@ target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}/backends
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+if(APPLE)
+    # Apple deprecated OpenGL in 10.14 and warns on every call; it still works,
+    # up to 4.1 core, which is more than the 3.3 this app asks for.
+    target_compile_definitions(imgui PUBLIC GL_SILENCE_DEPRECATION)
+endif()
 
 # ── Third-party: ImGuiFileDialog (in-app file browser) ────────────────────────
 #
@@ -327,9 +339,37 @@ if(WIN32)
     set(GCS_WIN_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/assets/freebodyproblem.rc")
 endif()
 
-add_executable(freebodyproblem
+# On macOS the app is a .app bundle, with its icon converted from the same PNGs
+# the window and the Linux desktop entry use. iconutil ships with macOS.
+if(APPLE)
+    set(GCS_ICNS "${CMAKE_CURRENT_BINARY_DIR}/freebodyproblem.icns")
+    set(_iconset "${CMAKE_CURRENT_BINARY_DIR}/freebodyproblem.iconset")
+    set(_icon_dir "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons")
+    # iconutil's names: each size at 1x, and at 2x from the next size up.
+    add_custom_command(
+        OUTPUT  "${GCS_ICNS}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_iconset}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-16.png"  "${_iconset}/icon_16x16.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-32.png"  "${_iconset}/icon_16x16@2x.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-32.png"  "${_iconset}/icon_32x32.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-64.png"  "${_iconset}/icon_32x32@2x.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-128.png" "${_iconset}/icon_128x128.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-256.png" "${_iconset}/icon_128x128@2x.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-256.png" "${_iconset}/icon_256x256.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-512.png" "${_iconset}/icon_256x256@2x.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_icon_dir}/freebodyproblem-512.png" "${_iconset}/icon_512x512.png"
+        COMMAND iconutil -c icns -o "${GCS_ICNS}" "${_iconset}"
+        DEPENDS "${_icon_dir}/freebodyproblem-512.png"
+        VERBATIM)
+    set_source_files_properties("${GCS_ICNS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set(GCS_MAC_RESOURCES "${GCS_ICNS}")
+endif()
+
+add_executable(freebodyproblem MACOSX_BUNDLE
     ${GCS_PLUGIN_SOURCES}
     ${GCS_WIN_RESOURCES}
+    ${GCS_MAC_RESOURCES}
     frontend/widgets/plugin_rail.cpp
     frontend/widgets/mcp_approval.cpp
     backend/mavlink_sender.cpp
@@ -430,6 +470,19 @@ if(WIN32)
     )
 endif()
 
+if(APPLE)
+    # IOKit and CoreFoundation: serial port enumeration in backend/connection.cpp.
+    target_link_libraries(freebodyproblem PRIVATE
+        "-framework IOKit" "-framework CoreFoundation")
+    set_target_properties(freebodyproblem PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME         "freebodyproblem"
+        MACOSX_BUNDLE_GUI_IDENTIFIER      "tech.freebodyproblem.gcs"
+        MACOSX_BUNDLE_ICON_FILE           "freebodyproblem.icns"
+        MACOSX_BUNDLE_BUNDLE_VERSION      "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+endif()
+
 # ── MCP stdio adapter ─────────────────────────────────────────────────────────
 #
 # freebodyproblem-mcp: a small program an MCP host launches over stdio, which
@@ -444,6 +497,12 @@ if(WIN32)
     target_link_libraries(freebodyproblem-mcp PRIVATE ws2_32)
     target_compile_definitions(freebodyproblem-mcp PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
+if(APPLE)
+    # The GCS looks for the adapter beside its own executable, which on macOS
+    # is inside the bundle — in the build tree as much as in the installed app.
+    set_target_properties(freebodyproblem-mcp PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/freebodyproblem.app/Contents/MacOS")
+endif()
 
 # ── Install ───────────────────────────────────────────────────────────────────
 #
@@ -454,18 +513,29 @@ endif()
 
 include(GNUInstallDirs)
 
-install(TARGETS freebodyproblem freebodyproblem-mcp
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(APPLE)
+    # Everything inside the bundle, so dragging the .app anywhere moves it all:
+    # the adapter beside the GCS in Contents/MacOS, assets in Contents/Resources
+    # (the "../Resources" candidate in find_asset()).
+    set(GCS_DATA_DIR "freebodyproblem.app/Contents/Resources")
+    install(TARGETS freebodyproblem BUNDLE DESTINATION .)
+    install(TARGETS freebodyproblem-mcp
+            RUNTIME DESTINATION freebodyproblem.app/Contents/MacOS)
+else()
+    set(GCS_DATA_DIR "share/freebodyproblem")
+    install(TARGETS freebodyproblem freebodyproblem-mcp
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 install(FILES
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Bold.ttf"
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"
-        DESTINATION share/freebodyproblem/fonts)
+        DESTINATION ${GCS_DATA_DIR}/fonts)
 
 # The window icon, found at runtime the same way the fonts are.
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/"
-        DESTINATION share/freebodyproblem/icons
+        DESTINATION ${GCS_DATA_DIR}/icons
         FILES_MATCHING PATTERN "freebodyproblem-*.png")
 
 # Desktop integration — what a desktop environment reads off disk rather than
@@ -554,6 +624,16 @@ if(WIN32)
         "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\freebodyproblem.lnk' '$INSTDIR\\\\${CMAKE_INSTALL_BINDIR}\\\\freebodyproblem.exe'")
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "Delete '$SMPROGRAMS\\\\$START_MENU\\\\freebodyproblem.lnk'")
+
+elseif(APPLE)
+    # A disk image holding the .app and a link to /Applications to drag it to.
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "freebodyproblem")
+    set(CPACK_PACKAGE_ICON "${GCS_ICNS}")
+    set(CPACK_DMG_FORMAT "UDZO")
+    # No licence click-through before the image mounts: an Apache licence does
+    # not need to be agreed to. (OFF is CMake's default; stated so it stays so.)
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
 
 elseif(UNIX)
     set(CPACK_GENERATOR "DEB")

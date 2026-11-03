@@ -223,6 +223,12 @@ float ui_vehicle_row_height();
 void ui_vehicle_row(const VehicleChip& v, bool is_active, ImVec2 rmin, ImVec2 rmax,
                     bool show_state = true);
 
+// A short state caption in a framed box, the same chrome as a button but not a
+// control. `loud` draws the frame in `col` too, for a state worth catching the
+// eye; otherwise only the caption is coloured. `tooltip` may be null.
+void ui_state_box(const char* caption, const char* tooltip, ImVec4 col, bool loud,
+                  ImVec2 size);
+
 // The vehicle's state as a framed box — IDLE, ARMED, LOST, WAIT — in the same
 // chrome and size as the buttons beside it, so a row of state and actions reads
 // as one strip. Not a control: hovering it spells the state out in full.

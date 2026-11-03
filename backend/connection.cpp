@@ -37,9 +37,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef __APPLE__
+#include <sys/ioctl.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/IOBSD.h>
+#include <IOKit/serial/IOSerialKeys.h>
+#include <IOKit/serial/ioss.h>       // IOSSIOSPEED
+#endif
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 #ifndef _WIN32
+#ifndef __APPLE__
 static std::string read_sysfs_attr(const std::string& path)
 {
     std::ifstream f(path);
@@ -50,6 +60,7 @@ static std::string read_sysfs_attr(const std::string& path)
         s.pop_back();
     return s;
 }
+#endif
 
 // speed_t encoding is libc-dependent: musl and glibc before 2.42 use opaque
 // indices (B9600 == 13), while glibc 2.42+, macOS and the BSDs use the literal
@@ -80,13 +91,101 @@ static speed_t baud_to_speed(int baud)
 }
 #endif
 
+#ifdef __APPLE__
+// A CFString property as UTF-8, or empty.
+static std::string cf_string(CFTypeRef ref)
+{
+    if (!ref || CFGetTypeID(ref) != CFStringGetTypeID()) return {};
+    char buf[256] = {};
+    if (!CFStringGetCString(static_cast<CFStringRef>(ref), buf, sizeof(buf),
+                            kCFStringEncodingUTF8))
+        return {};
+    return buf;
+}
+
+// The nearest ancestor's value for `key` — the USB device that owns a serial
+// interface is a few nodes above it in the IOService plane, and how many
+// depends on the driver (Apple's CDC-ACM, FTDI's, CH34x's).
+static std::string cf_parent_string(io_object_t service, const char* key)
+{
+    CFStringRef k = CFStringCreateWithCString(kCFAllocatorDefault, key,
+                                              kCFStringEncodingUTF8);
+    CFTypeRef v = IORegistryEntrySearchCFProperty(
+        service, kIOServicePlane, k, kCFAllocatorDefault,
+        kIORegistryIterateRecursively | kIORegistryIterateParents);
+    CFRelease(k);
+    std::string s = cf_string(v);
+    if (v) CFRelease(v);
+    return s;
+}
+
+// Every serial device IOKit knows of, by its callout node (/dev/cu.*). The
+// /dev/tty.* twin is the dial-in side: opening it blocks until the far end
+// raises carrier detect, which a flight controller never does.
+static std::vector<SerialPortInfo> list_serial_ports_macos()
+{
+    std::vector<SerialPortInfo> result;
+
+    CFMutableDictionaryRef match = IOServiceMatching(kIOSerialBSDServiceValue);
+    if (!match) return result;
+    CFDictionarySetValue(match, CFSTR(kIOSerialBSDTypeKey), CFSTR(kIOSerialBSDAllTypes));
+
+    io_iterator_t it = 0;
+    // Consumes `match`. kIOMasterPortDefault is spelled kIOMainPortDefault
+    // since macOS 12; 0 means the default port under either name.
+    if (IOServiceGetMatchingServices(0, match, &it) != KERN_SUCCESS)
+        return result;
+
+    io_object_t svc;
+    while ((svc = IOIteratorNext(it)) != 0) {
+        CFTypeRef path_ref = IORegistryEntryCreateCFProperty(
+            svc, CFSTR(kIOCalloutDeviceKey), kCFAllocatorDefault, 0);
+        const std::string dev = cf_string(path_ref);
+        if (path_ref) CFRelease(path_ref);
+
+        // Bluetooth's always-present placeholder and the kernel debug console
+        // are never a vehicle.
+        if (!dev.empty() &&
+            dev.find("Bluetooth-Incoming-Port") == std::string::npos &&
+            dev.find("debug-console")           == std::string::npos) {
+            const std::string mfr  = cf_parent_string(svc, "USB Vendor Name");
+            const std::string prod = cf_parent_string(svc, "USB Product Name");
+            std::string desc;
+            if (!mfr.empty() && !prod.empty()) desc = mfr + " " + prod;
+            else if (!prod.empty())            desc = prod;
+            else if (!mfr.empty())             desc = mfr;
+            else                               desc = dev.substr(dev.rfind('/') + 1);
+            result.push_back({ dev, desc });
+        }
+        IOObjectRelease(svc);
+    }
+    IOObjectRelease(it);
+
+    // USB adapters first — they are what a telemetry radio or a flight
+    // controller shows up as — then the rest, each group alphabetically.
+    std::sort(result.begin(), result.end(), [](const SerialPortInfo& a, const SerialPortInfo& b) {
+        auto pri = [](const std::string& d) {
+            return (d.find("usb") != std::string::npos ||
+                    d.find("USB") != std::string::npos) ? 0 : 1;
+        };
+        const int pa = pri(a.device), pb = pri(b.device);
+        if (pa != pb) return pa < pb;
+        return a.device < b.device;
+    });
+    return result;
+}
+#endif
+
 // ── list_serial_ports ─────────────────────────────────────────────────────────
 
 std::vector<SerialPortInfo> list_serial_ports()
 {
     std::vector<SerialPortInfo> result;
 
-#ifndef _WIN32
+#if defined(__APPLE__)
+    result = list_serial_ports_macos();
+
+#elif !defined(_WIN32)
     const std::string tty_class = "/sys/class/tty";
 
     DIR* dir = opendir(tty_class.c_str());
@@ -258,18 +357,38 @@ SerialHandle serial_open(const char* device, int baud)
     return reinterpret_cast<SerialHandle>(h);
 
 #else
-    const int fd = open(device, O_RDWR | O_NOCTTY);
+    // O_NONBLOCK for the open only: on macOS a port without CLOCAL set blocks
+    // in open() until carrier detect, which a flight controller never raises.
+    // Cleared again below so reads honour VTIME.
+    const int fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) return SERIAL_INVALID;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
 
     termios tio{};
     tcgetattr(fd, &tio);
     cfmakeraw(&tio);
+    // Ignore modem-control lines, and enable the receiver. cfmakeraw sets
+    // neither; Linux drivers mostly default them on, macOS does not.
+    tio.c_cflag |= CLOCAL | CREAD;
+#ifdef __APPLE__
+    // macOS's termios tops out at 230400. Faster rates are set through
+    // IOSSIOSPEED after tcsetattr, which would otherwise reject them.
+    const bool fast = baud > 230400;
+    const speed_t spd = fast ? B9600 : baud_to_speed(baud);
+#else
     const speed_t spd = baud_to_speed(baud);
+#endif
     cfsetispeed(&tio, spd);
     cfsetospeed(&tio, spd);
     tio.c_cc[VTIME] = 2; // 0.2 s read timeout
     tio.c_cc[VMIN]  = 0;
     tcsetattr(fd, TCSANOW, &tio);
+#ifdef __APPLE__
+    if (fast) {
+        speed_t s = static_cast<speed_t>(baud);
+        if (ioctl(fd, IOSSIOSPEED, &s) == -1) { close(fd); return SERIAL_INVALID; }
+    }
+#endif
 
     return static_cast<SerialHandle>(fd);
 #endif

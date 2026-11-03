@@ -4,7 +4,7 @@ on:
   # The website under site/ has its own workflow (site.yml); a change to it
   # alone does not rebuild the application.
   push:
-    branches: [main]
+    branches: [main, macos-compatibility]
     paths-ignore:
       - 'site/**'
       - '.github/workflows/site.yml'
@@ -269,4 +269,76 @@ jobs:
         with:
           name: freebodyproblem-windows-installer
           path: build/packages/*.exe
+          if-no-files-found: error
+
+  # ── macOS ────────────────────────────────────────────────────────────────────
+  #
+  # Apple Silicon (macos-latest is arm64). Dependencies come from Homebrew, and
+  # the .app links against them where Homebrew put them — so the disk image
+  # runs on a Mac with `brew install gstreamer openssl@3 glfw`, and is not yet
+  # self-contained the way the Windows installer is.
+  macos:
+    name: macOS (Apple Silicon / Clang)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # glfw from Homebrew is 3.4, which CMake accepts, so it is not rebuilt.
+      # The gstreamer formula carries the core and the plugin sets in one.
+      - name: Install dependencies
+        run: brew install ninja pkg-config gstreamer openssl@3 glfw
+
+      - name: Configure
+        run: |
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cpack -G DragNDrop --config build/CPackConfig.cmake -B build/packages
+
+      # The bundle is what the disk image carries; check it has what
+      # find_asset() and gcs_mcp_adapter_path() look for, and that its
+      # Info.plist is well formed.
+      - name: Show bundle contents
+        run: |
+          app=build/packages/_CPack_Packages/*/DragNDrop/*/freebodyproblem.app
+          app=$(echo $app)
+          find "$app" -type f | sort
+          plutil -lint "$app/Contents/Info.plist"
+          otool -L "$app/Contents/MacOS/freebodyproblem"
+          for f in Contents/MacOS/freebodyproblem Contents/MacOS/freebodyproblem-mcp \
+                   Contents/Resources/freebodyproblem.icns \
+                   Contents/Resources/fonts/GeistMono-Regular.ttf \
+                   Contents/Resources/icons/freebodyproblem-512.png; do
+            test -e "$app/$f" || { echo "::error::$f is missing from the bundle"; exit 1; }
+          done
+
+      # As on Linux and Windows: the adapter must answer with JSON-RPC's "not
+      # reachable" error when no GCS is listening. macOS has no `timeout`;
+      # perl's alarm does the same job.
+      - name: Check MCP adapter runs
+        run: |
+          app=$(echo build/packages/_CPack_Packages/*/DragNDrop/*/freebodyproblem.app)
+          out=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' |
+                FBP_MCP_PORT=1 FBP_MCP_TOKEN=x \
+                perl -e 'alarm 20; exec @ARGV' "$app/Contents/MacOS/freebodyproblem-mcp")
+          echo "$out"
+          echo "$out" | grep -q '"code":-32000' || {
+            echo "::error::freebodyproblem-mcp did not answer as expected"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebodyproblem-macos-dmg
+          path: build/packages/*.dmg
           if-no-files-found: error

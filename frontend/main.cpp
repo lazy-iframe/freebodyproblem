@@ -31,6 +31,12 @@
 #  include <windows.h>   // GetModuleFileNameA / MAX_PATH
 #else
 #  include <unistd.h>    // readlink
+#  include <climits>     // PATH_MAX
+#  include <cstdlib>     // realpath
+#  include <csignal>     // SIGPIPE
+#endif
+#ifdef __APPLE__
+#  include <mach-o/dyld.h>   // _NSGetExecutablePath
 #endif
 
 #include <algorithm>
@@ -160,6 +166,15 @@ static std::string executable_dir()
     const DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
     if (n == 0) return ".";
     const std::string p(buf, n);
+#elif defined(__APPLE__)
+    // The path the process was launched by, which may run through a symlink
+    // (Homebrew's bin/, say); realpath() resolves it to where the binary and
+    // its assets actually are.
+    char raw[PATH_MAX] = {};
+    uint32_t size = sizeof(raw);
+    if (_NSGetExecutablePath(raw, &size) != 0) return ".";
+    char buf[PATH_MAX] = {};
+    const std::string p = realpath(raw, buf) ? buf : raw;
 #else
     char buf[4096] = {};
     const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -177,6 +192,7 @@ static std::string find_asset(const std::string& relative,
     const std::string exe = executable_dir();
     std::vector<std::string> candidates = {
         exe + "/../share/freebodyproblem/" + relative,  // installed prefix
+        exe + "/../Resources/" + relative,              // macOS .app bundle
         exe + "/" + relative,                           // portable, side-by-side
     };
     if (build_time_path && *build_time_path)
@@ -517,6 +533,13 @@ static void render_ui()
 
 int main()
 {
+#ifndef _WIN32
+    // A TCP link whose far end has gone — a SITL stopped, a radio bridge
+    // unplugged — makes the next send() raise SIGPIPE, whose default action
+    // ends the process. Ignored, the send fails with EPIPE instead and the link
+    // reports the error like any other. Windows has no such signal.
+    signal(SIGPIPE, SIG_IGN);
+#endif
     video_player_init();
 
     if (!glfwInit()) {

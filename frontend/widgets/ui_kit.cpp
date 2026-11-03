@@ -579,26 +579,31 @@ float ui_vehicle_box_width(const char* button_caption)
     return w + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
 }
 
-void ui_vehicle_state_box(const VehicleChip& v, ImVec2 size)
+void ui_state_box(const char* caption, const char* tooltip, ImVec4 col, bool loud,
+                  ImVec2 size)
 {
-    const VehicleStateView s = vehicle_state_view(v);
     ImFont*     fu    = g_font_ui ? g_font_ui : ImGui::GetFont();
     const float track = UI_TRACK * 0.6f;
 
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const ImVec2 p1 = { p0.x + size.x, p0.y + size.y };
     ImGui::Dummy(size);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.word);
+    if (tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
 
     // The buttons' dark well and 1 px seam, with the seam and the caption in
-    // the state's colour — idle stays quiet, armed and lost do not.
+    // the state's colour — a quiet state stays quiet, a loud one does not.
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool quiet = !v.stale && !v.armed;
     dl->AddRectFilled(p0, p1, ui_col(g_theme.bg_child_darker));
-    ui_frame(dl, p0, p1, quiet ? ui_col(g_theme.separator, 0.9f) : ui_col(s.col));
+    ui_frame(dl, p0, p1, loud ? ui_col(col) : ui_col(g_theme.separator, 0.9f));
 
-    const float tw = ui_tracked_width(fu, UI_SZ_BODY, s.caption, track);
+    const float tw = ui_tracked_width(fu, UI_SZ_BODY, caption, track);
     ui_tracked_text(dl, fu, UI_SZ_BODY,
                     { p0.x + (size.x - tw) * 0.5f, p0.y + (size.y - UI_SZ_BODY) * 0.5f - 1.0f },
-                    ui_col(s.col), s.caption, track);
+                    ui_col(col), caption, track);
+}
+
+void ui_vehicle_state_box(const VehicleChip& v, ImVec2 size)
+{
+    const VehicleStateView s = vehicle_state_view(v);
+    ui_state_box(s.caption, s.word, s.col, v.stale || v.armed, size);
 }
