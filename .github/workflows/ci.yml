@@ -357,6 +357,9 @@ jobs:
           find "$APP" -path '*/Frameworks/GStreamer.framework' -prune -o -type f -print | sort
           du -sh "$APP" "$APP/Contents/Frameworks/"* || true
           plutil -lint "$APP/Contents/Info.plist"
+          echo "Bundled plugins:"; ls "$APP/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0"
+          echo "Bundled libraries:"; ls "$APP/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib" | grep -v '^gstreamer-1.0$'
+          lipo -archs "$APP/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer-1.0.0.dylib"
           otool -L "$APP/Contents/MacOS/freebodyproblem"
           otool -l "$APP/Contents/MacOS/freebodyproblem" | grep -A2 LC_RPATH || true
           for f in Contents/MacOS/freebodyproblem Contents/MacOS/freebodyproblem-mcp \
@@ -368,20 +371,36 @@ jobs:
           done
 
       # Every Mach-O file in the bundle, the framework's included, must link
-      # only to the system or to the bundle itself. A path into Homebrew or
-      # /Library/Frameworks works on this runner and nowhere else.
+      # only to the system or to the bundle itself — a path into Homebrew or
+      # /Library/Frameworks works on this runner and nowhere else — and must
+      # not need a newer macOS than the bundle declares. A library from
+      # Homebrew is built for the runner's own macOS, and one of those raises
+      # the whole app's minimum with only a linker warning to show for it.
+      #
+      # otool prints a "<file> (architecture arm64):" header per slice of a
+      # universal binary; the lines ending in ':' are those, not references.
       - name: Check bundle is self-contained
         run: |
+          min=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")
+          echo "Bundle declares macOS $min"
           bad=0
           while IFS= read -r -d '' f; do
             file -b "$f" | grep -q 'Mach-O' || continue
-            refs=$(otool -L "$f" | tail -n +2 | awk '{print $1}' |
-                   grep -E '^/(opt/|usr/local/|Library/Frameworks/|Users/)' || true)
+            refs=$(otool -L "$f" | grep -v ':$' | awk '{print $1}' |
+                   grep -E '^/(opt/|usr/local/|Library/Frameworks/|Users/)' | sort -u || true)
             if [ -n "$refs" ]; then
               echo "::error::$f links outside the bundle:"; echo "$refs"; bad=1
             fi
+            need=$(otool -l "$f" | awk '
+                /LC_BUILD_VERSION/      { b = 1 }
+                b && $1 == "minos"      { print $2; b = 0 }
+                /LC_VERSION_MIN_MACOSX/ { v = 1 }
+                v && $1 == "version"    { print $2; v = 0 }' | sort -V | tail -1)
+            if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$min" "$need" | sort -V | tail -1)" != "$min" ]; then
+              echo "::error::$f needs macOS $need, newer than the bundle's $min"; bad=1
+            fi
           done < <(find "$APP" -type f -print0)
-          [ "$bad" -eq 0 ] && echo "No references outside the bundle."
+          [ "$bad" -eq 0 ] && echo "Self-contained, and nothing needs more than macOS $min."
           exit $bad
 
       - name: Verify signature
@@ -391,7 +410,7 @@ jobs:
       # the way, start the app and check that it loads (no dyld "Library not
       # loaded"), and that GStreamer found its bundled plugins — gst_init()
       # runs before any window opens and writes the registry, which then has
-      # to list decodebin, appsink and videoconvert — the pipeline's elements.
+      # to list the elements the video pipelines use.
       - name: Run without system GStreamer
         run: |
           sudo mv /Library/Frameworks/GStreamer.framework /tmp/GStreamer.framework.off
@@ -418,8 +437,13 @@ jobs:
             echo "::error::the app needs a library that is not in the bundle"; exit 1
           fi
           test -s "$reg" || { echo "::error::GStreamer wrote no registry"; exit 1; }
-          for p in coreelements playback appsink videoconvert; do
-            grep -aq "$p" "$reg" || { echo "::error::'$p' not found in the bundled plugins"; exit 1; }
+          # Every element the two pipelines name, and what decodebin needs for
+          # an RTSP H.264 stream. The bundle keeps only listed plugins
+          # (GCS_GST_PLUGINS in CMakeLists.txt); this is what catches a list
+          # that has fallen behind the pipelines.
+          for e in udpsrc rtspsrc rtph264depay h264parse avdec_h264 vtdec \
+                   decodebin typefind videoconvert appsink rtpbin rtpjitterbuffer; do
+            grep -aq "$e" "$reg" || { echo "::error::element '$e' is missing from the bundled plugins"; exit 1; }
           done
           echo "Registry: $(du -h "$reg" | cut -f1), bundled plugins found."
 

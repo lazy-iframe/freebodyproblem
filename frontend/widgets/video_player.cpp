@@ -129,6 +129,10 @@ static GstFlowReturn on_new_sample(GstElement* sink, VideoPlayer* vp)
 
 // ── Pipeline builder ──────────────────────────────────────────────────────────
 //
+// The macOS bundle carries only the GStreamer plugins these pipelines need,
+// listed in GCS_GST_PLUGINS in CMakeLists.txt. A new element here needs its
+// plugin added there.
+//
 // Common appsink tail: raw RGB, no sync (low-latency), drop old frames, keep
 // at most one buffered sample so the UI always gets the freshest frame.
 

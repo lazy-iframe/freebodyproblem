@@ -142,6 +142,13 @@ find_package(OpenSSL REQUIRED)
 
 set(HTTPLIB_REQUIRE_OPENSSL ON  CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE ON CACHE BOOL "" FORCE)
+if(APPLE)
+    # httplib links Brotli when it finds it, and on a Mac with Homebrew it does.
+    # Homebrew builds for the machine's own macOS, so that copy would raise the
+    # bundle's minimum to whatever the build machine runs (26 on CI). Tile and
+    # elevation servers answer gzip or uncompressed just the same.
+    set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+endif()
 # Vendored dependencies must not contribute their own install rules — otherwise
 # the package ships their headers, static libs and CMake config, and
 # /usr/include/GLFW/glfw3.h collides with the system libglfw3-dev package.
@@ -610,9 +617,47 @@ if(APPLE)
     else()
         set(_bundle_fw "")
     endif()
+
+    # The GStreamer plugins the bundle keeps; the rest of the framework's are
+    # left out, with every library only they needed. Enough for the two
+    # pipelines in frontend/widgets/video_player.cpp and what decodebin picks
+    # for an RTSP camera's H.264, H.265 or MJPEG. A pipeline that gains an
+    # element needs its plugin here, or it plays in a build-tree run and fails
+    # in the installed app. ("gst-inspect-1.0 <element>" names the plugin.)
+    set(GCS_GST_PLUGINS
+        coreelements        # queue, capsfilter, typefind
+        app                 # appsink
+        playback            # decodebin
+        typefindfunctions   # decodebin's stream type detection
+        videoconvertscale   # videoconvert
+        udp                 # udpsrc
+        rtsp                # rtspsrc
+        rtp                 # rtph264depay and the other depayloaders
+        rtpmanager          # rtpbin and its jitter buffer, inside rtspsrc
+        videoparsersbad     # h264parse, h265parse
+        libav               # avdec_h264, avdec_h265
+        applemedia          # vtdec: VideoToolbox, the hardware decoder
+        jpeg                # jpegdec, for MJPEG cameras
+    )
+
+    # One architecture, the one the executable is built for. The framework is
+    # universal; carrying the other half of it would double the bundle for
+    # code nothing can load. A universal build (two CMAKE_OSX_ARCHITECTURES)
+    # keeps both.
+    list(LENGTH CMAKE_OSX_ARCHITECTURES _n_arch)
+    if(_n_arch EQUAL 1)
+        set(_bundle_arch "${CMAKE_OSX_ARCHITECTURES}")
+    elseif(_n_arch EQUAL 0)
+        set(_bundle_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    else()
+        set(_bundle_arch "")
+    endif()
+
     install(CODE "
         set(GCS_APP \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/freebodyproblem.app\")
         set(GCS_GST_FRAMEWORK \"${_bundle_fw}\")
+        set(GCS_GST_PLUGINS \"${GCS_GST_PLUGINS}\")
+        set(GCS_ARCH \"${_bundle_arch}\")
     ")
     install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos_bundle.cmake")
 endif()
