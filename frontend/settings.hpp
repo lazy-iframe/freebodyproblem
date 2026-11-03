@@ -68,7 +68,17 @@ struct AppSettings {
     std::map<std::string, ThemeVars> themes;     // user-saved presets (not the builtin)
 
     // ── Data grid ─────────────────────────────────────────────────────────────
-    GridCellPersist grid_cells[9];
+    // Three across, filled row by row. A fresh install starts with the
+    // vibration axes along the top — the health number an operator checks
+    // before take-off — and the throttle bottom right.
+    GridCellPersist grid_cells[9] = {
+        { 241, "vibration_x", "vibration_x" },   // VIBRATION
+        { 241, "vibration_y", "vibration_y" },
+        { 241, "vibration_z", "vibration_z" },
+        {}, {}, {},
+        {}, {},
+        {  74, "throttle",    "throttle"    },   // VFR_HUD
+    };
 
     // ── Connection profiles ───────────────────────────────────────────────────
     std::vector<ConnectionProfile> connection_profiles;
@@ -90,8 +100,8 @@ struct AppSettings {
     int map_icon_style = 1;   // MapIconStyle: 0 legacy arrow, 1 by vehicle type, 2-4 forced
 
     // ── CRT effects (cosmetic) ────────────────────────────────────────────────
-    bool  crt_scanlines         = false;
-    float crt_scanline_strength = 0.5f;   // 0..1
+    bool  crt_scanlines         = true;
+    float crt_scanline_strength = 0.30f;  // 0..1
     bool  crt_vignette          = false;
     float crt_vignette_strength = 0.5f;   // 0..1
 

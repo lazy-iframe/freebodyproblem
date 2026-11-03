@@ -22,17 +22,6 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
-
-// Cheap integer hash → [0, 1). Deterministic per (line, tick), so the noise
-// holds still between ticks instead of boiling at the frame rate.
-static float hash01(uint32_t x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU;
-    x ^= x >> 15; x *= 0x846ca68bU;
-    x ^= x >> 16;
-    return (x & 0xFFFFFF) / float(0x1000000);
-}
 
 static ImU32 black(float a)
 {
@@ -44,54 +33,56 @@ static ImU32 rgba(const ImVec4& c, float a)
     return ImGui::ColorConvertFloat4ToU32({ c.x, c.y, c.z, std::clamp(a, 0.0f, 1.0f) });
 }
 
-// The same hue pushed up until its brightest channel is full — the glow of a
-// phosphor whose dark line color is `c`.
-static ImVec4 lit(const ImVec4& c)
-{
-    const float m = std::max({ c.x, c.y, c.z, 0.001f });
-    return { c.x / m, c.y / m, c.z / m, 1.0f };
-}
-
 // ── Scanlines ────────────────────────────────────────────────────────────────
 //
-// A hairline in the theme's scanline color every SPACING px, each one's depth
-// nudged by noise that is re-rolled NOISE_HZ times a second — enough to read
-// as a live tube, slow enough not to shimmer over text. A faint band of the
-// same phosphor, lit, drifts down the screen once every ROLL_S seconds, the
-// way an unlocked vertical hold creeps.
+// A phosphor terminal's raster, held still, inside the boxes: rows two pixels
+// tall in a lighter tone of the box's own colour, the box's colour itself
+// between them. Lighter, not darker, so the lines stand off the fill without
+// taking contrast from the caption over it. Nothing in it moves, so it never
+// draws the eye away from the data under it.
 
-static void draw_scanlines(ImDrawList* dl, ImVec2 size, float strength, double t)
+// A lighter tone of `c`: its hue pushed up until the brightest channel is
+// full, then a third of the way on to white — so even a bright fill, already
+// near its hue's full strength, gets a line lighter than itself.
+static ImVec4 lighter(const ImVec4& c)
 {
-    constexpr float  SPACING  = 3.0f;
-    constexpr double NOISE_HZ = 24.0;
-    constexpr double ROLL_S   = 9.0;
+    const float m = std::max({ c.x, c.y, c.z, 0.001f });
+    constexpr float W = 0.35f;
+    return { c.x / m + (1.0f - c.x / m) * W, c.y / m + (1.0f - c.y / m) * W,
+             c.z / m + (1.0f - c.z / m) * W, 1.0f };
+}
 
-    const uint32_t tick  = (uint32_t)(t * NOISE_HZ);
-    const float    base  = 0.55f * strength * g_theme.crt_scanline.w;
-    const ImVec4&  col   = g_theme.crt_scanline;
-    const ImVec4   glow  = lit(col);
+static bool  s_lines    = false;   // this frame's settings, from crt_begin_frame()
+static float s_strength = 0.0f;
 
-    uint32_t line = 0;
-    for (float y = 0.0f; y < size.y; y += SPACING, ++line) {
-        const float n = hash01(line * 0x9E3779B1U ^ tick * 0x85EBCA77U);
-        dl->AddRectFilled({ 0.0f, y }, { size.x, y + 1.0f }, rgba(col, base * (0.7f + 0.6f * n)));
+void crt_begin_frame(const AppSettings& settings)
+{
+    s_lines    = settings.crt_scanlines;
+    s_strength = settings.crt_scanline_strength;
+}
+
+void crt_box_scanlines(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImVec4 fill)
+{
+    if (!s_lines || !dl) return;
+    constexpr int ROW = 2;   // px: a line, then a gap as tall
+    const float x0 = std::floor(p0.x) + 1.0f, x1 = std::floor(p1.x) - 1.0f;
+    const float y1 = std::floor(p1.y) - 1.0f;
+    float       y  = std::floor(p0.y) + 1.0f;
+    if (x1 <= x0 || y1 <= y) return;
+
+    // Drawn straight to the list, so the disabled fade ImGui gives its own
+    // widgets is folded in by hand, as the plates do.
+    const float a    = s_strength * ImGui::GetStyle().Alpha;
+    const ImU32 line = rgba(lighter(fill), 0.16f * a);
+    while (y < y1) {
+        // Each band runs to the next multiple of ROW on screen, so every box
+        // shares one raster whatever row it starts on. The odd bands are the
+        // gaps, left as the box drew them.
+        const int   band = (int)y / ROW;
+        const float end  = std::min((float)((band + 1) * ROW), y1);
+        if (!(band & 1)) dl->AddRectFilled({ x0, y }, { x1, end }, line);
+        y = end;
     }
-
-    // A rare brighter streak — a single line catching interference.
-    if (hash01(tick * 0xC2B2AE3DU) < 0.06f) {
-        const float y = std::floor(hash01(tick * 0x27D4EB2FU) * size.y);
-        dl->AddRectFilled({ 0.0f, y }, { size.x, y + 1.0f }, rgba(glow, 0.16f * strength));
-    }
-
-    // Rolling band: soft phosphor wash, fading in and out across its height.
-    const float band_h = size.y * 0.14f;
-    const float phase  = (float)std::fmod(t, ROLL_S) / (float)ROLL_S;
-    const float y0     = phase * (size.y + band_h) - band_h;
-    const ImU32 clear  = rgba(glow, 0.0f);
-    const ImU32 band   = rgba(glow, 0.065f * strength);
-    const float mid    = y0 + band_h * 0.5f;
-    dl->AddRectFilledMultiColor({ 0.0f, y0 },  { size.x, mid },           clear, clear, band, band);
-    dl->AddRectFilledMultiColor({ 0.0f, mid }, { size.x, y0 + band_h },   band, band, clear, clear);
 }
 
 // ── Edge darkening ───────────────────────────────────────────────────────────
@@ -111,15 +102,9 @@ static void draw_vignette(ImDrawList* dl, ImVec2 size, float strength)
     dl->AddRectFilledMultiColor({ size.x - d, 0.0f },    { size.x, size.y }, clear, dark, dark, clear);
 }
 
-void draw_crt_overlay(const AppSettings& settings, double time_s)
+void draw_crt_overlay(const AppSettings& settings)
 {
-    if (!settings.crt_scanlines && !settings.crt_vignette) return;
-
-    ImDrawList*  dl   = ImGui::GetForegroundDrawList();
-    const ImVec2 size = ImGui::GetIO().DisplaySize;
-
-    if (settings.crt_scanlines)
-        draw_scanlines(dl, size, settings.crt_scanline_strength, time_s);
-    if (settings.crt_vignette)
-        draw_vignette(dl, size, settings.crt_vignette_strength);
+    if (!settings.crt_vignette) return;
+    draw_vignette(ImGui::GetForegroundDrawList(), ImGui::GetIO().DisplaySize,
+                  settings.crt_vignette_strength);
 }

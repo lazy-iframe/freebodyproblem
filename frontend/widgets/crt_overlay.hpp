@@ -18,14 +18,29 @@
 
 #pragma once
 
+#include "imgui.h"
+
 struct AppSettings;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// crt_overlay — purely cosmetic old-CRT treatment laid over the whole window:
-// scanlines in the theme's crt_scanline color with a little line noise and a
-// slow rolling band, and darkened edges. Drawn on the foreground draw list, so
-// it covers everything (popups included) and never takes a click.
+// crt_overlay — purely cosmetic old-CRT treatment. Scanlines live inside the
+// boxes and buttons, where a phosphor display would have lit them: still
+// two-pixel lines in a lighter tone of each box's own colour, drawn by the UI
+// kit into each plate, tile and header strip over its contents.
+// Darkened edges lie over the whole window, on the foreground draw list, so
+// they cover everything (popups included) and never take a click.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Call once per frame, after ImGui::NewFrame() and before any UI: takes this
+// frame's effect settings.
+void crt_begin_frame(const AppSettings& settings);
+
+// The scanlines inside the box p0..p1, just within its 1 px frame, on `dl`
+// — the box's own draw list, so whatever is drawn over the box later covers
+// them too — in the colour of `fill`, the box's own: a red button's lines are
+// red. Rows fall on the same screen rows in every box, so boxes side by side
+// read as one raster. A no-op with scanlines off.
+void crt_box_scanlines(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImVec4 fill);
+
 // Call once per frame, after all other UI, before ImGui::Render().
-void draw_crt_overlay(const AppSettings& settings, double time_s);
+void draw_crt_overlay(const AppSettings& settings);

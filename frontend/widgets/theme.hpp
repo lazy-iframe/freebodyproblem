@@ -55,7 +55,6 @@ struct ThemeVars {
     // are drawn in it, the rolling band in a brightened copy. Amber and Matrix
     // take col_data at 0.26 — a phosphor in the theme's own data color. Here
     // that comes out grey, col_data being so pale, so Tactical names its green.
-    ImVec4 crt_scanline       = { 0.080f, 0.260f, 0.070f, 1.0f }; // phosphor green #154212
     ImVec4 col_ok             = { 0.592f, 0.918f, 0.537f, 1.0f }; // pale green — nominal state
     ImVec4 col_warning        = { 0.878f, 0.569f, 0.227f, 1.0f }; // amber-orange #E0913A
     ImVec4 col_error          = { 0.937f, 0.510f, 0.443f, 1.0f }; // salmon red #EF8271
@@ -347,7 +346,6 @@ inline ThemeVars retro_amber_theme_vars()
     t.accent                 = { 1.0f,  0.69f, 0.0f,  1.0f }; // bright amber #FFB000
     t.col_data               = { 1.0f,  0.82f, 0.15f, 1.0f }; // gold — telemetry values
     t.highlight              = { 0.350f, 0.145f, 0.0f, 1.0f }; // rust — selection, scrollbars
-    t.crt_scanline           = { 0.260f, 0.213f, 0.039f, 1.0f }; // dark gold — CRT scanlines
     t.col_ok                 = { 1.0f,  0.85f, 0.18f, 1.0f }; // bright gold — OK/good state
     t.col_warning            = { 1.0f,  0.55f, 0.0f,  1.0f }; // orange-amber
     t.col_error              = { 1.0f,  0.10f, 0.20f, 1.0f }; // hot red
@@ -445,7 +443,6 @@ inline ThemeVars matrix_theme_vars()
     t.accent            = { 0.000f, 1.000f, 0.255f, 1.0f }; // phosphor green #00FF41
     t.col_data          = { 0.000f, 0.800f, 0.200f, 1.0f }; // mid green      #00CC33
     t.highlight         = { 0.000f, 0.210f, 0.089f, 1.0f }; // deep green — selection, scrollbars
-    t.crt_scanline      = { 0.000f, 0.208f, 0.052f, 1.0f }; // deep green — CRT scanlines
     t.col_ok            = { 0.000f, 1.000f, 0.000f, 1.0f }; // pure green     #00FF00
     t.col_warning       = { 0.667f, 1.000f, 0.000f, 1.0f }; // yellow-green   #AAFF00
     t.col_error         = { 1.000f, 0.133f, 0.200f, 1.0f }; // hot red        #FF2233
@@ -548,7 +545,6 @@ inline ThemeVars gruvbox_light_theme_vars()
     // ── Palette ───────────────────────────────────────────────────────────────
     t.accent            = { 0.686f, 0.227f, 0.012f, 1.0f }; // orange        #AF3A03
     t.highlight         = { 0.835f, 0.769f, 0.631f, 1.0f }; // bg2 — selection, scrollbars
-    t.crt_scanline      = { 0.741f, 0.682f, 0.576f, 1.0f }; // bg3
     t.col_data          = { 0.027f, 0.400f, 0.471f, 1.0f }; // blue          #076678
     t.col_ok            = { 0.475f, 0.455f, 0.055f, 1.0f }; // green         #79740E
     t.col_warning       = { 0.710f, 0.463f, 0.078f, 1.0f }; // yellow        #B57614

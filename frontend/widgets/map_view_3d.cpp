@@ -2421,8 +2421,10 @@ const BandSet& fence_bands(const FencePlan* zones, const MapVehicle* active,
     if (fence_on && home && active->fence.ceiling_configured()) ceiling = *home + active->fence.alt_max_m;
 
     std::vector<Ring> rings[2];
-    constexpr int CIRCLE_SEG = 72;
     const auto circle = [](FenceVertex c, double r_m) {
+        // Inside the lambda: it captures nothing, and MSVC will not read an
+        // enclosing constexpr local without a capture (C3493).
+        constexpr int CIRCLE_SEG = 72;
         Ring ring;
         const double m_lat = 111320.0, m_lon = 111320.0 * std::cos(c.lat * DEG);
         for (int i = 0; i < CIRCLE_SEG; ++i) {

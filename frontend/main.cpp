@@ -670,6 +670,7 @@ int main()
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        crt_begin_frame(g_settings);
 
         render_ui();
 
@@ -698,7 +699,7 @@ int main()
         mcp_sync();
 
         // Last thing drawn, so it lies over the splash and every popup too.
-        draw_crt_overlay(g_settings, glfwGetTime());
+        draw_crt_overlay(g_settings);
 
         if (g_close_req)
             glfwSetWindowShouldClose(window, GLFW_TRUE);

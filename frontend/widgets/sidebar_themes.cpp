@@ -652,10 +652,6 @@ void draw_themes_panel(AppSettings& settings)
                 c4("Attribution Text", g_theme.map_attr_text);
             }
 
-            if (ImGui::CollapsingHeader("CRT")) {
-                c4("Scanlines",        g_theme.crt_scanline);
-            }
-
             if (ImGui::CollapsingHeader("EKF")) {
                 c4("EKF Background",   g_theme.ekf_bg);
                 c4("EKF Outline",      g_theme.ekf_outline);
@@ -675,22 +671,15 @@ void draw_themes_panel(AppSettings& settings)
     //
     // Pure decoration, saved on change like the tones below. Each strength is
     // saved on release rather than on every pixel the slider moves. The
-    // scanline color is the exception: it belongs to the theme, so it marks
-    // the theme EDITED and is kept by SAVE like any other color.
+    // scanlines take their colour from the box they are in, so there is none
+    // to pick.
     {
-        auto effect = [&](const char* label, const char* id, bool& on, float& strength,
-                          ImVec4* color) {
+        auto effect = [&](const char* label, const char* id, bool& on, float& strength) {
             ImGui::PushID(id);
             if (ImGui::Checkbox(label, &on))
                 settings_save(settings);
             ImGui::SameLine(150.0f);
             ImGui::BeginDisabled(!on);
-            if (color) {
-                ImGui::ColorEdit4("##color", &color->x, kPickFlags | ImGuiColorEditFlags_NoLabel);
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Scanline color \xe2\x80\x94 part of the theme");
-                ImGui::SameLine(0, 4);
-            }
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::SliderFloat("##strength", &strength, 0.0f, 1.0f, "STRENGTH  %.2f");
             if (ImGui::IsItemDeactivatedAfterEdit())
@@ -698,11 +687,9 @@ void draw_themes_panel(AppSettings& settings)
             ImGui::EndDisabled();
             ImGui::PopID();
         };
-        effect("Scanlines",      "crt_lines",    settings.crt_scanlines, settings.crt_scanline_strength,
-               &g_theme.crt_scanline);
-        effect("Edge darkening", "crt_vignette", settings.crt_vignette,  settings.crt_vignette_strength,
-               nullptr);
-        ImGui::TextDisabled("Cosmetic only: scanline noise, a rolling band, dark edges.");
+        effect("Scanlines",      "crt_lines",    settings.crt_scanlines, settings.crt_scanline_strength);
+        effect("Edge darkening", "crt_vignette", settings.crt_vignette,  settings.crt_vignette_strength);
+        ImGui::TextDisabled("Cosmetic only: scanlines in boxes and buttons, dark edges.");
     }
 
     section("AUDIO");

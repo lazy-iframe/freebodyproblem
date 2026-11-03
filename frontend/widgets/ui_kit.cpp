@@ -17,6 +17,7 @@
 
 
 #include "ui_kit.hpp"
+#include "crt_overlay.hpp"
 #include "../../backend/vehicle.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -126,6 +127,7 @@ void ui_panel_header_at(ImDrawList* dl, ImVec2 p0, float width,
         ui_tracked_text(dl, fm, UI_SZ_MICRO, { p1.x - mw - 8.0f, ty },
                         ui_col_label(), right_meta);
     }
+    crt_box_scanlines(dl, p0, p1, g_theme.bg_child_dark);
 }
 
 void ui_panel_header(const char* title, const char* right_meta)
@@ -175,6 +177,7 @@ void ui_readout_tile(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
     dl->AddRectFilled(p0, p1, hovered ? ui_col_strip() : ui_col_well());
     ui_frame(dl, p0, p1, hovered ? ui_col_accent() : ui_col_seam());
     ui_readout(dl, p0, p1, label, value, value_col, value_size);
+    crt_box_scanlines(dl, p0, p1, hovered ? g_theme.bg_child_dark : g_theme.bg_child_darker);
 }
 
 void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
@@ -183,7 +186,8 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 {
     ImFont* fv = g_font_value ? g_font_value : ImGui::GetFont();
 
-    ImU32 text_col;
+    ImU32  text_col;
+    ImVec4 box = fill;   // what the block is filled with, for its scanlines
     if (outline_only) {
         // A dim slab of the fill's own colour — darkened toward black on a
         // dark panel, washed toward the panel on a light one.
@@ -196,6 +200,7 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         dl->AddRectFilled(p0, p1, ui_col(bg));
         ui_frame(dl, p0, p1, ui_col(fill, 0.9f));
         text_col = ui_col(fill);
+        box      = bg;
     } else {
         dl->AddRectFilled(p0, p1, ui_col(fill));
         text_col = ui_col(g_theme.col_active_text);
@@ -206,6 +211,7 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                     { p0.x + (p1.x - p0.x - tw) * 0.5f,
                       p0.y + (p1.y - p0.y - text_size) * 0.5f },
                     text_col, text, UI_TRACK * 1.6f);
+    crt_box_scanlines(dl, p0, p1, box);
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────
@@ -439,6 +445,10 @@ static bool ui_plate_button(const char* label, ImVec2 size,
                     { p0.x + (size.x - tw) * 0.5f,
                       p0.y + (size.y - cap_sz) * 0.5f - 1.0f },
                     col, caption, track);
+    // In the colour the button reads as: its fill, or for a tinted one — a
+    // dark plate whose colour is all in its seam and caption — the tint.
+    crt_box_scanlines(dl, p0, p1,
+                      (tint && !on_plate) ? (hovered ? tint->seam_hot : tint->seam_idle) : fill);
 
     return clicked;
 }

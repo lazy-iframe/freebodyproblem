@@ -65,7 +65,7 @@ static json theme_to_json(const ThemeVars& t)
     json j;
     // Palette
     TV_TO_J(accent);          TV_TO_J(col_data);         TV_TO_J(col_ok);
-    TV_TO_J(highlight);       TV_TO_J(crt_scanline);
+    TV_TO_J(highlight);
     TV_TO_J(col_warning);     TV_TO_J(col_error);        TV_TO_J(col_error_alt);
     TV_TO_J(col_log);         TV_TO_J(col_armed);        TV_TO_J(col_disarmed);
     TV_TO_J(col_no_link);     TV_TO_J(col_no_link_muted);TV_TO_J(col_reboot);
@@ -118,12 +118,6 @@ static ThemeVars theme_from_json(const json& j)
         t.highlight = json_to_vec4(j["highlight"], t.highlight);
     else
         t.highlight = { t.accent.x * 0.35f, t.accent.y * 0.21f, t.accent.z * 0.35f, 1.0f };
-    // Scanline color — likewise newer than some saved themes. The built-ins
-    // take it from col_data, so an older theme gets it the same way.
-    if (j.contains("crt_scanline"))
-        t.crt_scanline = json_to_vec4(j["crt_scanline"], t.crt_scanline);
-    else
-        t.crt_scanline = { t.col_data.x * 0.26f, t.col_data.y * 0.26f, t.col_data.z * 0.26f, 1.0f };
     TV_FROM_J(col_warning);     TV_FROM_J(col_error);        TV_FROM_J(col_error_alt);
     TV_FROM_J(col_log);         TV_FROM_J(col_armed);        TV_FROM_J(col_disarmed);
     TV_FROM_J(col_no_link);     TV_FROM_J(col_no_link_muted);TV_FROM_J(col_reboot);
