@@ -22,10 +22,62 @@
 #include <cstring>
 #include <string>
 
+#ifdef __APPLE__
+#  include <climits>          // PATH_MAX
+#  include <cstdlib>          // realpath, setenv, getenv
+#  include <sys/stat.h>
+#  include <mach-o/dyld.h>    // _NSGetExecutablePath
+#endif
+
 // ── gst_init / gst_deinit wrappers ───────────────────────────────────────────
+
+#ifdef __APPLE__
+// Inside the .app, GStreamer is the copy of GStreamer.framework in
+// Contents/Frameworks. Its plugins, the plugin scanner and GIO's modules are
+// pointed at explicitly rather than left to GStreamer's own relocation logic,
+// and the registry is kept apart from any other GStreamer on the machine —
+// Homebrew's shares ~/.cache/gstreamer-1.0, and a registry naming another
+// installation's plugins is how one ends up loading two copies of libgstreamer.
+//
+// Each is set only if not already in the environment, so GST_* overrides from
+// a shell still win, and nothing at all is set outside a bundle (a build-tree
+// run uses whatever GStreamer it was linked against).
+static void use_bundled_gstreamer()
+{
+    char raw[PATH_MAX] = {};
+    uint32_t size = sizeof(raw);
+    if (_NSGetExecutablePath(raw, &size) != 0) return;
+    char exe[PATH_MAX] = {};
+    if (!realpath(raw, exe)) return;
+
+    std::string dir = exe;
+    dir = dir.substr(0, dir.find_last_of('/'));
+    const std::string root = dir + "/../Frameworks/GStreamer.framework/Versions/1.0";
+
+    struct stat st{};
+    if (stat((root + "/lib/gstreamer-1.0").c_str(), &st) != 0) return;
+
+    setenv("GST_PLUGIN_SYSTEM_PATH_1_0", (root + "/lib/gstreamer-1.0").c_str(), 0);
+    const std::string scanner = root + "/libexec/gstreamer-1.0/gst-plugin-scanner";
+    if (stat(scanner.c_str(), &st) == 0)
+        setenv("GST_PLUGIN_SCANNER_1_0", scanner.c_str(), 0);
+    const std::string gio = root + "/lib/gio/modules";
+    if (stat(gio.c_str(), &st) == 0)
+        setenv("GIO_EXTRA_MODULES", gio.c_str(), 0);
+
+    if (const char* home = getenv("HOME")) {
+        const std::string reg = std::string(home) +
+            "/Library/Caches/freebodyproblem/gstreamer-registry.bin";
+        setenv("GST_REGISTRY_1_0", reg.c_str(), 0);
+    }
+}
+#endif
 
 void video_player_init()
 {
+#ifdef __APPLE__
+    use_bundled_gstreamer();
+#endif
     gst_init(nullptr, nullptr);
 }
 

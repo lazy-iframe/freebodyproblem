@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.13)
+
+# The oldest macOS the .app runs on, and the LSMinimumSystemVersion in
+# assets/Info.plist.in. Has to be set before project(); ignored elsewhere.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+
 project(freebodyproblem VERSION 0.7.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -96,6 +101,39 @@ if(NOT stb_POPULATED)
 endif()
 # stb_SOURCE_DIR is now set; consumers add it to their include paths below.
 
+# ── macOS: GStreamer.framework ────────────────────────────────────────────────
+#
+# The macOS counterpart of the Windows MSVC SDK: the official framework from
+# gstreamer.freedesktop.org, which is built to be relocatable and is copied
+# whole into the .app at install time (cmake/macos_bundle.cmake), so the disk
+# image runs on a Mac with nothing else installed. Homebrew's GStreamer is not
+# used for a release: its libraries hard-code /opt/homebrew paths and are built
+# for whatever macOS the build machine runs.
+#
+# Without the framework the build still works, against Homebrew via
+# pkg-config, but the bundle is then only for the machine that built it.
+if(APPLE)
+    set(GSTREAMER_FRAMEWORK "/Library/Frameworks/GStreamer.framework"
+        CACHE PATH "GStreamer.framework to build against and bundle")
+    set(_gst_fw_root "${GSTREAMER_FRAMEWORK}/Versions/1.0")
+    if(EXISTS "${_gst_fw_root}/lib/pkgconfig/gstreamer-1.0.pc")
+        set(GCS_BUNDLE_GSTREAMER ON)
+        # Searched ahead of Homebrew's .pc files, so a Mac with both gets the
+        # framework.
+        set(ENV{PKG_CONFIG_PATH} "${_gst_fw_root}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+        message(STATUS "GStreamer: using ${GSTREAMER_FRAMEWORK} (bundled into the .app)")
+        # The framework carries OpenSSL for its own plugins; using that copy
+        # means one libssl in the bundle rather than two.
+        if(NOT OPENSSL_ROOT_DIR AND EXISTS "${_gst_fw_root}/include/openssl/ssl.h")
+            set(OPENSSL_ROOT_DIR "${_gst_fw_root}")
+            message(STATUS "OpenSSL: using the copy in GStreamer.framework")
+        endif()
+    else()
+        message(STATUS "GStreamer: no framework at ${GSTREAMER_FRAMEWORK}; "
+                       "using pkg-config (the .app will not be self-contained)")
+    endif()
+endif()
+
 # ── Third-party: cpp-httplib (header-only HTTPS client) ───────────────────────
 # Verify the tag at https://github.com/yhirose/cpp-httplib/releases if the
 # build fails to fetch.
@@ -156,7 +194,13 @@ endif()
 #
 # Asking for the version here means an older system GLFW is declined and the
 # vendored 3.4 below is built instead, rather than quietly losing the feature.
-find_package(glfw3 3.4 QUIET)
+#
+# On macOS the vendored copy is always built, and linked statically: it is one
+# less library to carry in the bundle, and a Homebrew GLFW would tie the .app
+# to the build machine's macOS version.
+if(NOT APPLE)
+    find_package(glfw3 3.4 QUIET)
+endif()
 if(glfw3_FOUND)
     message(STATUS "GLFW: using system installation (${glfw3_VERSION})")
 else()
@@ -475,6 +519,9 @@ if(APPLE)
     target_link_libraries(freebodyproblem PRIVATE
         "-framework IOKit" "-framework CoreFoundation")
     set_target_properties(freebodyproblem PROPERTIES
+        # Where the bundled libraries are looked up once installed. The build
+        # tree keeps CMake's build rpath, pointing at the originals.
+        INSTALL_RPATH "@executable_path/../Frameworks"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_NAME         "freebodyproblem"
         MACOSX_BUNDLE_GUI_IDENTIFIER      "tech.freebodyproblem.gcs"
@@ -551,6 +598,23 @@ if(UNIX AND NOT APPLE)
 
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/freebodyproblem.desktop"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+endif()
+
+if(APPLE)
+    # Runs after everything above has been installed into the bundle: copies
+    # GStreamer.framework and any other non-system library in, points the
+    # executable at the copies, and re-signs. CPack runs it too, so the disk
+    # image carries the result.
+    if(GCS_BUNDLE_GSTREAMER)
+        set(_bundle_fw "${GSTREAMER_FRAMEWORK}")
+    else()
+        set(_bundle_fw "")
+    endif()
+    install(CODE "
+        set(GCS_APP \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/freebodyproblem.app\")
+        set(GCS_GST_FRAMEWORK \"${_bundle_fw}\")
+    ")
+    install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos_bundle.cmake")
 endif()
 
 if(WIN32)

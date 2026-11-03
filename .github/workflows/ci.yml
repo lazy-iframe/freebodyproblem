@@ -273,10 +273,11 @@ jobs:
 
   # ── macOS ────────────────────────────────────────────────────────────────────
   #
-  # Apple Silicon (macos-latest is arm64). Dependencies come from Homebrew, and
-  # the .app links against them where Homebrew put them — so the disk image
-  # runs on a Mac with `brew install gstreamer openssl@3 glfw`, and is not yet
-  # self-contained the way the Windows installer is.
+  # Apple Silicon (macos-latest is arm64). As on Windows, GStreamer is the
+  # official SDK rather than a package manager's: GStreamer.framework, which is
+  # relocatable and is copied whole into the .app by cmake/macos_bundle.cmake.
+  # GLFW is built from source and linked statically. The disk image that comes
+  # out needs nothing else installed on the Mac it runs on.
   macos:
     name: macOS (Apple Silicon / Clang)
     runs-on: macos-latest
@@ -290,16 +291,52 @@ jobs:
         with:
           python-version: '3.12'
 
-      # glfw from Homebrew is 3.4, which CMake accepts, so it is not rebuilt.
-      # The gstreamer formula carries the core and the plugin sets in one.
-      - name: Install dependencies
-        run: brew install ninja pkg-config gstreamer openssl@3 glfw
+      # openssl@3 is the fallback for a framework without OpenSSL headers;
+      # when used, cmake/macos_bundle.cmake copies its dylibs into the bundle.
+      - name: Install build tools
+        run: brew install ninja pkg-config openssl@3
+
+      - name: Cache GStreamer packages
+        id: gst-cache
+        uses: actions/cache@v4
+        with:
+          path: gst-pkg
+          key: gstreamer-macos-universal-${{ env.GSTREAMER_VERSION }}
+
+      - name: Download GStreamer
+        if: steps.gst-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://gstreamer.freedesktop.org/data/pkg/osx/$GSTREAMER_VERSION"
+          mkdir -p gst-pkg
+          for n in "gstreamer-1.0-$GSTREAMER_VERSION-universal.pkg" \
+                   "gstreamer-1.0-devel-$GSTREAMER_VERSION-universal.pkg"; do
+            echo "Downloading $n"
+            # Same mirror, same failure modes as the Windows download.
+            curl -fSL --retry 8 --retry-delay 10 --retry-all-errors -C - \
+                 -o "gst-pkg/$n" "$base/$n"
+          done
+
+      - name: Install GStreamer.framework
+        run: |
+          for pkg in gst-pkg/*.pkg; do
+            echo "Installing $pkg"
+            sudo installer -pkg "$pkg" -target /
+          done
+          fw=/Library/Frameworks/GStreamer.framework/Versions/1.0
+          test -f "$fw/lib/pkgconfig/gstreamer-1.0.pc" || {
+            echo "::error::GStreamer.framework devel files missing"; exit 1; }
+          if [ -f "$fw/include/openssl/ssl.h" ]; then
+            echo "OpenSSL: from GStreamer.framework"
+          else
+            echo "OpenSSL: framework has none, using Homebrew's"
+            echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure
         run: |
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+            ${OPENSSL_ROOT_DIR:+-DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"}
 
       - name: Build
         run: cmake --build build --parallel
@@ -307,35 +344,99 @@ jobs:
       - name: Package
         run: cpack -G DragNDrop --config build/CPackConfig.cmake -B build/packages
 
-      # The bundle is what the disk image carries; check it has what
-      # find_asset() and gcs_mcp_adapter_path() look for, and that its
-      # Info.plist is well formed.
+      - name: Locate bundle
+        run: |
+          app=$(echo build/packages/_CPack_Packages/*/DragNDrop/*/freebodyproblem.app)
+          test -d "$app" || { echo "::error::no .app in CPack's staging tree"; exit 1; }
+          echo "APP=$PWD/$app" >> "$GITHUB_ENV"
+
+      # What find_asset() and gcs_mcp_adapter_path() look for, a well-formed
+      # Info.plist, and the framework copy in place.
       - name: Show bundle contents
         run: |
-          app=build/packages/_CPack_Packages/*/DragNDrop/*/freebodyproblem.app
-          app=$(echo $app)
-          find "$app" -type f | sort
-          plutil -lint "$app/Contents/Info.plist"
-          otool -L "$app/Contents/MacOS/freebodyproblem"
+          find "$APP" -path '*/Frameworks/GStreamer.framework' -prune -o -type f -print | sort
+          du -sh "$APP" "$APP/Contents/Frameworks/"* || true
+          plutil -lint "$APP/Contents/Info.plist"
+          otool -L "$APP/Contents/MacOS/freebodyproblem"
+          otool -l "$APP/Contents/MacOS/freebodyproblem" | grep -A2 LC_RPATH || true
           for f in Contents/MacOS/freebodyproblem Contents/MacOS/freebodyproblem-mcp \
                    Contents/Resources/freebodyproblem.icns \
                    Contents/Resources/fonts/GeistMono-Regular.ttf \
-                   Contents/Resources/icons/freebodyproblem-512.png; do
-            test -e "$app/$f" || { echo "::error::$f is missing from the bundle"; exit 1; }
+                   Contents/Resources/icons/freebodyproblem-512.png \
+                   Contents/Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0; do
+            test -e "$APP/$f" || { echo "::error::$f is missing from the bundle"; exit 1; }
           done
+
+      # Every Mach-O file in the bundle, the framework's included, must link
+      # only to the system or to the bundle itself. A path into Homebrew or
+      # /Library/Frameworks works on this runner and nowhere else.
+      - name: Check bundle is self-contained
+        run: |
+          bad=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q 'Mach-O' || continue
+            refs=$(otool -L "$f" | tail -n +2 | awk '{print $1}' |
+                   grep -E '^/(opt/|usr/local/|Library/Frameworks/|Users/)' || true)
+            if [ -n "$refs" ]; then
+              echo "::error::$f links outside the bundle:"; echo "$refs"; bad=1
+            fi
+          done < <(find "$APP" -type f -print0)
+          [ "$bad" -eq 0 ] && echo "No references outside the bundle."
+          exit $bad
+
+      - name: Verify signature
+        run: codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # The real test: with the framework and Homebrew's OpenSSL moved out of
+      # the way, start the app and check that it loads (no dyld "Library not
+      # loaded"), and that GStreamer found its bundled plugins — gst_init()
+      # runs before any window opens and writes the registry, which then has
+      # to list decodebin, appsink and videoconvert — the pipeline's elements.
+      - name: Run without system GStreamer
+        run: |
+          sudo mv /Library/Frameworks/GStreamer.framework /tmp/GStreamer.framework.off
+          ossl=$(brew --prefix openssl@3)
+          sudo mv "$ossl" "$ossl.off"
+          trap 'sudo mv /tmp/GStreamer.framework.off /Library/Frameworks/GStreamer.framework;
+                sudo mv "$ossl.off" "$ossl"' EXIT
+
+          reg="$HOME/Library/Caches/freebodyproblem/gstreamer-registry.bin"
+          rm -f "$reg"
+          "$APP/Contents/MacOS/freebodyproblem" > run.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 30); do
+            [ -s "$reg" ] && break
+            kill -0 $pid 2>/dev/null || break
+            sleep 1
+          done
+          sleep 2
+          kill $pid 2>/dev/null || true
+          wait $pid 2>/dev/null || true
+          cat run.log
+
+          if grep -q 'Library not loaded' run.log; then
+            echo "::error::the app needs a library that is not in the bundle"; exit 1
+          fi
+          test -s "$reg" || { echo "::error::GStreamer wrote no registry"; exit 1; }
+          for p in coreelements playback appsink videoconvert; do
+            grep -aq "$p" "$reg" || { echo "::error::'$p' not found in the bundled plugins"; exit 1; }
+          done
+          echo "Registry: $(du -h "$reg" | cut -f1), bundled plugins found."
 
       # As on Linux and Windows: the adapter must answer with JSON-RPC's "not
       # reachable" error when no GCS is listening. macOS has no `timeout`;
       # perl's alarm does the same job.
       - name: Check MCP adapter runs
         run: |
-          app=$(echo build/packages/_CPack_Packages/*/DragNDrop/*/freebodyproblem.app)
           out=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' |
                 FBP_MCP_PORT=1 FBP_MCP_TOKEN=x \
-                perl -e 'alarm 20; exec @ARGV' "$app/Contents/MacOS/freebodyproblem-mcp")
+                perl -e 'alarm 20; exec @ARGV' "$APP/Contents/MacOS/freebodyproblem-mcp")
           echo "$out"
           echo "$out" | grep -q '"code":-32000' || {
             echo "::error::freebodyproblem-mcp did not answer as expected"; exit 1; }
+
+      - name: Report disk image size
+        run: ls -lh build/packages/*.dmg
 
       - uses: actions/upload-artifact@v4
         with:
