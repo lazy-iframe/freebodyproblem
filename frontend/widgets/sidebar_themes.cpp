@@ -689,7 +689,9 @@ void draw_themes_panel(AppSettings& settings)
         };
         effect("Scanlines",      "crt_lines",    settings.crt_scanlines, settings.crt_scanline_strength);
         effect("Edge darkening", "crt_vignette", settings.crt_vignette,  settings.crt_vignette_strength);
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Cosmetic only: scanlines in boxes and buttons, dark edges.");
+        ImGui::PopTextWrapPos();
     }
 
     section("AUDIO");
@@ -750,7 +752,9 @@ void draw_themes_panel(AppSettings& settings)
         };
         style_row("Main view", "hud_main",  settings.hud_tapes_main);
         style_row("Swarm",     "hud_swarm", settings.hud_tapes_swarm);
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Classic: attitude ball. Tapes: speed / heading / altitude.");
+        ImGui::PopTextWrapPos();
     }
 
     section("FONT");
@@ -833,7 +837,9 @@ void draw_themes_panel(AppSettings& settings)
     // 3D map and GO HERE warn about it.
     {
         float m = settings.terrain_clearance_m;
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Warn when a mission leg or GO HERE path comes within");
+        ImGui::PopTextWrapPos();
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::SliderFloat("##terrain_clear", &m, 0.0f, 300.0f, "CLEARANCE  %.0f M")) {
             settings.terrain_clearance_m = m;
@@ -841,7 +847,9 @@ void draw_themes_panel(AppSettings& settings)
         }
         if (ImGui::IsItemDeactivatedAfterEdit())
             settings_save(settings);
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("of the terrain data (bare ground: no trees or buildings)");
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
     }
 
@@ -1036,7 +1044,9 @@ void draw_themes_panel(AppSettings& settings)
             settings.mcp_instructions = s_rules;
             settings_save(settings);
         }
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Sent when an agent connects, and by get_guidelines.");
+        ImGui::PopTextWrapPos();
 
         ImGui::Spacing();
         bool act = settings.mcp_actions_enabled;
@@ -1051,7 +1061,9 @@ void draw_themes_panel(AppSettings& settings)
         // unticked puts the ALLOW / REFUSE dialog in front of the operator.
         ImGui::BeginDisabled(!act);
         ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Run without asking \xe2\x80\x94 the rest ask on screen first:");
+        ImGui::PopTextWrapPos();
         for (const McpActionInfo& a : mcp_actions()) {
             bool unasked = false;
             auto it = settings.mcp_auto_allow.find(a.tool);

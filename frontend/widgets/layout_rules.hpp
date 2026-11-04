@@ -34,11 +34,15 @@
 //     the sidebars get what their text needs and stop there. Every pixel past
 //     their maximum goes to the centre.
 //
-//  2. Space is handed out centre-minimum first, then sidebars up to their
-//     maximum, then the rest to the centre. A screen that cannot give both
-//     sidebars their minimum beside a minimum centre is NARROW: the right
-//     sidebar and the plugin rail go, and the centre can only be the feed or
-//     the map fullscreen — both of which already do without them.
+//  2. Space is handed out centre-minimum first, then to the centre up to its
+//     target, then sidebars up to their maximum, then the rest to the centre.
+//     Below 1080p's width the sidebars stay at their minimum and the picture
+//     gets the difference: a sidebar past its minimum only pads text, and the
+//     other way round a screen 12% narrower than 1080p lost 27% of its centre.
+//     A screen that cannot give both sidebars their minimum beside a minimum
+//     centre is NARROW: the right sidebar and the plugin rail go, and the
+//     centre can only be the feed or the map fullscreen — both of which already
+//     do without them.
 //
 //  3. MAP + VIDEO is stacked (video over map, equal areas) until the centre
 //     gets too wide for it, and then split down the middle (map | video). The
@@ -58,6 +62,12 @@ static constexpr float RIGHT_MAX_CH  = 65.0f;
 // The narrowest centre column worth showing two panes in: a feed about 300 px
 // tall at the default font, and room in the header for the mode buttons.
 static constexpr float CENTER_MIN_CH = 72.0f;
+
+// What the centre gets before the sidebars grow past their minimum. Just under
+// the centre a 1080p screen has with both sidebars at their maximum, so the
+// sidebars reach it a little before 1920 px and 1080p and up are laid out as
+// they always were.
+static constexpr float CENTER_TARGET_CH = 120.0f;
 
 static constexpr float VIDEO_ASPECT  = 16.0f / 9.0f;
 
@@ -165,12 +175,14 @@ inline LayoutColumns layout_columns(float sw, float ch, float rail_w)
         return c;
     }
 
-    // Centre minimum is already paid for. What is over goes to the sidebars,
-    // each in proportion to how far it is from its maximum, so both reach it
-    // together; anything past that goes to the centre.
-    const float spare = avail - cmin - lmin - rmin;
-    const float slack = (lmax - lmin) + (rmax - rmin);
-    const float give  = std::min(spare, slack);
+    // Centre minimum is already paid for. What is over goes to the centre up to
+    // its target, then to the sidebars, each in proportion to how far it is from
+    // its maximum, so both reach it together; anything past that goes to the
+    // centre.
+    const float ctarget = CENTER_TARGET_CH * ch;
+    const float spare   = std::max(avail - ctarget - lmin - rmin, 0.0f);
+    const float slack   = (lmax - lmin) + (rmax - rmin);
+    const float give    = std::min(spare, slack);
     c.left_w   = lmin + give * (lmax - lmin) / slack;
     c.right_w  = rmin + give * (rmax - rmin) / slack;
     c.center_w = avail - c.left_w - c.right_w;

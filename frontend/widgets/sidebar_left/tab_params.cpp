@@ -810,9 +810,11 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             if (r.selected) ++selected;
 
         ImGui::TextDisabled("%s", s_param_path.c_str());
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("%d differ \xe2\x80\x94 %d already match, %d not on vehicle, %d bad lines",
                             (int)st().load_rows.size(), st().load_matched,
                             st().load_unknown, st().load_skipped);
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
 
         // Bulk selection, with the running count beside it so the APPLY figure
@@ -925,14 +927,18 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
         char lbl[16];
         param_doc_version_label(*docs, fw_doc >= 0 ? fw_doc : (int)docs->version_count - 1,
                                 lbl, sizeof(lbl));
+        ImGui::PushTextWrapPos(0.0f);
         if (fw_doc >= 0)
             ImGui::TextDisabled("Docs: %s %s reference (firmware %s)",
                                 docs->name, lbl, vs->fw_version);
         else
             ImGui::TextDisabled("Docs: %s %s reference until the firmware reports its version",
                                 docs->name, lbl);
+        ImGui::PopTextWrapPos();
     } else if (vs && vs->has_heartbeat) {
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Docs: none for this vehicle (ArduPilot Copter and PX4 only)");
+        ImGui::PopTextWrapPos();
     }
     ImGui::Spacing();
 
