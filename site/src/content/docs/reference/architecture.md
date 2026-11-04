@@ -24,7 +24,7 @@ the serial handle, drains them.
 ```
 
 ## Backend (`backend/`)
-- **connection.cpp**: Serial port enumeration (Linux/Windows)
+- **connection.cpp**: Serial port enumeration (Linux/Windows/macOS)
 - **link.cpp**: One transport — UDP socket, TCP connection or serial port — and the platform detail behind opening, reading and writing it
 - **fleet.cpp**: Every link and vehicle, the link read threads, and the sysid demultiplexing that decides which vehicle a message belongs to
 - **vehicle.cpp**: One vehicle and the thread that talks to it — stream rates, the mode list, clock sync, the parameter fetch and its retransmits, and the snapshot the UI reads

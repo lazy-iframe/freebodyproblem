@@ -36,7 +36,11 @@ jobs:
   # ── Linux ────────────────────────────────────────────────────────────────────
   linux:
     name: Linux (Ubuntu / GCC)
-    runs-on: ubuntu-latest
+    # A fixed release, not ubuntu-latest: the .deb's minimum library versions are
+    # whatever this machine has, so a newer runner would silently drop every
+    # older system from the package, Debian 13 first. Move it on purpose, and
+    # update "Distribution compatibility" in the install docs when it moves.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4

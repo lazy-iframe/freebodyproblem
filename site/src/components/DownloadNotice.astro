@@ -1,0 +1,61 @@
+---
+// The note under a platform's heading on the install page, for someone who has
+// just pressed that platform's download button (see Downloads.astro). Hidden
+// until then, so a reader who came for the instructions sees nothing extra.
+//
+// The page is told only which platform, never a URL: the file comes from the
+// release lookup at build time, so a crafted link cannot make this page
+// download anything but the project's own installer.
+//
+// With no installer to point at — the lookup failed, or the latest release has
+// none for this platform — nothing is started and the note says where to look.
+import { Aside } from '@astrojs/starlight/components';
+import { latestRelease, type Platform } from '../lib/release';
+
+interface Props {
+	os: Platform;
+}
+const { os } = Astro.props;
+const rel = await latestRelease();
+const dl = rel[os];
+---
+
+<div data-download-notice={os} data-file={dl.name ? dl.url : undefined} hidden>
+	{
+		dl.name ? (
+			<Aside type="tip" title="Your download should start automatically">
+				<code>{dl.name}</code>. If it has not started, download it from{' '}
+				<a href={rel.page}>GitHub Releases</a>.
+			</Aside>
+		) : (
+			<Aside type="note" title="Download from GitHub">
+				This installer could not be linked directly. Download it from{' '}
+				<a href={rel.page}>GitHub Releases</a>.
+			</Aside>
+		)
+	}
+</div>
+
+<script>
+	const os = new URLSearchParams(location.search).get('download');
+	const note = os && document.querySelector<HTMLElement>(`[data-download-notice="${CSS.escape(os)}"]`);
+	if (note) {
+		note.hidden = false;
+
+		// Taken off the address, so reloading or bookmarking the instructions
+		// does not download the installer a second time.
+		const url = new URL(location.href);
+		url.searchParams.delete('download');
+		history.replaceState(null, '', url);
+
+		// GitHub serves release files as attachments, so the page stays where
+		// it is. After `load`, because starting a navigation stops whatever
+		// the page is still fetching.
+		const file = note.dataset.file;
+		if (file) {
+			const start = () => location.assign(file);
+			if (document.readyState === 'complete') start();
+			else addEventListener('load', start, { once: true });
+		}
+	}
+</script>

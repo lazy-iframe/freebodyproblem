@@ -172,7 +172,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **SWARM view**: a card per vehicle with its attitude, mode, battery, GPS and EKF health, and the one place commands go to several vehicles at once — check the ones you want, then switch modes, take off, arm or set the interlock across all of them. See [Swarm View](#swarm-view)
 
 ### Connection
-- **Multiple transport layers**: UDP, TCP, Serial (Linux and Windows)
+- **Multiple transport layers**: UDP, TCP, Serial (Linux, Windows and macOS)
 - **Auto-discovery**: serial port enumeration with device descriptions
 - **Configurable baud rates**: 9600 to 921600
 - **Automatic telemetry rate configuration**: requests optimal message rates on connect, addressed to each vehicle as it is discovered
@@ -230,7 +230,7 @@ Prebuilt packages are attached to each release on the
 If you only want to run the application, use these — building from source is
 not required.
 
-Both packages also install `freebodyproblem-mcp`, the small adapter that lets
+All three packages also include `freebodyproblem-mcp`, the small adapter that lets
 AI agents connect to the GCS — see [AI Agents (MCP)](#ai-agents-mcp-1). It does nothing on its own and
 can be ignored if you do not use agents.
 
@@ -282,14 +282,16 @@ dpkg-deb --info freebodyproblem_0.1.0_amd64.deb | grep Depends
 
 Two consequences worth knowing:
 
-- **Older Ubuntu releases may refuse it.** If apt reports something like
-  `libc6 (>= 2.43) but 2.39-0ubuntu8.3 is to be installed`, your release is
-  older than the build machine. Build from source instead — there is no way to
-  satisfy a newer glibc on an older system.
-- **Debian is not covered.** The package depends on `libssl3t64` and
-  `libglib2.0-0t64`, names introduced by Ubuntu's 64-bit `time_t` transition.
-  Debian calls these `libssl3` and `libglib2.0-0`, so the dependencies cannot
-  be satisfied there. Build from source on Debian.
+- **Older Ubuntu releases will refuse it.** Released packages are built on
+  Ubuntu 24.04, so that is the oldest Ubuntu they install on. If apt reports
+  something like `libc6 (>= 2.38) but 2.35-0ubuntu3.8 is to be installed`, your
+  release is older than the build machine. Build from source instead — there is
+  no way to satisfy a newer glibc on an older system.
+- **Debian 13 and later should work; Debian 12 will not.** Debian 13 has every
+  dependency at a new enough version. Debian 12's `libc6` and `libstdc++6` are
+  too old, and it does not have `libssl3t64` or `libglib2.0-0t64`, names that
+  came with the 64-bit `time_t` transition. Build from source on Debian 12. Other
+  Debian-based systems depend on which release they follow.
 
 #### Video streaming plugins
 
@@ -332,6 +334,44 @@ Two things to expect:
   Microsoft Basic Display Adapter does not provide one — install your GPU
   vendor's driver first.
 
+### macOS
+
+**Nothing needs installing first.** The disk image is self-contained: it bundles
+GStreamer with the plugins the video view uses, and the OpenSSL libraries. It is
+built for Apple Silicon (M1 and later) and macOS 11 or newer. There is no prebuilt
+package for Intel Macs; they would have to [build from source](#macos-1).
+
+**1. Install it.** Download `freebodyproblem-<version>-Darwin.dmg`, open it, and
+drag **freebodyproblem** onto the **Applications** shortcut.
+
+**2. Allow it to open.** The app is not signed with an Apple Developer ID, so
+macOS blocks the first launch. Open it once and dismiss the warning, then go to
+**System Settings → Privacy & Security**, scroll down, and choose **Open Anyway**
+next to the message about freebodyproblem. Right-click → Open no longer gets
+around this on macOS 15 and later. The same can be done from a terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/freebodyproblem.app
+```
+
+It opens normally from then on. Remove it by deleting the app from
+**Applications**; settings and cached map tiles stay in
+`~/.config/freebodyproblem` and `~/.cache/freebodyproblem` until you delete
+those too.
+
+Three things to expect:
+
+- Serial links appear as `/dev/cu.usbserial-…` or `/dev/cu.usbmodem…`, with the
+  device's USB name beside them.
+- The first time the app listens on UDP, macOS may ask whether to allow incoming
+  connections. Choose **Allow**, or no telemetry will arrive.
+- The window has a normal title bar, unlike on Linux and Windows. It opens filling
+  the space between the menu bar and the Dock; the green button or
+  **Ctrl-Cmd-F** gives true full screen.
+
+The bundle keeps only the GStreamer plugins the video view needs: H.264 over UDP,
+and the usual H.264, H.265 and MJPEG cameras over RTSP.
+
 ---
 
 ## Building from Source
@@ -354,6 +394,21 @@ sudo apt install cmake g++ libglfw3-dev libgstreamer1.0-dev \
     gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-libav
 ```
 
+### macOS
+```bash
+xcode-select --install
+brew install cmake ninja pkg-config python
+```
+
+Then install GStreamer.framework, both the **runtime** and the **development**
+`.pkg`, from [gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/download/)
+(CI uses 1.26). The build finds it in `/Library/Frameworks`, takes OpenSSL from it
+too, and copies what it needs into the `.app` at packaging time.
+
+Homebrew's `gstreamer` also builds, with
+`-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)`, but the result only runs on
+machines with the same Homebrew libraries, so it is for development only.
+
 ### Build Steps
 ```bash
 # Clone with submodules (includes MAVLink definitions and Dear ImGui)
@@ -367,6 +422,9 @@ cmake --build build --parallel
 # Run
 ./build/freebodyproblem
 ```
+
+On macOS the executable is inside the bundle:
+`./build/freebodyproblem.app/Contents/MacOS/freebodyproblem`.
 
 Running straight out of the build tree works: fonts are located next to the
 executable, then in the installed prefix, then in the source tree.
@@ -388,7 +446,8 @@ cmake --build build --target package
 ```
 
 The result lands in `build/` — `freebodyproblem_<version>_amd64.deb` on Linux,
-`freebodyproblem-<version>-win64.exe` on Windows.
+`freebodyproblem-<version>-win64.exe` on Windows,
+`freebodyproblem-<version>-Darwin.dmg` on macOS.
 
 Extra tooling per platform:
 
@@ -396,6 +455,7 @@ Extra tooling per platform:
 |----------|-----------|--------------------------------------------------------------------------------------------------|
 | Linux    | `DEB`     | `dpkg-dev` (for `dpkg-shlibdeps`, which derives the dependency list)                             |
 | Windows  | `NSIS`    | [NSIS](https://nsis.sourceforge.io/) (`choco install nsis`) and the GStreamer MSVC **devel** SDK |
+| macOS    | `DragNDrop` | GStreamer.framework, runtime and development packages, for a self-contained bundle (see [macOS](#macos-1)) |
 
 Inspect a built `.deb` with:
 
@@ -406,7 +466,7 @@ dpkg-deb --contents build/freebodyproblem_0.1.0_amd64.deb  # file listing
 
 ### Releasing
 
-Pushing a `v*` tag builds both packages and publishes them to a
+Pushing a `v*` tag builds all three packages and publishes them to a
 [GitHub Release](https://github.com/lazy-iframe/freebodyproblem/releases)
 (`.github/workflows/cd.yml`).
 
@@ -561,8 +621,10 @@ get a layout that uses their space rather than a stretched copy of one.
 digits, for Roboto (Settings → FONT), whose digits are fixed width though its
 letters are not: each sidebar has a minimum — its widest row that
 cannot shrink, such as a parameter ID beside its value and WRITE — and a
-maximum, the width it has on a 1080p screen. Past the maximum they stop
-growing, and every extra pixel goes to the centre.
+maximum, the width it has on a 1080p screen. The picture comes first: below
+1080p's width they stay at their minimum while the centre grows to about 120
+characters, and only then widen. Past the maximum they stop growing, and every
+extra pixel goes to the centre.
 
 **MAP + VIDEO picks its arrangement from the space left.** While the centre is
 no more than about one and a half times as wide as it is tall, the feed sits
@@ -600,8 +662,8 @@ two columns of vehicle cards, on wider screens all of them. With more cards
 than that the toggle disappears and the map has the space to itself; your
 choice is kept for when the column narrows again.
 
-On Wayland, sizes are in the desktop's scaled units, so a 4K screen at 200%
-gets the 1080p layout at twice the sharpness. Windows and X11 do not
+On Wayland and macOS, sizes are in the desktop's scaled units, so a 4K screen at
+200% gets the 1080p layout at twice the sharpness. Windows and X11 do not
 apply display scaling yet — see [Limitations](#limitations).
 
 ### Flight Controls
@@ -1065,7 +1127,8 @@ itself in the GCS's `settings.json`.
 |---|---|
 | Linux `.deb` | `/usr/bin/freebodyproblem-mcp` (on `PATH`) |
 | Windows installer | `C:\Program Files\freebodyproblem\bin\freebodyproblem-mcp.exe` |
-| Source build | `build/freebodyproblem-mcp` |
+| macOS disk image | `/Applications/freebodyproblem.app/Contents/MacOS/freebodyproblem-mcp` |
+| Source build | `build/freebodyproblem-mcp` (macOS: `build/freebodyproblem.app/Contents/MacOS/freebodyproblem-mcp`) |
 
 Give that path to your host as the server's command. For example:
 
@@ -1225,7 +1288,7 @@ the serial handle, drains them.
 ```
 
 ### Backend (`backend/`)
-- **connection.cpp**: Serial port enumeration (Linux/Windows)
+- **connection.cpp**: Serial port enumeration (Linux/Windows/macOS)
 - **link.cpp**: One transport — UDP socket, TCP connection or serial port — and the platform detail behind opening, reading and writing it
 - **fleet.cpp**: Every link and vehicle, the link read threads, and the sysid demultiplexing that decides which vehicle a message belongs to
 - **vehicle.cpp**: One vehicle and the thread that talks to it — stream rates, the mode list, clock sync, the parameter fetch and its retransmits, and the snapshot the UI reads
@@ -1293,14 +1356,14 @@ Settings are auto-saved to a per-user location, not the working directory:
 
 | Platform | Path                                                                                           |
 |----------|------------------------------------------------------------------------------------------------|
-| Linux    | `$XDG_CONFIG_HOME/freebodyproblem/settings.json`, or `~/.config/freebodyproblem/settings.json` |
+| Linux, macOS | `$XDG_CONFIG_HOME/freebodyproblem/settings.json`, or `~/.config/freebodyproblem/settings.json` |
 | Windows  | `%APPDATA%\freebodyproblem\settings.json`                                                      |
 
 If neither environment variable is set, it falls back to
 `./freebodyproblem_settings.json` in the working directory.
 
 Map tiles are cached separately, under
-`$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and
+`$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and macOS, and
 `%LOCALAPPDATA%\freebodyproblem\tiles` on Windows. Deleting that directory is
 safe — tiles are refetched on demand.
 
@@ -1341,20 +1404,18 @@ Example `settings.json`:
 
 - **No firmware upload**: Use ArduPilot's `uploader.py` or Mission Planner for bootloader operations
 - **No log download**: Access DataFlash logs via MAVLink file transfer in other tools
-- **OS support**: Linux and Windows are built and packaged by CI. macOS is not currently built or tested.
+- **OS support**: Linux, Windows and macOS (Apple Silicon) are built and packaged by CI. Intel Macs have no prebuilt package, and the macOS app is not signed with a Developer ID, so its first launch has to be allowed by hand
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No rally points**: the vehicle's rally list (`MAV_MISSION_TYPE_RALLY`) is neither downloaded nor edited
 - **One vehicle in the tabs at a time**: the map draws the whole fleet and SWARM gives every vehicle a summary card, but the tabs — parameters, mission, radio, sensors, the inspector — and the telemetry tiles follow the selected vehicle only
 - **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
-- **Display scaling on Windows and X11**: the UI is drawn in physical pixels there, so at 150% or 200% desktop scaling it comes out smaller than intended. Wayland hands the app scaled sizes and is not affected
+- **Display scaling on Windows and X11**: the UI is drawn in physical pixels there, so at 150% or 200% desktop scaling it comes out smaller than intended. Wayland and macOS hand the app scaled sizes and are not affected
 - **Plugin rail on short screens**: below about 900 px of height the rail's ten buttons do not fit and the rail scrolls
 
 ## Future Plans
 
 - Implementations of "Console" and "ESC" tabs, for the MAVLink console and for ESC configuration with motor test.
-- Multi-vehicle UI: more of each aircraft's telemetry on the SWARM cards, so it can be watched without switching between them
 - PX4: mission, parameters, RC configuration and sensor calibration (telemetry and modes are done)
-- macOS Support
 - Video AI features
 
 ## Contributing
@@ -1363,7 +1424,6 @@ This is a personal project built for speed and clarity over feature completeness
 - Bug fixes
 - Performance improvements
 - Additional MAVLink message handlers
-- macOS support
 - Telemetry graph overlays
 - Other features which are essential during a flight
 

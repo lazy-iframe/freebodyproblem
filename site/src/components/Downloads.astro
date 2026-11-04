@@ -1,46 +1,80 @@
 ---
-// The two downloads, straight to the latest release's installer for each OS.
-// Resolved at build time — see src/lib/release.ts.
+// The three downloads, each the latest release's installer for its OS, resolved
+// at build time — see src/lib/release.ts.
+//
+// A press goes to that platform's install instructions, and the page there
+// starts the download (DownloadNotice.astro). The link itself stays the file:
+// without JavaScript, or opened in a new tab, it is a plain download.
 import { Icon } from '@astrojs/starlight/components';
-import { latestRelease, formatSize, RELEASES_URL } from '../lib/release';
+import { latestRelease, formatSize, RELEASES_URL, type Platform } from '../lib/release';
 
 const rel = await latestRelease();
-const items = [
+const base = import.meta.env.BASE_URL;
+
+// `anchor` is the platform's heading on the install page.
+const items: {
+	platform: Platform;
+	anchor: string;
+	os: string;
+	kind: string;
+	targets: string;
+	arch: string;
+	icon: 'linux' | 'apple' | null;
+}[] = [
 	{
+		platform: 'windows',
+		anchor: 'windows',
 		os: 'Windows',
-		detail: 'Installer for Windows 10/11, 64-bit',
-		dl: rel.windows,
+		kind: 'Installer',
+		targets: 'Windows',
+		arch: 'x86-64',
 		icon: null,
 	},
 	{
+		platform: 'macos',
+		anchor: 'macos',
+		os: 'macOS',
+		kind: 'Disk image',
+		targets: 'Apple Silicon macOS',
+		arch: 'ARM64',
+		icon: 'apple',
+	},
+	{
+		platform: 'linux',
+		anchor: 'linux-ubuntu',
 		os: 'Linux',
-		detail: 'Debian package for Ubuntu, amd64',
-		dl: rel.linux,
-		icon: 'linux' as const,
+		kind: 'Debian package',
+		targets: 'Debian-based OS',
+		arch: 'x86-64',
+		icon: 'linux',
 	},
 ];
-const base = import.meta.env.BASE_URL;
 ---
 
 <div class="downloads not-content">
 	{
-		items.map(({ os, detail, dl, icon }) => (
-			<a class="dl" href={dl.url} rel="noopener">
+		items.map(({ platform, anchor, os, kind, targets, arch, icon }) => (
+			<a
+				class="dl"
+				href={rel[platform].url}
+				rel="noopener"
+				aria-label={`Download for ${os}`}
+				data-install={`${base}start/install/?download=${platform}#${anchor}`}
+			>
 				<span class="dl-icon" aria-hidden="true">
 					{icon ? (
-						<Icon name={icon} size="1.75rem" />
+						<Icon name={icon} size="6rem" />
 					) : (
-						<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+						<svg viewBox="0 0 24 24" width="96" height="96" fill="currentColor">
 							<path d="M3 5.1 10 4v7H3zM11 3.9 21 2.5V11H11zM3 12h7v7l-7-1zM11 12h10v8.5l-10-1.4z" />
 						</svg>
 					)}
 				</span>
-				<span class="dl-text">
-					<span class="dl-title">Download for {os}</span>
-					<span class="dl-detail">
-						{detail}
-						{dl.size ? ` · ${formatSize(dl.size)}` : ''}
-					</span>
+				<span class="dl-kind">{kind}</span>
+				<span class="dl-targets">{targets}</span>
+				<span class="dl-specs">
+					{arch}
+					{rel[platform].size ? ` · ${formatSize(rel[platform].size)}` : ''}
 				</span>
 			</a>
 		))
@@ -52,43 +86,54 @@ const base = import.meta.env.BASE_URL;
 	</p>
 </div>
 
+<script>
+	for (const a of document.querySelectorAll<HTMLAnchorElement>('a[data-install]')) {
+		a.addEventListener('click', (e) => {
+			// Ctrl-click and friends keep their meaning: the file, in a new tab.
+			if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+			e.preventDefault();
+			location.assign(a.dataset.install!);
+		});
+	}
+</script>
+
 <style>
 	.downloads {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 1rem;
 		margin-block: 1.5rem 0;
 	}
 	.dl {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 1rem;
-		padding: 1rem 1.25rem;
-		border: 1px solid var(--sl-color-gray-5);
-		border-radius: 0.5rem;
-		background: rgb(0 0 0 / 0.4);
+		gap: 0.25rem;
+		padding: 0.5rem;
+		text-align: center;
 		color: var(--sl-color-white);
 		text-decoration: none;
-		transition: border-color 0.15s, background-color 0.15s;
-	}
-	.dl:hover {
-		border-color: var(--sl-color-accent);
-		background: var(--sl-color-accent-low);
 	}
 	.dl-icon {
 		color: var(--sl-color-accent);
 		display: flex;
+		margin-block-end: 0.5rem;
+		transition: transform 0.15s, color 0.15s;
 	}
-	.dl-text {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
+	/* With no box to light up, the icon is what answers the pointer. */
+	.dl:hover .dl-icon,
+	.dl:focus-visible .dl-icon {
+		color: var(--sl-color-accent-high);
+		transform: scale(1.06);
 	}
-	.dl-title {
+	.dl-kind {
 		font-weight: 600;
-		font-size: var(--sl-text-lg);
 	}
-	.dl-detail {
+	.dl-targets {
+		color: var(--sl-color-gray-2);
+		font-size: var(--sl-text-sm);
+	}
+	.dl-specs {
 		color: var(--sl-color-gray-3);
 		font-size: var(--sl-text-sm);
 	}
@@ -102,7 +147,7 @@ const base = import.meta.env.BASE_URL;
 	.dl-meta a {
 		color: var(--sl-color-accent);
 	}
-	@media (max-width: 40rem) {
+	@media (max-width: 36rem) {
 		.downloads {
 			grid-template-columns: 1fr;
 		}

@@ -1,6 +1,7 @@
 name: CD
 
-# Publishes the Linux .deb and Windows installer to a GitHub Release.
+# Publishes the Linux .deb, Windows installer and macOS disk image to a GitHub
+# Release.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -73,13 +74,14 @@ jobs:
 
       # Guard against publishing an empty or half-built release if an upload
       # name ever changes upstream.
-      - name: Verify both packages are present
+      - name: Verify all three packages are present
         run: |
           deb=$(find artifacts -name '*.deb' | wc -l)
           exe=$(find artifacts -name '*.exe' | wc -l)
-          echo "found ${deb} .deb and ${exe} .exe"
-          if [ "$deb" -eq 0 ] || [ "$exe" -eq 0 ]; then
-            echo "::error::Expected at least one .deb and one .exe; refusing to publish an incomplete release."
+          dmg=$(find artifacts -name '*.dmg' | wc -l)
+          echo "found ${deb} .deb, ${exe} .exe and ${dmg} .dmg"
+          if [ "$deb" -eq 0 ] || [ "$exe" -eq 0 ] || [ "$dmg" -eq 0 ]; then
+            echo "::error::Expected at least one .deb, one .exe and one .dmg; refusing to publish an incomplete release."
             exit 1
           fi
 
@@ -89,6 +91,7 @@ jobs:
           files: |
             artifacts/*.deb
             artifacts/*.exe
+            artifacts/*.dmg
           # A hyphen in the tag (v0.2.0-rc1, v1.0.0-beta) marks a prerelease.
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

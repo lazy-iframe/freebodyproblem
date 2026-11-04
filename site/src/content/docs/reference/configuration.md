@@ -7,14 +7,14 @@ Settings are auto-saved to a per-user location, not the working directory:
 
 | Platform | Path                                                                                           |
 |----------|------------------------------------------------------------------------------------------------|
-| Linux    | `$XDG_CONFIG_HOME/freebodyproblem/settings.json`, or `~/.config/freebodyproblem/settings.json` |
+| Linux, macOS | `$XDG_CONFIG_HOME/freebodyproblem/settings.json`, or `~/.config/freebodyproblem/settings.json` |
 | Windows  | `%APPDATA%\freebodyproblem\settings.json`                                                      |
 
 If neither environment variable is set, it falls back to
 `./freebodyproblem_settings.json` in the working directory.
 
 Map tiles are cached separately, under
-`$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and
+`$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and macOS, and
 `%LOCALAPPDATA%\freebodyproblem\tiles` on Windows. Deleting that directory is
 safe — tiles are refetched on demand.
 

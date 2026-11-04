@@ -6,7 +6,7 @@
 // with it. "latest" is GitHub's: the newest release that is not a prerelease.
 //
 // A failed lookup (offline, rate-limited) does not fail the build: the buttons
-// fall back to the latest-release page, where both files are one click away.
+// fall back to the latest-release page, where the files are one click away.
 
 const REPO = 'lazy-iframe/freebodyproblem';
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
@@ -18,11 +18,11 @@ export interface Download {
 	size: number | null; // bytes
 }
 
-export interface LatestRelease {
+export type Platform = 'windows' | 'macos' | 'linux';
+
+export interface LatestRelease extends Record<Platform, Download> {
 	tag: string | null;
 	page: string;
-	windows: Download;
-	linux: Download;
 }
 
 const fallback = (): Download => ({ url: LATEST_URL, name: null, size: null });
@@ -35,7 +35,13 @@ export function latestRelease(): Promise<LatestRelease> {
 }
 
 async function lookup(): Promise<LatestRelease> {
-	const result: LatestRelease = { tag: null, page: LATEST_URL, windows: fallback(), linux: fallback() };
+	const result: LatestRelease = {
+		tag: null,
+		page: LATEST_URL,
+		windows: fallback(),
+		macos: fallback(),
+		linux: fallback(),
+	};
 	try {
 		const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
 		// In Actions the workflow's token lifts the anonymous rate limit.
@@ -51,6 +57,7 @@ async function lookup(): Promise<LatestRelease> {
 		for (const a of rel.assets ?? []) {
 			const d: Download = { url: a.browser_download_url, name: a.name, size: a.size };
 			if (/\.exe$/i.test(a.name)) result.windows = d;
+			else if (/\.dmg$/i.test(a.name)) result.macos = d;
 			else if (/\.deb$/i.test(a.name)) result.linux = d;
 		}
 	} catch (err) {

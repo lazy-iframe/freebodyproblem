@@ -10,8 +10,10 @@ get a layout that uses their space rather than a stretched copy of one.
 **Sidebars are as wide as their text.** The UI font is monospaced, so a column
 is measured in characters: each sidebar has a minimum — its widest row that
 cannot shrink, such as a parameter ID beside its value and WRITE — and a
-maximum, the width it has on a 1080p screen. Past the maximum they stop
-growing, and every extra pixel goes to the centre.
+maximum, the width it has on a 1080p screen. The picture comes first: below
+1080p's width they stay at their minimum while the centre grows to about 120
+characters, and only then widen. Past the maximum they stop growing, and every
+extra pixel goes to the centre.
 
 **MAP + VIDEO picks its arrangement from the space left.** While the centre is
 no more than about one and a half times as wide as it is tall, the feed sits
@@ -49,6 +51,6 @@ two columns of vehicle cards, on wider screens all of them. With more cards
 than that the toggle disappears and the map has the space to itself; your
 choice is kept for when the column narrows again.
 
-On Wayland, sizes are in the desktop's scaled units, so a 4K screen at 200%
-gets the 1080p layout at twice the sharpness. Windows and X11 do not
+On Wayland and macOS, sizes are in the desktop's scaled units, so a 4K screen at
+200% gets the 1080p layout at twice the sharpness. Windows and X11 do not
 apply display scaling yet — see [Limitations](https://github.com/lazy-iframe/freebodyproblem#limitations).

@@ -39,7 +39,8 @@ itself in the GCS's `settings.json`.
 |---|---|
 | Linux `.deb` | `/usr/bin/freebodyproblem-mcp` (on `PATH`) |
 | Windows installer | `C:\Program Files\freebodyproblem\bin\freebodyproblem-mcp.exe` |
-| Source build | `build/freebodyproblem-mcp` |
+| macOS disk image | `/Applications/freebodyproblem.app/Contents/MacOS/freebodyproblem-mcp` |
+| Source build | `build/freebodyproblem-mcp` (macOS: `build/freebodyproblem.app/Contents/MacOS/freebodyproblem-mcp`) |
 
 Give that path to your host as the server's command. For example:
 
