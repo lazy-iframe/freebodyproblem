@@ -81,7 +81,10 @@ the button says so and stays off.
   then the point rides its vertical line with the pointer and the second click
   sets its height. A mission item's **LOC?** works this way in 3D, and so does
   **GO HERE**, which then opens its menu with that height filled in. Fence
-  drawing and **EDIT** drags are flat-map work and leave 3D.
+  drawing and editing are flat-map work and leave 3D.
+- **EDIT** works in 3D. Drag a waypoint's marker to move it over the ground at
+  the same height, or drag its vertical line up and down to change only its
+  height. A drag anywhere else still orbits.
 
 The terrain comes from AWS Terrain Tiles (SRTM, ±25 m) unless another
 `{z}/{x}/{y}` PNG source is set in **Settings → TERRAIN**, which also sets the

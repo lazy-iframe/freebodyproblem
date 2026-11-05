@@ -22,6 +22,7 @@
 #include <vector>
 #include "terrain.hpp"
 #include "widgets/theme.hpp"
+#include "../backend/joystick_control.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // settings.hpp — Persistent application settings
@@ -104,6 +105,10 @@ struct AppSettings {
     float crt_scanline_strength = 0.30f;  // 0..1
     bool  crt_vignette          = false;
     float crt_vignette_strength = 0.5f;   // 0..1
+
+    // ── Joystick ──────────────────────────────────────────────────────────────
+    // Calibration and bindings by device GUID, so each stick keeps its own.
+    std::map<std::string, JoystickProfile> joystick_profiles;
 
     // ── MCP server (backend/mcp_server.hpp) ──────────────────────────────────
     // Off unless asked for. Loopback only; the token is generated the first

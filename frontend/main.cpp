@@ -74,6 +74,7 @@
 #include "../backend/mcp_server.hpp"
 
 // Settings
+#include "joystick.hpp"
 #include "settings.hpp"
 #include "mission_alt.hpp"
 #include "terrain.hpp"
@@ -490,6 +491,9 @@ static void render_ui()
         known.swap(now_ids);
     }
 
+    // Not tied to any panel: the stick keeps flying whatever is on screen.
+    joystick_pump(g_fleet.vehicles());
+
     // Everything drawn from here on reads the vehicle on screen. Panels that
     // keep per-vehicle state look this up rather than holding a static of their
     // own — see widgets/vehicle_ui_state.hpp.
@@ -530,6 +534,8 @@ static void render_ui()
     // After the centre view, which is what puts it over the map.
     if (map_full)
         draw_map_overlay(vs, g_settings.hud_tapes_main);
+
+    draw_joystick_live_banner();
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -630,6 +636,7 @@ int main()
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     // Load persisted settings and apply the saved theme
     settings_load(g_settings);
+    joystick_init(&g_settings);
     map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
     set_terrain_clearance_m(g_settings.terrain_clearance_m);

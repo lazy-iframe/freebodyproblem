@@ -29,3 +29,9 @@ mode list the vehicle published, and binds an aux function to a channel. Each
 row writes on its own.
 
   ![RADIO tab](../../../../../screens/radio.png)
+
+## Joystick
+
+The **JOYSTICK** section above the radio's on this tab is separate from all of this: its
+calibration stays on this computer and writes nothing to the vehicle. See
+[Joystick](../joystick/) for how to set it up and fly with it.

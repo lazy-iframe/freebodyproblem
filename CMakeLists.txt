@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.13)
 # assets/Info.plist.in. Has to be set before project(); ignored elsewhere.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(freebodyproblem VERSION 0.7.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.8.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -429,6 +429,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     backend/fleet.cpp
     backend/connection.cpp
     backend/rc_calibration.cpp
+    backend/joystick_control.cpp
     backend/accel_calibration.cpp
     backend/gyro_calibration.cpp
     backend/mag_calibration.cpp
@@ -446,6 +447,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/terrain.cpp
     frontend/terrain_clearance.cpp
     frontend/audio.cpp
+    frontend/joystick.cpp
     frontend/widgets/topbar.cpp
     frontend/widgets/swarm_view.cpp
     frontend/widgets/sidebar_left.cpp

@@ -1524,9 +1524,9 @@ void draw_map_view(double lat, double lon, bool has_pos,
     // also pan, pick or open GO HERE.
     const bool map_hovered = ImGui::IsWindowHovered() && !over_overlay_buttons(wp);
 
-    // A mission item can be placed in 3D, ground then height. Fences and the
-    // EDIT drags are flat-map work; starting any of them leaves 3D.
-    if (pick && (pick->fence_drawing() || pick->drag_edit || pick->fence_edit))
+    // A mission item can be placed and moved in 3D, ground then height. Fences are
+    // flat-map work; drawing or editing one leaves 3D.
+    if (pick && (pick->fence_drawing() || pick->fence_edit))
         s_3d = false;
 
     // ── Keep centered on vehicle until user pans ───────────────────────────────

@@ -53,6 +53,30 @@ inline bool mission_frame_is_global(uint8_t frame)
     }
 }
 
+// The other way: what an item in this frame must carry to stand at `amsl`. Editing a
+// height in 3D goes through here, so an item keeps the frame it was planned in.
+// nullopt when the one its frame needs is missing, or for a local frame.
+inline std::optional<float> mission_alt_for_amsl(uint8_t frame, float amsl,
+                                                 std::optional<float> home,
+                                                 std::optional<float> ground)
+{
+    switch (frame) {
+    case MAV_FRAME_GLOBAL:
+    case MAV_FRAME_GLOBAL_INT:
+        return amsl;
+    case MAV_FRAME_GLOBAL_RELATIVE_ALT:
+    case MAV_FRAME_GLOBAL_RELATIVE_ALT_INT:
+        if (home) return amsl - *home;
+        return std::nullopt;
+    case MAV_FRAME_GLOBAL_TERRAIN_ALT:
+    case MAV_FRAME_GLOBAL_TERRAIN_ALT_INT:
+        if (ground) return amsl - *ground;
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
 // The item's altitude in metres AMSL. `home` is home's AMSL, needed for the
 // relative frames; `ground` the terrain under the item, for the terrain ones.
 // nullopt when the one its frame needs is missing, or for a local frame.

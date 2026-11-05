@@ -24,8 +24,9 @@
 // inside the same window and from the same inputs, so nothing outside the map
 // knows which of the two is showing.
 //
-// New mission items are placed here in 3D; dragging waypoints and drawing
-// fences stay on the flat map, which the map returns to when either starts.
+// New mission items are placed here in 3D, and EDIT moves them here too: the
+// marker over the ground, its vertical line for its height. Fences are drawn and
+// edited on the flat map, which the map returns to when either starts.
 
 #pragma once
 #include "map_view.hpp"
@@ -52,6 +53,9 @@ struct Map3DCenter {
 // map3d_take_goto() then hands it to the map for its GO HERE menu; a
 // right-click is handed over by map3d_take_clear(), for its CLEAR menu. The
 // standing target, once sent, is drawn from `go` too.
+//
+// With `pick` in EDIT, a press on a waypoint moves it instead of orbiting, and a
+// click starts no GO HERE. Written straight into pick->edit_mission.
 struct Map3DScene {
     const std::vector<MapVehicle>*  fleet   = nullptr;
     const std::vector<MissionItem>* mission = nullptr;

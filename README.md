@@ -131,11 +131,11 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 
 ### Mission Planning
 - **Interactive map view**: slippy map with OpenStreetMap tile support (configurable tile server)
-- **3D view**: the map's **3D** button stands the imagery on real terrain — the aircraft as 3D models at their altitude, the mission as a path with its shadow cast on the ground, the geofence as walls. Missions and GO HERE points are placed in it in place and height. See [3D view](#3d-view)
+- **3D view**: the map's **3D** button stands the imagery on real terrain — the aircraft as 3D models at their altitude, the mission as a path with its shadow cast on the ground, the geofence as walls. Missions and GO HERE points are placed in it in place and height, and **EDIT** moves waypoints in both. See [3D view](#3d-view)
 - **Terrain reference**: every vehicle labelled with its height above the terrain data, not only above home, and every mission leg and GO HERE line checked against the ground — a leg that comes within the clearance set in Settings (30 m by default) is marked, one that goes into the ground is marked red. Terrain from AWS Terrain Tiles (SRTM, ±25 m) by default, or any `{z}/{x}/{y}` PNG source
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
-- **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it
+- **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it. In 3D, drag its marker to move it over the ground, or its vertical line to change its height
 - **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling. Nothing of the fence — ring, ceiling or uploaded zones — is drawn while it is not enabled. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
 - **GO HERE**: click anywhere on the map for a guided position target (in 3D, the click starts a pick of the point's place, then its height) — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared from the map's right-click menu
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
@@ -150,6 +150,15 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Stick binding with DETECT**: press DETECT beside an axis and move that stick; the channel that moves is bound
 - **Flight-mode slots**: ArduPilot's six mode-switch positions, each a dropdown of the modes the vehicle itself published (AVAILABLE_MODES), beside the live bar showing which band the switch is in
 - **Aux function binding**: pick a channel and the function it triggers, from the table the connected firmware implements
+
+### Joystick
+- **Fly from a USB stick or a transmitter in USB mode**: `MANUAL_CONTROL`, with sending off until you ask for it and locked to the vehicle you started on. A **JOYSTICK LIVE** banner with a **STOP** stays up in every view
+- **Calibrated on this computer, per device**: nothing is written to the vehicle, so a real radio's calibration is safe. **DETECT** binds each stick by pushing it, axis and direction together
+- **Live channel box**: every axis, plus a grid of buttons that light up as you press them
+- **Button actions**: a flight mode, an aux function or a servo per button, with PRESS, HOLD or TOGGLE triggers
+- **Virtual channels**: a three-position switch that reports as separate buttons becomes one channel with its own virtual PWM, and an action for each position
+- **RC override**: send any axis or virtual channel as an RC channel over `RC_CHANNELS_OVERRIDE`, so the vehicle's own mode and aux settings apply
+- **READ OUTPUT**: the fields of the message actually leaving for the vehicle, and the rate the link is managing
 
 ### Sensor Calibration
 - **What the vehicle is made of**: compasses, accelerometers and gyros read out of the parameter table — chip name, bus and address, external and in-use flags — for both ArduPilot's `COMPASS_DEV_ID` / `INS_*_ID` naming and PX4's `CAL_*_ID`
@@ -814,7 +823,8 @@ precision so a saved value reloads as the same float rather than as an edit.
    **Esc** to cancel. A command without one (RTL, SPEED, DELAY, JUMP, ...) is
    added at once. **MORE...** holds the rest of the commands
 4. Press **EDIT** (the full-width button above the grid) and drag any waypoint
-   on the map to move it; press it again or **Esc** to go back to panning
+   on the map to move it; press it again or **Esc** to go back to panning. In 3D,
+   drag its marker to move it or its vertical line to change its height
 5. Click an item in the list to expand or collapse it and adjust its
    altitude, parameters and command type. A newly added item opens expanded
    and the others collapse
@@ -825,6 +835,21 @@ New items take the altitude of the last item that has one, or 20 m. Leaving
 the MISSION tab cancels a pending **LOC?** and turns **EDIT** off. With the map
 in [3D](#3d-view), **LOC?** takes two clicks: the ground for the place, then
 the height along its vertical line.
+
+**EDIT** works in [3D](#3d-view) too, and the map stays in 3D:
+
+- **Drag a waypoint's marker** to move it over the ground. It keeps its altitude, and the
+  height above ground in the readout changes as the terrain does. The marker stays under
+  the pointer from any camera angle.
+- **Drag its vertical pink line** up or down to change only its altitude. It cannot go
+  below the ground, and its position does not change. If you are looking straight down,
+  the banner asks you to tilt the view.
+
+The readout beside the waypoint shows its altitude above home and above the ground, and the
+list, the path and the terrain checks follow the drag. A waypoint keeps its frame: on
+`GLOBAL_RELATIVE` the altitude is above home, on a terrain frame above the ground, so a
+marker dragged on a terrain frame rises and falls with the ground. A drag anywhere else
+still orbits, and a click beside a waypoint in EDIT does not start a **GO HERE**.
 
 Each item's header shows its height above the terrain data under it, and each
 leg is checked against the terrain along its length: one that comes within the
@@ -940,7 +965,10 @@ OpenGL 3.3; where the driver lacks it, the button says so and stays off.
   then the point rides its vertical line with the pointer and the second click
   sets its height. A mission item's **LOC?** works this way in 3D, and so does
   **GO HERE**, which then opens its menu with that height filled in. Fence
-  drawing and **EDIT** drags are flat-map work and leave 3D.
+  drawing and editing are flat-map work and leave 3D.
+- **EDIT** works in 3D. Drag a waypoint's marker to move it over the ground at
+  the same height, or drag its vertical line up and down to change only its
+  height. A drag anywhere else still orbits.
 
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
@@ -971,6 +999,55 @@ row writes on its own.
 <p align="center">
   <a href="screens/radio.png"><img src="screens/radio.png" alt="RADIO tab" width="260"></a>
 </p>
+
+### Joystick
+
+The **JOYSTICK** section at the top of the **RADIO** tab flies the vehicle from a USB
+joystick. The [Joystick guide](https://lazy-iframe.github.io/freebodyproblem/guides/joystick/)
+has the full operating procedure, including vehicle setup and troubleshooting.
+
+<p align="center">
+  <a href="screens/joystick.png"><img src="screens/joystick.png" alt="The JOYSTICK section of the RADIO tab: live axes and a button grid, stick bindings, button actions with an assigned list, and SEND TO VEHICLE" width="260"></a>
+  &nbsp;
+  <a href="screens/joystick_advanced.png"><img src="screens/joystick_advanced.png" alt="The ADVANCED section: a virtual channel for a three-position switch, and RC override bindings" width="260"></a>
+</p>
+
+> [!WARNING]
+> Flown only against ArduPilot SITL so far. PX4 and real aircraft are untested, so do your
+> first run on SITL or on the bench with the props off.
+
+1. **Calibrate**: **CALIBRATE JOYSTICK**, then **CAPTURE** with the sticks centred, move
+   every axis to both stops, **FINISH** and **SAVE**. This stays on this computer
+2. **Bind**: press **DETECT** beside ROLL, PITCH, THROTTLE and YAW, and push each stick the
+   way it asks: right, forward, up, right. Nothing is bound by default
+3. **Check**: open **READ OUTPUT**. It says **PREVIEW** and nothing is sent. `x` should rise
+   with pitch forward, `y` with roll right, `z` with throttle up and `r` with yaw right
+4. **Send**: select the vehicle, centre the sticks and press **SEND TO VEHICLE**. If the
+   vehicle is armed, a confirmation shows what you are taking control with
+5. **Stop**: press **STOP** on the **JOYSTICK LIVE** banner, which stays up in every view
+
+**BUTTON ACTIONS** gives a button a flight mode, an aux function or a servo value, acting
+only while sending. **PRESS** sends ON, **HOLD** sends ON and then OFF on release, and
+**TOGGLE** alternates. Use HOLD for a latching switch.
+
+**ADVANCED**, collapsed by default, holds two more options. **Virtual channels** turn a
+multi-position switch that reports as separate buttons into one channel: capture each
+position, then give each one an action. An action fires after 120 ms in its position, so
+passing through the middle does not fire it. **RC override** sends axes and virtual channels
+as RC channels 1 to 16 over `RC_CHANNELS_OVERRIDE`, replacing `MANUAL_CONTROL`, so the
+vehicle's own settings apply. Disconnect any other transmitter first.
+
+> [!CAUTION]
+> **When sending stops, the vehicle does not stop with it.** ArduPilot holds the last command
+> for `RC_OVERRIDE_TIME` (3 s by default), then falls back to the radio, or to its RC
+> failsafe if there is no radio. Set up and test that failsafe before flying on a joystick.
+>
+> `ARM/DISARM` on HOLD or TOGGLE means moving that switch off disarms the aircraft, in flight
+> too. These functions show a red warning, but nothing stops you binding them.
+
+The vehicle has to accept the input: ArduPilot needs `MAV_GCS_SYSID` (`SYSID_MYGCS` on older
+firmware) at 255, the default, and `RC_OPTIONS` not ignoring overrides. PX4 needs
+`COM_RC_IN_MODE` set to allow it.
 
 ### Sensor Calibration
 1. Fetch parameters first, as above — the device lists are read from them
@@ -1299,6 +1376,7 @@ the serial handle, drains them.
 - **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
 - **rc_calibration.cpp** / **rc_binding.cpp**: RC endpoint measurement and the stick/mode/aux parameter tables, per stack
+- **joystick_control.cpp**: joystick axes to `MANUAL_CONTROL` and `RC_CHANNELS_OVERRIDE` values, button triggers and virtual channels; holds no device and no link. `frontend/joystick.cpp` reads the device and runs the send loop
 - **accel_calibration.cpp** / **gyro_calibration.cpp** / **mag_calibration.cpp**: the GCS half of each calibration — link-free state machines fed messages and a clock
 - **sensor_inventory.cpp**: compass/accel/gyro devices decoded out of the parameter table (device-ID packing, chip names)
 - **geodesic_grid.cpp**: ArduPilot's 80-section coverage grid, for drawing what a compass calibration has and has not seen
@@ -1372,6 +1450,7 @@ Settings contents:
 - **Custom themes**: User-defined color palettes
 - **Tile server**: URL template and attribution string
 - **Video URL**: Last used stream source
+- **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
 
 Example `settings.json`:
@@ -1408,6 +1487,7 @@ Example `settings.json`:
 - **No telemetry replay**: Live connections only; no `.tlog` or `.bin` file playback
 - **No rally points**: the vehicle's rally list (`MAV_MISSION_TYPE_RALLY`) is neither downloaded nor edited
 - **One vehicle in the tabs at a time**: the map draws the whole fleet and SWARM gives every vehicle a summary card, but the tabs — parameters, mission, radio, sensors, the inspector — and the telemetry tiles follow the selected vehicle only
+- **Joystick**: flown only against ArduPilot SITL so far; PX4 and real aircraft are untested. Two identical sticks share one saved setup, and on Linux a switch already on shows as off until moved while both are connected
 - **One vehicle per link per sysid**: an aircraft reachable over two links at once appears as two entries rather than being recognised as one. Merging them wants a real identity to key on (the board UID) and is not done yet
 - **Display scaling on Windows and X11**: the UI is drawn in physical pixels there, so at 150% or 200% desktop scaling it comes out smaller than intended. Wayland and macOS hand the app scaled sizes and are not affected
 - **Plugin rail on short screens**: below about 900 px of height the rail's ten buttons do not fit and the rail scrolls

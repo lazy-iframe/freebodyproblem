@@ -11,7 +11,8 @@ description: Plan missions and geofences on the map.
    **Esc** to cancel. A command without one (RTL, SPEED, DELAY, JUMP, ...) is
    added at once. **MORE...** holds the rest of the commands
 4. Press **EDIT** (the full-width button above the grid) and drag any waypoint
-   on the map to move it; press it again or **Esc** to go back to panning
+   on the map to move it; press it again or **Esc** to go back to panning. In 3D,
+   drag its marker to move it or its vertical line to change its height
 5. Click an item in the list to expand or collapse it and adjust its
    altitude, parameters and command type. A newly added item opens expanded
    and the others collapse
@@ -22,6 +23,21 @@ New items take the altitude of the last item that has one, or 20 m. Leaving
 the MISSION tab cancels a pending **LOC?** and turns **EDIT** off. With the map
 in [3D](../map/#3d-view), **LOC?** takes two clicks: the ground for the place,
 then the height along its vertical line.
+
+**EDIT** works in [3D](../map/#3d-view) too, and the map stays in 3D:
+
+- **Drag a waypoint's marker** to move it over the ground. It keeps its altitude, and the
+  height above ground in the readout changes as the terrain does. The marker stays under
+  the pointer from any camera angle.
+- **Drag its vertical pink line** up or down to change only its altitude. It cannot go
+  below the ground, and its position does not change. If you are looking straight down,
+  the banner asks you to tilt the view.
+
+The readout beside the waypoint shows its altitude above home and above the ground, and the
+list, the path and the terrain checks follow the drag. A waypoint keeps its frame: on
+`GLOBAL_RELATIVE` the altitude is above home, on a terrain frame above the ground, so a
+marker dragged on a terrain frame rises and falls with the ground. A drag anywhere else
+still orbits, and a click beside a waypoint in EDIT does not start a **GO HERE**.
 
 Each item's header shows its height above the terrain data under it, and each
 leg is checked against the terrain along its length: one that comes within the

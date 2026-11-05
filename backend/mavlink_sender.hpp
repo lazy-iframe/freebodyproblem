@@ -101,6 +101,39 @@ public:
 
     void return_to_launch(uint8_t target_sysid, uint8_t target_compid);
 
+    // ── Manual control ────────────────────────────────────────────────────────
+
+    // MANUAL_CONTROL (#69) — the joystick's current position.
+    //
+    // Not queued. Each call replaces the frame before it, and that frame goes
+    // out ahead of the queue at the next flush. A stick position is only true
+    // now: a link that stalls must lose the old ones, not deliver them in order
+    // once it recovers, and a parameter fetch must not hold up the sticks.
+    void send_manual_control(uint8_t target_sysid, int16_t x, int16_t y, int16_t z,
+                             int16_t r, uint32_t buttons);
+
+    // The last MANUAL_CONTROL the link actually wrote, and how many it has. Not
+    // the last one asked for: on a slow link most are replaced before they leave,
+    // and anything showing the operator what the vehicle receives needs to know.
+    struct ManualControlFrame {
+        uint8_t  target = 0;
+        int16_t  x = 0, y = 0, z = 0, r = 0;
+        uint16_t buttons = 0, buttons2 = 0;
+        uint32_t count = 0;
+    };
+    ManualControlFrame manual_control_sent() const;
+
+    // RC_CHANNELS_OVERRIDE (#70) — the same treatment as MANUAL_CONTROL: each call
+    // replaces the frame before it, and it goes out ahead of the queue. All 18
+    // fields, with UINT16_MAX in any channel to be left alone.
+    struct RcOverrideFrame {
+        uint8_t  target = 0;
+        uint16_t chan[18] = {};
+        uint32_t count = 0;
+    };
+    void send_rc_override(uint8_t target_sysid, uint8_t target_compid, const uint16_t chan[18]);
+    RcOverrideFrame rc_override_sent() const;
+
     // ── Guided flight ─────────────────────────────────────────────────────────
 
     // SET_POSITION_TARGET_GLOBAL_INT (#86) — "fly to this point and hold it".
@@ -442,6 +475,10 @@ public:
     CmdFlashState query_flash(uint16_t cmd, float p1, float p2, float p3) const;
 
 private:
+    // The body of the three flush variants; `write` puts one frame on the wire
+    // and returns what the transport returned.
+    template <class Write> void drain(Write write);
+
     // Serialise a COMMAND_LONG and push onto the queue
     void enqueue_command_long(uint8_t tsys, uint8_t tcomp, uint16_t cmd,
                               float p1 = 0.f, float p2 = 0.f, float p3 = 0.f,
@@ -482,6 +519,12 @@ private:
 
     mutable std::mutex                      mtx_;
     std::queue<std::vector<uint8_t>>        queue_;
+    std::vector<uint8_t>                    manual_frame_;  // under mtx_; see send_manual_control()
+    ManualControlFrame                      manual_pending_; // under mtx_; what manual_frame_ holds
+    ManualControlFrame                      manual_sent_;    // under mtx_
+    std::vector<uint8_t>                    rc_frame_;       // under mtx_; see send_rc_override()
+    RcOverrideFrame                         rc_pending_;     // under mtx_; what rc_frame_ holds
+    RcOverrideFrame                         rc_sent_;        // under mtx_
     std::atomic<uint32_t>                   param_list_seq_ { 0 };
     std::atomic<uint32_t>                   reboot_requests_ { 0 };
     mutable std::unordered_map<uint16_t, CmdState> cmd_states_;

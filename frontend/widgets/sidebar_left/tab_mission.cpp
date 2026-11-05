@@ -952,7 +952,9 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Drag any waypoint on the map to move it (Esc to stop)");
+            ImGui::SetTooltip("Drag any waypoint on the map to move it.\n"
+                              "In 3D, drag its vertical line to set its height.\n"
+                              "Esc to stop.");
         ImGui::Spacing();
     }
     draw_add_grid(pick);

@@ -58,6 +58,7 @@ export default defineConfig({
 						'guides/parameters',
 						'guides/swarm',
 						'guides/radio',
+						'guides/joystick',
 						'guides/sensors',
 						'guides/video',
 						'guides/mavlink',

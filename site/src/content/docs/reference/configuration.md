@@ -23,6 +23,7 @@ Settings contents:
 - **Custom themes**: User-defined color palettes
 - **Tile server**: URL template and attribution string
 - **Video URL**: Last used stream source
+- **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
 
 Example `settings.json`:

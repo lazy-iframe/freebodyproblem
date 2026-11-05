@@ -81,6 +81,59 @@ void MavlinkSender::send_heartbeat()
     queue_.emplace(buf, buf + len);
 }
 
+void MavlinkSender::send_manual_control(uint8_t tsys, int16_t x, int16_t y, int16_t z,
+                                        int16_t r, uint32_t buttons)
+{
+    mavlink_message_t msg;
+    std::lock_guard<std::mutex> _tx(tx_mtx_);
+    mavlink_msg_manual_control_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+                                           tsys, x, y, z, r,
+                                           (uint16_t)(buttons & 0xFFFFu),
+                                           (uint16_t)(buttons >> 16),
+                                           0 /* enabled_extensions */, 0, 0,
+                                           0, 0, 0, 0, 0, 0);
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    manual_frame_.assign(buf, buf + len);
+    manual_pending_.target   = tsys;
+    manual_pending_.x        = x;
+    manual_pending_.y        = y;
+    manual_pending_.z        = z;
+    manual_pending_.r        = r;
+    manual_pending_.buttons  = (uint16_t)(buttons & 0xFFFFu);
+    manual_pending_.buttons2 = (uint16_t)(buttons >> 16);
+}
+
+void MavlinkSender::send_rc_override(uint8_t tsys, uint8_t tcomp, const uint16_t c[18])
+{
+    mavlink_message_t msg;
+    std::lock_guard<std::mutex> _tx(tx_mtx_);
+    mavlink_msg_rc_channels_override_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+                                                 tsys, tcomp,
+                                                 c[0],  c[1],  c[2],  c[3],  c[4],  c[5],
+                                                 c[6],  c[7],  c[8],  c[9],  c[10], c[11],
+                                                 c[12], c[13], c[14], c[15], c[16], c[17]);
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    std::lock_guard<std::mutex> lk(mtx_);
+    rc_frame_.assign(buf, buf + len);
+    rc_pending_.target = tsys;
+    std::copy(c, c + 18, rc_pending_.chan);
+}
+
+MavlinkSender::RcOverrideFrame MavlinkSender::rc_override_sent() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    return rc_sent_;
+}
+
+MavlinkSender::ManualControlFrame MavlinkSender::manual_control_sent() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    return manual_sent_;
+}
+
 void MavlinkSender::arm(uint8_t tsys, uint8_t tcomp)
 {
     // MAV_CMD_COMPONENT_ARM_DISARM (400), param1=1 (arm)
@@ -614,50 +667,64 @@ static bool frame_sent(int written, std::size_t size)
     return written > 0 || size == 0;
 }
 
-void MavlinkSender::flush_stream(int fd)
+// The stick frame first, then the queue. A stick frame the transport refuses
+// simply stays until the next one replaces it.
+template <class Write>
+void MavlinkSender::drain(Write write)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    if (!manual_frame_.empty() &&
+        frame_sent(write(manual_frame_), manual_frame_.size())) {
+        manual_frame_.clear();
+        const uint32_t count = manual_sent_.count + 1;
+        manual_sent_       = manual_pending_;
+        manual_sent_.count = count;
+    }
+    if (!rc_frame_.empty() && frame_sent(write(rc_frame_), rc_frame_.size())) {
+        rc_frame_.clear();
+        const uint32_t count = rc_sent_.count + 1;
+        rc_sent_       = rc_pending_;
+        rc_sent_.count = count;
+    }
+
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        const int n = socket_write(fd,
-                                   reinterpret_cast<const char*>(frame.data()),
-                                   static_cast<int>(frame.size()));
-        if (!frame_sent(n, frame.size())) break;
+        if (!frame_sent(write(frame), frame.size())) break;
         queue_.pop();
     }
+}
+
+void MavlinkSender::flush_stream(int fd)
+{
+    drain([&](const std::vector<uint8_t>& frame) {
+        return socket_write(fd, reinterpret_cast<const char*>(frame.data()),
+                            static_cast<int>(frame.size()));
+    });
 }
 
 void MavlinkSender::flush_serial(SerialHandle h)
 {
-    std::lock_guard<std::mutex> lk(mtx_);
-    while (!queue_.empty()) {
-        const auto& frame = queue_.front();
-        const int n = serial_write(h, frame.data(), frame.size());
-        if (!frame_sent(n, frame.size())) break;
-        queue_.pop();
-    }
+    drain([&](const std::vector<uint8_t>& frame) {
+        return serial_write(h, frame.data(), frame.size());
+    });
 }
 
 void MavlinkSender::flush(int fd, const sockaddr_in& dest)
 {
-    std::lock_guard<std::mutex> lk(mtx_);
-    while (!queue_.empty()) {
-        const auto& frame = queue_.front();
-        const int n = (int)sendto(fd,
-                                  reinterpret_cast<const char*>(frame.data()),
-                                  static_cast<int>(frame.size()),
-                                  0,
-                                  reinterpret_cast<const sockaddr*>(&dest),
-                                  sizeof(dest));
-        if (!frame_sent(n, frame.size())) break;
-        queue_.pop();
-    }
+    drain([&](const std::vector<uint8_t>& frame) {
+        return (int)sendto(fd,
+                           reinterpret_cast<const char*>(frame.data()),
+                           static_cast<int>(frame.size()),
+                           0,
+                           reinterpret_cast<const sockaddr*>(&dest),
+                           sizeof(dest));
+    });
 }
 
 bool MavlinkSender::has_pending() const
 {
     std::lock_guard<std::mutex> lk(mtx_);
-    return !queue_.empty();
+    return !queue_.empty() || !manual_frame_.empty() || !rc_frame_.empty();
 }
 
 // ── ACK feedback ─────────────────────────────────────────────────────────────

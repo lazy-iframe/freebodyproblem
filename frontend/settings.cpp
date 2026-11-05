@@ -192,6 +192,58 @@ bool theme_lookup(const AppSettings& s, const std::string& name, ThemeVars& out)
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+static void joy_binding_from_json(const json& jb, JoyButtonBinding& b)
+{
+    const auto num = [&](const char* k, int lo, int hi, int dflt) {
+        return (jb.contains(k) && jb[k].is_number_integer())
+             ? std::clamp(jb[k].get<int>(), lo, hi) : dflt;
+    };
+    b.action  = (JoyBtnAction) num("action",  0, 3, 0);
+    b.trigger = (JoyBtnTrigger)num("trigger", 0, 2, 0);
+    if (jb.contains("mode_name") && jb["mode_name"].is_string())
+        b.mode_name = jb["mode_name"].get<std::string>();
+    if (jb.contains("mode_custom") && jb["mode_custom"].is_number_unsigned())
+        b.mode_custom = jb["mode_custom"].get<uint32_t>();
+    b.mode_standard  = (uint8_t) num("mode_standard",  0, 255, 0);
+    b.mode_autopilot = (uint8_t) num("mode_autopilot", 0, 255, 0);
+    b.mode_type      = (uint8_t) num("mode_type",      0, 255, 0);
+    b.aux_fn = (uint16_t)num("aux_fn", 0, 65535, 0);
+    b.servo  = (uint8_t) num("servo",  1, 16,    1);
+    b.on     = (uint16_t)num("on",     0, 2200,  0);
+    b.off    = (uint16_t)num("off",    0, 2200,  0);
+    // A hand-edited position past HIGH is not a position.
+    if (b.action == JoyBtnAction::Aux) {
+        b.on  = std::min<uint16_t>(b.on,  2);
+        b.off = std::min<uint16_t>(b.off, 2);
+    }
+}
+
+static void joy_rc_from_json(const json& j, JoyRcOut& o)
+{
+    if (!j.is_object()) return;
+    if (j.contains("channel") && j["channel"].is_number_integer()) {
+        const int ch = j["channel"].get<int>();
+        if (ch >= 1 && ch <= JOY_RC_MAX_CHANNEL) o.channel = ch;
+    }
+    if (j.contains("reversed") && j["reversed"].is_boolean())
+        o.reversed = j["reversed"].get<bool>();
+}
+
+static json joy_binding_to_json(const JoyButtonBinding& b)
+{
+    return { { "action",         (int)b.action },
+             { "trigger",        (int)b.trigger },
+             { "mode_name",      b.mode_name },
+             { "mode_custom",    b.mode_custom },
+             { "mode_standard",  b.mode_standard },
+             { "mode_autopilot", b.mode_autopilot },
+             { "mode_type",      b.mode_type },
+             { "aux_fn",         b.aux_fn },
+             { "servo",          b.servo },
+             { "on",             b.on },
+             { "off",            b.off } };
+}
+
 void settings_load(AppSettings& out)
 {
     const std::string path = settings_path();
@@ -259,6 +311,93 @@ void settings_load(AppSettings& out)
         out.crt_vignette = root["crt_vignette"].get<bool>();
     if (root.contains("crt_vignette_strength") && root["crt_vignette_strength"].is_number())
         out.crt_vignette_strength = root["crt_vignette_strength"].get<float>();
+
+    if (root.contains("joystick_profiles") && root["joystick_profiles"].is_object()) {
+        for (const auto& [guid, jp] : root["joystick_profiles"].items()) {
+            if (!jp.is_object()) continue;
+            JoystickProfile p;
+            if (jp.contains("calibrated") && jp["calibrated"].is_boolean())
+                p.calibrated = jp["calibrated"].get<bool>();
+            if (jp.contains("ranges") && jp["ranges"].is_array()) {
+                const auto& arr = jp["ranges"];
+                for (size_t i = 0; i < arr.size() && i < RcChannels::MAX_CHANNELS; ++i) {
+                    const auto& r = arr[i];
+                    if (!r.is_array() || r.size() != 3 || !r[0].is_number_integer() ||
+                        !r[1].is_number_integer() || !r[2].is_number_integer())
+                        continue;
+                    p.ranges[i].min  = (uint16_t)std::clamp(r[0].get<int>(), 0, 65535);
+                    p.ranges[i].trim = (uint16_t)std::clamp(r[1].get<int>(), 0, 65535);
+                    p.ranges[i].max  = (uint16_t)std::clamp(r[2].get<int>(), 0, 65535);
+                }
+            }
+            if (jp.contains("bindings") && jp["bindings"].is_array()) {
+                const auto& arr = jp["bindings"];
+                for (size_t f = 0; f < arr.size() && f < JOY_FN_COUNT; ++f) {
+                    const auto& b = arr[f];
+                    if (!b.is_object()) continue;
+                    if (b.contains("axis") && b["axis"].is_number_integer()) {
+                        const int axis = b["axis"].get<int>();
+                        if (axis >= 0 && axis < RcChannels::MAX_CHANNELS)
+                            p.bindings[f].axis = axis;
+                    }
+                    if (b.contains("reversed") && b["reversed"].is_boolean())
+                        p.bindings[f].reversed = b["reversed"].get<bool>();
+                }
+            }
+            if (jp.contains("buttons") && jp["buttons"].is_array()) {
+                for (const auto& jb : jp["buttons"]) {
+                    if (!jb.is_object() || !jb.contains("button") ||
+                        !jb["button"].is_number_integer()) continue;
+                    const int n = jb["button"].get<int>();
+                    if (n < 0 || n >= JOY_MAX_BUTTONS) continue;
+
+                    joy_binding_from_json(jb, p.buttons[n]);
+                }
+            }
+            if (jp.contains("virtual") && jp["virtual"].is_array()) {
+                uint32_t taken = 0;
+                int      slot  = 0;
+                for (const auto& jv : jp["virtual"]) {
+                    if (slot >= JOY_MAX_VIRTUAL) break;
+                    if (!jv.is_object() || !jv.contains("patterns") ||
+                        !jv["patterns"].is_array()) continue;
+
+                    JoyVirtualChannel v;
+                    const auto& pats = jv["patterns"];
+                    if (pats.size() > JOY_VIRTUAL_MAX_POS) continue;
+                    v.positions = (int)pats.size();
+                    for (size_t i = 0; i < pats.size(); ++i)
+                        if (pats[i].is_number_unsigned())
+                            v.patterns[i] = pats[i].get<uint32_t>();
+                    if (jv.contains("actions") && jv["actions"].is_array()) {
+                        const auto& acts = jv["actions"];
+                        for (size_t i = 0; i < acts.size() && (int)i < v.positions; ++i)
+                            if (acts[i].is_object()) {
+                                joy_binding_from_json(acts[i], v.actions[i]);
+                                v.actions[i].trigger = JoyBtnTrigger::Press;
+                            }
+                    }
+                    if (jv.contains("rc")) joy_rc_from_json(jv["rc"], v.rc);
+                    // A channel that cannot tell its positions apart, or wants a
+                    // button another one already has, is not loaded at all.
+                    if (!v.valid() || (v.mask() & taken)) continue;
+                    taken |= v.mask();
+                    p.virtuals[slot++] = v;
+                }
+                // Enforced here too, for a file edited by hand.
+                for (int i = 0; i < JOY_MAX_BUTTONS; ++i)
+                    if (taken & (1u << i)) p.buttons[i] = JoyButtonBinding{};
+            }
+            if (jp.contains("rc_override") && jp["rc_override"].is_boolean())
+                p.rc_override = jp["rc_override"].get<bool>();
+            if (jp.contains("rc_axes") && jp["rc_axes"].is_array()) {
+                const auto& arr = jp["rc_axes"];
+                for (size_t i = 0; i < arr.size() && i < RcChannels::MAX_CHANNELS; ++i)
+                    joy_rc_from_json(arr[i], p.rc_axes[i]);
+            }
+            out.joystick_profiles[guid] = p;
+        }
+    }
 
     if (root.contains("mcp_enabled") && root["mcp_enabled"].is_boolean())
         out.mcp_enabled = root["mcp_enabled"].get<bool>();
@@ -345,6 +484,48 @@ void settings_save(const AppSettings& s)
     root["crt_scanline_strength"] = s.crt_scanline_strength;
     root["crt_vignette"]          = s.crt_vignette;
     root["crt_vignette_strength"] = s.crt_vignette_strength;
+
+    json jjoysticks = json::object();
+    for (const auto& [guid, p] : s.joystick_profiles) {
+        json jranges = json::array();
+        for (const JoyAxisRange& r : p.ranges)
+            jranges.push_back({ r.min, r.trim, r.max });
+        json jbindings = json::array();
+        for (const JoyFnBinding& b : p.bindings)
+            jbindings.push_back({ { "axis", b.axis }, { "reversed", b.reversed } });
+        json jbuttons = json::array();
+        for (int i = 0; i < JOY_MAX_BUTTONS; ++i) {
+            const JoyButtonBinding& b = p.buttons[i];
+            if (b.action == JoyBtnAction::None) continue;
+            json jb = joy_binding_to_json(b);
+            jb["button"] = i;
+            jbuttons.push_back(jb);
+        }
+        json jrc_axes = json::array();
+        for (const JoyRcOut& o : p.rc_axes)
+            jrc_axes.push_back({ { "channel", o.channel }, { "reversed", o.reversed } });
+        json jvirtual = json::array();
+        for (const JoyVirtualChannel& v : p.virtuals) {
+            if (!v.used()) continue;
+            json pats = json::array(), acts = json::array();
+            for (int i = 0; i < v.positions; ++i) {
+                pats.push_back(v.patterns[i]);
+                acts.push_back(joy_binding_to_json(v.actions[i]));
+            }
+            jvirtual.push_back({ { "patterns", pats }, { "actions", acts },
+                                 { "rc", { { "channel", v.rc.channel },
+                                           { "reversed", v.rc.reversed } } } });
+        }
+        jjoysticks[guid] = { { "calibrated", p.calibrated },
+                             { "ranges",     jranges },
+                             { "bindings",   jbindings },
+                             { "buttons",    jbuttons },
+                             { "virtual",    jvirtual },
+                             { "rc_override", p.rc_override },
+                             { "rc_axes",    jrc_axes } };
+    }
+    root["joystick_profiles"] = jjoysticks;
+
     root["mcp_enabled"]           = s.mcp_enabled;
     root["mcp_port"]              = s.mcp_port;
     root["mcp_actions_enabled"]   = s.mcp_actions_enabled;
