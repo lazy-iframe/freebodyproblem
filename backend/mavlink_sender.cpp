@@ -17,6 +17,7 @@
 
 
 #include "mavlink_sender.hpp"
+#include "signing.hpp"
 
 #ifdef _WIN32
 #  include <winsock2.h>
@@ -71,7 +72,7 @@ void MavlinkSender::send_heartbeat()
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_heartbeat_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_heartbeat_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                     MAV_TYPE_GCS, MAV_AUTOPILOT_INVALID,
                                     0 /* base_mode */, 0 /* custom_mode */,
                                     MAV_STATE_ACTIVE);
@@ -86,7 +87,7 @@ void MavlinkSender::send_manual_control(uint8_t tsys, int16_t x, int16_t y, int1
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_manual_control_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_manual_control_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                            tsys, x, y, z, r,
                                            (uint16_t)(buttons & 0xFFFFu),
                                            (uint16_t)(buttons >> 16),
@@ -109,7 +110,7 @@ void MavlinkSender::send_rc_override(uint8_t tsys, uint8_t tcomp, const uint16_t
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_rc_channels_override_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_rc_channels_override_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                                  tsys, tcomp,
                                                  c[0],  c[1],  c[2],  c[3],  c[4],  c[5],
                                                  c[6],  c[7],  c[8],  c[9],  c[10], c[11],
@@ -182,7 +183,7 @@ void MavlinkSender::reposition(uint8_t tsys, uint8_t tcomp,
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
     mavlink_msg_command_int_pack_status(
-        GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+        gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
         tsys, tcomp,
         MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
         MAV_CMD_DO_REPOSITION,
@@ -222,7 +223,7 @@ void MavlinkSender::goto_position(uint8_t tsys, uint8_t tcomp,
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
     mavlink_msg_set_position_target_global_int_pack_status(
-        GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+        gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
         boot_ms, tsys, tcomp,
         MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
         TYPE_MASK,
@@ -383,7 +384,7 @@ void MavlinkSender::request_param_list(uint8_t tsys, uint8_t tcomp)
     // PARAM_REQUEST_LIST (#21) — FC responds with a PARAM_VALUE stream
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_param_request_list_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg, tsys, tcomp);
+    mavlink_msg_param_request_list_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg, tsys, tcomp);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -405,7 +406,7 @@ void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,
     // PARAM_REQUEST_READ (#20) — empty param_id means "look up by index"
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_param_request_read_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_param_request_read_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                              tsys, tcomp, "", param_index);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -419,7 +420,7 @@ void MavlinkSender::request_param_read(uint8_t tsys, uint8_t tcomp,
     // An index of -1 means "look up by name".
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_param_request_read_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_param_request_read_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                              tsys, tcomp, param_id, -1);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -433,7 +434,7 @@ void MavlinkSender::set_param(uint8_t tsys, uint8_t tcomp,
     // PARAM_SET (#23) — FC echoes the accepted value back as PARAM_VALUE
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_param_set_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_param_set_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                     tsys, tcomp, param_id, value, param_type);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
@@ -482,7 +483,7 @@ void MavlinkSender::set_param_ext(uint8_t tsys, uint8_t tcomp,
 
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_param_ext_set_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_param_ext_set_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                         tsys, tcomp, param_id, payload, param_type);
 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
@@ -496,7 +497,7 @@ void MavlinkSender::request_mission_list(uint8_t tsys, uint8_t tcomp, uint8_t ty
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_mission_request_list_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_mission_request_list_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                                 tsys, tcomp, type);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -509,7 +510,7 @@ void MavlinkSender::request_mission_item(uint8_t tsys, uint8_t tcomp, uint16_t s
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_mission_request_int_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_mission_request_int_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                               tsys, tcomp, seq, type);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -521,7 +522,7 @@ void MavlinkSender::send_mission_ack(uint8_t tsys, uint8_t tcomp, uint8_t type)
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_mission_ack_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_mission_ack_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                        tsys, tcomp,
                                        MAV_MISSION_ACCEPTED,
                                        type,
@@ -537,7 +538,7 @@ void MavlinkSender::send_timesync(uint8_t tsys, uint8_t tcomp,
 {
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_timesync_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_timesync_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                    tc1, ts1, tsys, tcomp);
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -551,7 +552,7 @@ void MavlinkSender::start_upload(uint8_t tsys, uint8_t tcomp,
     if (type > MAV_MISSION_TYPE_RALLY) return;
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
-    mavlink_msg_mission_count_pack_status(GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+    mavlink_msg_mission_count_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
                                         tsys, tcomp,
                                         (uint16_t)items.size(),
                                         type,
@@ -574,7 +575,7 @@ void MavlinkSender::send_mission_item_at(uint8_t tsys, uint8_t tcomp, uint16_t s
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
     mavlink_msg_mission_item_int_pack_status(
-        GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+        gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
         tsys, tcomp,
         it.seq,
         it.frame,
@@ -614,7 +615,7 @@ void MavlinkSender::request_message_interval(uint8_t tsys, uint8_t tcomp,
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
     mavlink_msg_command_long_pack_status(
-        GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+        gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
         tsys, tcomp,
         511, 0,
         (float)message_id, (float)interval_us,
@@ -674,14 +675,24 @@ template <class Write>
 void MavlinkSender::drain(Write write)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+
+    // Signed here, last thing before the wire, so that timestamps rise in the order
+    // the vehicle hears them. See signing.hpp. A frame the transport refuses is signed
+    // afresh on its next try.
+    signing::LinkKey* const link = signing_link_.load(std::memory_order_relaxed);
+    const auto send = [&](const std::vector<uint8_t>& frame) {
+        return signing::sign_frame(link, frame, signed_frame_) ? write(signed_frame_)
+                                                               : write(frame);
+    };
+
     if (!manual_frame_.empty() &&
-        frame_sent(write(manual_frame_), manual_frame_.size())) {
+        frame_sent(send(manual_frame_), manual_frame_.size())) {
         manual_frame_.clear();
         const uint32_t count = manual_sent_.count + 1;
         manual_sent_       = manual_pending_;
         manual_sent_.count = count;
     }
-    if (!rc_frame_.empty() && frame_sent(write(rc_frame_), rc_frame_.size())) {
+    if (!rc_frame_.empty() && frame_sent(send(rc_frame_), rc_frame_.size())) {
         rc_frame_.clear();
         const uint32_t count = rc_sent_.count + 1;
         rc_sent_       = rc_pending_;
@@ -690,9 +701,37 @@ void MavlinkSender::drain(Write write)
 
     while (!queue_.empty()) {
         const auto& frame = queue_.front();
-        if (!frame_sent(write(frame), frame.size())) break;
+        if (!frame_sent(send(frame), frame.size())) break;
         queue_.pop();
     }
+}
+
+bool MavlinkSender::setup_signing(uint8_t tsys, uint8_t tcomp, bool install)
+{
+    // All zeros with a zero timestamp is what tells a vehicle to stop.
+    uint8_t  key[32] = {};
+    uint64_t initial = 0;
+    if (install) {
+        if (!signing::copy_key(signing_link_.load(std::memory_order_relaxed), key)) return false;
+        initial = signing::next_timestamp();
+    }
+
+    mavlink_message_t msg;
+    {
+        std::lock_guard<std::mutex> _tx(tx_mtx_);
+        mavlink_msg_setup_signing_pack_status(gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
+                                              tsys, tcomp, key, initial);
+    }
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        queue_.emplace(buf, buf + len);
+    }
+    std::memset(key, 0, sizeof(key));
+    std::memset(buf, 0, sizeof(buf));
+    std::memset(&msg, 0, sizeof(msg));
+    return true;
 }
 
 void MavlinkSender::flush_stream(int fd)
@@ -798,7 +837,7 @@ std::vector<uint8_t> MavlinkSender::pack_command_long(uint8_t tsys, uint8_t tcom
     mavlink_message_t msg;
     std::lock_guard<std::mutex> _tx(tx_mtx_);
     mavlink_msg_command_long_pack_status(
-        GCS_SYSID, GCS_COMPID, &tx_status_, &msg,
+        gcs_sysid(), GCS_COMPID, &tx_status_, &msg,
         tsys, tcomp,
         cmd,
         confirmation,   // 0 on the first transmission, +1 on each resend

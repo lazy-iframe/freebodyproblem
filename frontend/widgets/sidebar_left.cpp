@@ -118,7 +118,7 @@ void draw_sidebar_left(MavlinkSender* sender, const VehicleState* vs,
     case Tab::Mission:    draw_tab_mission(sender, vs, pick);                       break;
     case Tab::Rc:         draw_tab_rc(sender, vs, params);                          break;
     case Tab::Sensors:    draw_tab_sensors(sender, vs, params);                     break;
-    case Tab::Settings:   draw_tab_themes(settings);                                break;
+    case Tab::Settings:   draw_tab_themes(settings, vehicles);                                break;
     }
 
     ImGui::End();

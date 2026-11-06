@@ -17,6 +17,10 @@
 
 
 #pragma once
+
+#include <vector>
+
+struct VehicleChip;
 #include "../settings.hpp"
 
-void draw_themes_panel(AppSettings& settings);
+void draw_themes_panel(AppSettings& settings, const std::vector<VehicleChip>& vehicles);

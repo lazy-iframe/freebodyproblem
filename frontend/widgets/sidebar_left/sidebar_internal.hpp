@@ -45,7 +45,7 @@ void draw_tab_rc(MavlinkSender* sender, const VehicleState* vs,
 void draw_tab_sensors(MavlinkSender* sender, const VehicleState* vs,
                       const std::unordered_map<std::string, ParamEntry>* params);
 
-void draw_tab_themes(AppSettings* settings);
+void draw_tab_themes(AppSettings* settings, const std::vector<VehicleChip>& vehicles);
 
 void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
                       MissionPickState* pick);

@@ -47,12 +47,22 @@ enum class CmdFlashState { Normal, Pending, Accepted, Rejected };
 //   UI thread  : call arm(), disarm(), takeoff(), etc. — enqueues a serialised frame
 //   Recv thread: call flush(fd, dest) after each recvfrom — drains queue via sendto
 //
-// GCS identity follows MAVLink convention: sysid=255, compid=190 (MissionPlanner).
+// GCS identity follows MAVLink convention: sysid 255 unless set otherwise in Settings,
+// compid=190 (MissionPlanner).
+
+namespace signing { struct LinkKey; }
 
 class MavlinkSender {
 public:
-    static constexpr uint8_t GCS_SYSID  = 255;
+    static constexpr uint8_t GCS_SYSID_DEFAULT = 255;
     static constexpr uint8_t GCS_COMPID = 190;
+
+    // The sysid this ground station sends as, the same for every link. Applies from the
+    // next frame packed. ArduPilot takes RC overrides and manual control, and judges its
+    // GCS failsafe, only by its MAV_GCS_SYSID parameter (default 255), so a value it does
+    // not match leaves commands working and sticks and the failsafe not.
+    static uint8_t gcs_sysid() { return s_gcs_sysid.load(std::memory_order_relaxed); }
+    static void    set_gcs_sysid(uint8_t id) { s_gcs_sysid.store(id, std::memory_order_relaxed); }
 
     // Each sender numbers its own outgoing messages (see tx_status_ below), so
     // any number of them can exist at once.
@@ -314,6 +324,16 @@ public:
     // immediately, and over USB it takes its serial device with it.
     void reboot_autopilot(uint8_t target_sysid, uint8_t target_compid);
 
+    // SETUP_SIGNING (#256): hands this ground station's key to one vehicle, or with
+    // `install` false tells it to stop signing. Addressed, never broadcast, and in
+    // the clear: only over a link the operator trusts. ArduPilot refuses it armed.
+    // Installs its connection's key: false if asked to with none. There is no reply:
+    // the vehicle's next heartbeat being signed, or not, is the answer.
+    bool setup_signing(uint8_t target_sysid, uint8_t target_compid, bool install);
+
+    // The connection this sender signs for. Nothing is signed until it is set.
+    void set_signing_link(signing::LinkKey* link) { signing_link_.store(link, std::memory_order_relaxed); }
+
     // How many reboots have been asked of this vehicle, from any panel. The
     // event log marks each one, so the operator can see where the messages
     // they asked for a restart after begin — whichever button did the asking.
@@ -475,6 +495,8 @@ public:
     CmdFlashState query_flash(uint16_t cmd, float p1, float p2, float p3) const;
 
 private:
+    inline static std::atomic<uint8_t> s_gcs_sysid { GCS_SYSID_DEFAULT };
+
     // The body of the three flush variants; `write` puts one frame on the wire
     // and returns what the transport returned.
     template <class Write> void drain(Write write);
@@ -515,6 +537,8 @@ private:
     // A counter per sender has neither problem. Packing can happen on the UI
     // thread and the vehicle thread at once, so it is held under tx_mtx_.
     mavlink_status_t                        tx_status_ {};
+    std::atomic<signing::LinkKey*>          signing_link_ { nullptr };
+    std::vector<uint8_t>                    signed_frame_;   // under mtx_; see drain()
     std::mutex                              tx_mtx_;
 
     mutable std::mutex                      mtx_;

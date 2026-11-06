@@ -71,6 +71,9 @@
 #include "../backend/link.hpp"
 #include "../backend/vehicle.hpp"
 #include "../backend/fleet.hpp"
+#include "../backend/signing.hpp"
+
+#include <filesystem>
 #include "../backend/mcp_server.hpp"
 
 // Settings
@@ -305,6 +308,7 @@ static void render_ui()
     g_conn_req.disconnect         = false;
     g_conn_req.disconnect_link_id = 0;
     g_conn_req.reboot_vehicle     = VehicleId{};
+    g_conn_req.signing_vehicle    = VehicleId{};
     g_close_req           = false;
 
     // The vehicle on screen. Held for the whole frame so that a link dropping on
@@ -636,10 +640,12 @@ int main()
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     // Load persisted settings and apply the saved theme
     settings_load(g_settings);
+    signing::init((std::filesystem::path(settings_path()).parent_path() / "signing.json").string());
     joystick_init(&g_settings);
     map_view_set_tile_source(g_settings.tile_source());
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
     set_terrain_clearance_m(g_settings.terrain_clearance_m);
+    MavlinkSender::set_gcs_sysid((uint8_t)g_settings.gcs_sysid);
     terrain_set_source(g_settings.terrain_url, (TerrainEncoding)g_settings.terrain_encoding,
                        g_settings.terrain_attribution);
     if (!theme_lookup(g_settings, g_settings.active_theme, g_theme)) {
@@ -767,6 +773,8 @@ int main()
         if (g_close_req)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
 
+        signing::tick();
+
         if (g_conn_req.reboot_vehicle.valid()) {
             // Through the vehicle's own sender, addressed to its own autopilot:
             // the VEHICLES list reboots any aircraft, not the one on screen.
@@ -775,6 +783,17 @@ int main()
                 v->sender().reboot_autopilot(v->sysid(), v->compid());
                 gcs_log("reboot requested for vehicle (%u) sys%u",
                         (unsigned)v->number(), (unsigned)v->sysid());
+                break;
+            }
+        }
+
+        if (g_conn_req.signing_vehicle.valid()) {
+            for (const auto& v : g_fleet.vehicles()) {
+                if (v->id() != g_conn_req.signing_vehicle) continue;
+                if (v->sender().setup_signing(v->sysid(), v->compid(), g_conn_req.signing_install))
+                    gcs_log(g_conn_req.signing_install ? "signing: key sent to sys%u"
+                                                       : "signing: told sys%u to stop signing",
+                            (unsigned)v->sysid());
                 break;
             }
         }
@@ -820,6 +839,7 @@ int main()
 
     settings_save(g_settings);
 
+    signing::save_now();
     audio_shutdown();
     center_view_shutdown();   // stop video pipeline + delete GL texture
     map3d_shutdown();

@@ -152,6 +152,8 @@ VehicleChip Vehicle::chip() const
         c.type          = static_cast<uint8_t>(snap_.state.type);
         c.armed         = snap_.state.armed;
         c.has_heartbeat = snap_.state.has_heartbeat;
+        c.heartbeat_signed      = snap_.state.heartbeat_signed;
+        c.heartbeat_signing_gen = snap_.state.heartbeat_signing_gen;
     }
     return c;
 }

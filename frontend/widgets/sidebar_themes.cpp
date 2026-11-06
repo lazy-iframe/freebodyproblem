@@ -26,6 +26,9 @@
 #include "map_view.hpp"
 #include "mcp_approval.hpp"
 #include "../../backend/mcp_server.hpp"
+#include "../../backend/mavlink_sender.hpp"
+#include "../../backend/vehicle.hpp"
+#include "../app_log.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -333,7 +336,7 @@ static const BaseColor k_base_colors[] = {
 // panel says which theme is edited, and asks before anything throws edits away.
 // Everything outside APPEARANCE (tones, HUD, map source) saves on change.
 
-void draw_themes_panel(AppSettings& settings)
+void draw_themes_panel(AppSettings& settings, const std::vector<VehicleChip>& vehicles)
 {
     static constexpr ImGuiColorEditFlags kPickFlags =
         ImGuiColorEditFlags_NoInputs        |  // compact: swatch only, popup on click
@@ -355,7 +358,510 @@ void draw_themes_panel(AppSettings& settings)
         settings_save(settings);
     };
 
-    section("APPEARANCE", true);
+    section("MAVLINK", true);
+
+    // ── GCS system ID ─────────────────────────────────────────────────────────
+    // What this ground station sends as. Only changed on APPLY: passing through the
+    // numbers on the way to the one being typed must not go out on the wire.
+    {
+        static int s_sysid = -1;
+        if (s_sysid < 0) s_sysid = settings.gcs_sysid;
+
+        const auto apply = [&] {
+            settings.gcs_sysid = s_sysid;
+            MavlinkSender::set_gcs_sysid((uint8_t)s_sysid);
+            settings_save(settings);
+            gcs_log("GCS system ID now %d", s_sysid);
+        };
+
+        ImGui::TextDisabled("GCS system ID (0 to 255)");
+        const float apply_w = ImGui::CalcTextSize("APPLY").x + 24.0f;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - apply_w - 4.0f);
+        if (ImGui::InputInt("##gcs_sysid", &s_sysid, 0, 0))
+            s_sysid = std::clamp(s_sysid, 0, 255);
+        ImGui::SameLine(0, 4);
+        bool any_armed = false;
+        for (const VehicleChip& v : vehicles) any_armed = any_armed || v.armed;
+        ImGui::BeginDisabled(s_sysid == settings.gcs_sysid);
+        if (ui_grid_button("APPLY##gcs_sysid", { apply_w, 0.0f })) {
+            if (any_armed) ImGui::OpenPopup("##confirm_gcs_sysid");
+            else           apply();
+        }
+        ImGui::EndDisabled();
+        if (ui_confirm_popup("##confirm_gcs_sysid", "CHANGE GCS SYSTEM ID",
+                             "A vehicle is armed. Sticks and GCS failsafe may stop working.",
+                             "CHANGE", btn_disconnect_base()) == UiConfirm::Confirmed)
+            apply();
+
+        // What the number being shown would do, before and after it is applied.
+        ImGui::PushTextWrapPos(0.0f);
+        if (s_sysid == 0)
+            ImGui::TextColored(col_warning(), "0 is MAVLink's broadcast address, not meant to identify a sender.");
+        for (const VehicleChip& v : vehicles)
+            if (v.id.sysid == s_sysid) {
+                ImGui::TextColored(col_error(), "Vehicle (%u) has this ID too. Each system should have its own.",
+                                   (unsigned)v.number);
+                break;
+            }
+        if (s_sysid != MavlinkSender::GCS_SYSID_DEFAULT)
+            ImGui::TextColored(col_warning(), "On ArduPilot, set MAV_GCS_SYSID (SYSID_MYGCS on older firmware) to match, or "
+                               "joystick, RC override and GCS failsafe will not work.");
+        else
+            ImGui::TextDisabled("255 is the usual value, and what ArduPilot expects by default.");
+        ImGui::PopTextWrapPos();
+    }
+
+    section("TERRAIN");
+
+    // ── Terrain clearance ─────────────────────────────────────────────────────
+    // How near the ground a planned path may come before the mission tab, the
+    // 3D map and GO HERE warn about it.
+    {
+        float m = settings.terrain_clearance_m;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Warn when a mission leg or GO HERE path comes within");
+        ImGui::PopTextWrapPos();
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::SliderFloat("##terrain_clear", &m, 0.0f, 300.0f, "CLEARANCE  %.0f M")) {
+            settings.terrain_clearance_m = m;
+            set_terrain_clearance_m(m);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            settings_save(settings);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("of the terrain data (bare ground: no trees or buildings)");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    }
+
+    // ── Terrain source ────────────────────────────────────────────────────────
+    // Laid out as MAP SOURCE below. The attribution is what the 3D map shows
+    // and the mission tab quotes, so it says how far the data can be trusted.
+    {
+        static char s_turl[512]  = {};
+        static char s_tattr[160] = {};
+        static int  s_tenc       = 0;
+        static bool s_tinit      = false;
+        if (!s_tinit) {
+            strncpy(s_turl,  settings.terrain_url.c_str(),         sizeof(s_turl)  - 1);
+            strncpy(s_tattr, settings.terrain_attribution.c_str(), sizeof(s_tattr) - 1);
+            s_tenc  = settings.terrain_encoding;
+            s_tinit = true;
+        }
+        const auto apply = [&] {
+            settings.terrain_url         = s_turl;
+            settings.terrain_encoding    = s_tenc;
+            settings.terrain_attribution = s_tattr;
+            terrain_set_source(settings.terrain_url, (TerrainEncoding)settings.terrain_encoding,
+                               settings.terrain_attribution);
+            settings_save(settings);
+        };
+
+        ImGui::TextDisabled("Terrain URL  ({z} {x} {y} placeholders, PNG)");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##terrain_url", s_turl, sizeof(s_turl));
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Encoding");
+        static const char* k_encs[] = { "TERRARIUM  (AWS Terrain Tiles)",
+                                        "TERRAIN-RGB  (Mapbox, MapTiler)" };
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo("##terrain_enc", &s_tenc, k_encs, 2);
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Attribution  (include its accuracy)");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##terrain_attr", s_tattr, sizeof(s_tattr));
+
+        ImGui::Spacing();
+        if (ui_grid_button("APPLY##terrain", { -1.0f, 0.0f })) apply();
+        ImGui::Spacing();
+        if (ui_grid_button("RESET TO DEFAULT##terrain", { -1.0f, 0.0f })) {
+            strncpy(s_turl,  TERRAIN_DEFAULT_URL,         sizeof(s_turl)  - 1);
+            strncpy(s_tattr, TERRAIN_DEFAULT_ATTRIBUTION, sizeof(s_tattr) - 1);
+            s_tenc = (int)TerrainEncoding::Terrarium;
+            apply();
+        }
+        ImGui::Spacing();
+    }
+
+    section("MAP SOURCE");
+
+    // ── Map tile source ───────────────────────────────────────────────────────
+    //
+    // Edited in buffers and applied together by APPLY: a key typed a character at a
+    // time must not be sent to the provider at each one.
+    {
+        static int  s_provider = 0;
+        static int  s_kind     = 0;
+        static int  s_gibs_layer = 0;
+        static char s_gibs_date[16] = {};
+        static char s_esri_key[256]   = {};
+        static char s_google_key[256] = {};
+        static char s_custom_key[256] = {};
+        static char s_url_buf[512]    = {};
+        static char s_attr_buf[128]   = {};
+        static bool s_map_init        = false;
+        if (!s_map_init) {
+            s_provider = settings.tile_provider;
+            s_kind     = settings.tile_kind;
+            s_gibs_layer = settings.tile_gibs_layer;
+            strncpy(s_gibs_date, settings.tile_source().gibs_date.c_str(), sizeof(s_gibs_date) - 1);
+            strncpy(s_esri_key,   settings.tile_key_esri.c_str(),    sizeof(s_esri_key)   - 1);
+            strncpy(s_google_key, settings.tile_key_google.c_str(),  sizeof(s_google_key) - 1);
+            strncpy(s_custom_key, settings.tile_key_custom.c_str(),  sizeof(s_custom_key) - 1);
+            strncpy(s_url_buf,    settings.tile_url.c_str(),         sizeof(s_url_buf)    - 1);
+            strncpy(s_attr_buf,   settings.tile_attribution.c_str(), sizeof(s_attr_buf)   - 1);
+            s_map_init = true;
+        }
+
+        const auto apply = [&] {
+            settings.tile_provider    = s_provider;
+            settings.tile_kind        = s_kind;
+            settings.tile_gibs_layer  = s_gibs_layer;
+            settings.tile_gibs_date   = s_gibs_date;
+            settings.tile_key_esri    = s_esri_key;
+            settings.tile_key_google  = s_google_key;
+            settings.tile_key_custom  = s_custom_key;
+            settings.tile_url         = s_url_buf;
+            settings.tile_attribution = s_attr_buf;
+            map_view_set_tile_source(settings.tile_source());
+            settings_save(settings);
+        };
+
+        ImGui::TextDisabled("Provider");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##tile_provider", tile_provider_label((TileProvider)s_provider))) {
+            static constexpr TileProvider ORDER[] = {
+                TileProvider::Esri, TileProvider::Google, TileProvider::Sentinel2,
+                TileProvider::NasaGibs, TileProvider::OpenStreetMap, TileProvider::Custom,
+            };
+            for (const TileProvider p : ORDER)
+                if (ImGui::Selectable(tile_provider_label(p), (int)p == s_provider))
+                    s_provider = (int)p;
+            ImGui::EndCombo();
+        }
+
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", tile_provider_note((TileProvider)s_provider));
+        ImGui::TextDisabled("You are responsible for following the terms of the map service you use.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (tile_provider_has_kinds((TileProvider)s_provider)) {
+            ImGui::TextDisabled("Data");
+            const float w = (ImGui::GetContentRegionAvail().x - 8.0f) / TILE_KIND_COUNT;
+            for (int k = 0; k < TILE_KIND_COUNT; ++k) {
+                if (k) ImGui::SameLine(0, 4);
+                ImGui::PushID(k);
+                if (ui_grid_button(tile_kind_label((TileKind)k), { w, 0.0f }, s_kind == k)) s_kind = k;
+                ImGui::PopID();
+            }
+            ImGui::Spacing();
+        }
+
+        if ((TileProvider)s_provider == TileProvider::NasaGibs) {
+            ImGui::TextDisabled("Layer");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("##gibs_layer", tile_gibs_layer(s_gibs_layer).label)) {
+                for (int i = 0; i < tile_gibs_layer_count(); ++i)
+                    if (ImGui::Selectable(tile_gibs_layer(i).label, i == s_gibs_layer)) {
+                        s_gibs_layer = i;
+                        // Already on GIBS: show it. Coming from another provider
+                        // waits for APPLY, like everything else.
+                        if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs) apply();
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::Spacing();
+
+            if (tile_gibs_layer(s_gibs_layer).dated) {
+                // Applied at once, not on APPLY: stepping through days looking for a
+                // clear one is the whole use of this.
+                const auto set_date = [&](const std::string& d) {
+                    strncpy(s_gibs_date, d.c_str(), sizeof(s_gibs_date) - 1);
+                    s_gibs_date[sizeof(s_gibs_date) - 1] = 0;
+                    if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs ||
+                        (TileProvider)s_provider == TileProvider::NasaGibs) apply();
+                };
+                constexpr float STEP_W = 34.0f, TODAY_W = 58.0f;
+                const std::string today = tile_date_today();
+
+                ImGui::TextDisabled("Date (UTC)");
+                if (ui_grid_button("\xe2\x86\x90##gibs_prev", { STEP_W, 0.0f }))
+                    set_date(tile_date_add(s_gibs_date, -1));
+                ImGui::SameLine(0, 4);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - STEP_W - TODAY_W - 8.0f);
+                ImGui::InputText("##gibs_date", s_gibs_date, sizeof(s_gibs_date));
+                if (ImGui::IsItemDeactivatedAfterEdit()) set_date(s_gibs_date);
+                ImGui::SameLine(0, 4);
+                const bool at_today = std::string(s_gibs_date) >= today;
+                ImGui::BeginDisabled(at_today);
+                if (ui_grid_button("\xe2\x86\x92##gibs_next", { STEP_W, 0.0f }))
+                    set_date(tile_date_add(s_gibs_date, 1));
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 4);
+                if (ui_grid_button("TODAY##gibs", { TODAY_W, 0.0f })) set_date(today);
+                ImGui::Spacing();
+            }
+        }
+
+        const auto key_field = [](const char* label, const char* id, char* buf, size_t len) {
+            ImGui::TextDisabled("%s", label);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText(id, buf, len, ImGuiInputTextFlags_Password);
+            ImGui::Spacing();
+        };
+        switch ((TileProvider)s_provider) {
+        case TileProvider::Esri:
+            key_field("ArcGIS API key", "##tile_key_esri", s_esri_key, sizeof(s_esri_key));
+            break;
+        case TileProvider::OpenStreetMap:
+        case TileProvider::Sentinel2:
+        case TileProvider::NasaGibs:
+            break;
+        case TileProvider::Google:
+            key_field("Google API key", "##tile_key_google", s_google_key, sizeof(s_google_key));
+            break;
+        case TileProvider::Custom:
+            ImGui::TextDisabled("Tile URL  ({z} {x} {y} placeholders)");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##tile_url", s_url_buf, sizeof(s_url_buf));
+            ImGui::Spacing();
+            key_field("API key  (fills {key})", "##tile_key_custom", s_custom_key, sizeof(s_custom_key));
+            ImGui::TextDisabled("Attribution");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##tile_attr", s_attr_buf, sizeof(s_attr_buf));
+            ImGui::Spacing();
+            break;
+        }
+
+        const std::string status = map_view_tile_status();
+        if (!status.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(g_theme.col_error, "%s", status.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+        }
+
+        if (ui_grid_button("APPLY##map", { -1.0f, 0.0f })) apply();
+
+        ImGui::Spacing();
+        if (ui_grid_button("RESET TO DEFAULT##map", { -1.0f, 0.0f })) {
+            // Back to Esri, and the custom URL with it. Keys are kept: retyping one
+            // is more trouble than leaving it unused.
+            s_provider = (int)TileProvider::Esri;
+            s_kind     = (int)TileKind::Satellite;
+            strncpy(s_url_buf,  TILE_ESRI_URL,         sizeof(s_url_buf)  - 1);
+            strncpy(s_attr_buf, TILE_ESRI_ATTRIBUTION, sizeof(s_attr_buf) - 1);
+            apply();
+        }
+        ImGui::Spacing();
+    }
+
+    section("MAP ICONS");
+
+    // ── Vehicle symbols ───────────────────────────────────────────────────────
+    //
+    // Saved on change. The strip below draws what each kind of vehicle gets
+    // under the chosen style, so BY VEHICLE TYPE shows its own mapping rather
+    // than leaving it to be guessed.
+    {
+        static const char* k_styles[] = {
+            "Legacy arrow", "By vehicle type", "Plane", "Multicopter", "Helicopter",
+        };
+        int style = std::clamp(settings.map_icon_style, 0, 4);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##map_icon_style", &style, k_styles, IM_ARRAYSIZE(k_styles))) {
+            settings.map_icon_style = style;
+            map_view_set_icon_style((MapIconStyle)style);
+            settings_save(settings);
+        }
+
+        struct Sample { const char* label; uint8_t type; };
+        static const Sample k_samples[] = {
+            { "PLANE",  MAV_TYPE_FIXED_WING   },
+            { "MULTI",  MAV_TYPE_QUADROTOR    },
+            { "HELI",   MAV_TYPE_HELICOPTER   },
+            { "OTHER",  MAV_TYPE_GROUND_ROVER },
+        };
+        constexpr float CELL_H = 76.0f;
+        const float  cell_w = (ImGui::GetContentRegionAvail().x - 3.0f * CARD_GAP) / 4.0f;
+        ImDrawList*  dl     = ImGui::GetWindowDrawList();
+        for (int i = 0; i < 4; ++i) {
+            if (i) ImGui::SameLine(0, CARD_GAP);
+            ImGui::Dummy({ cell_w, CELL_H });
+            const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+            dl->AddRectFilled(p0, p1, ui_col_well());
+            dl->AddRect(p0, p1, ui_col_seam());
+            dl->PushClipRect(p0, p1, true);
+            map_draw_vehicle_symbol(dl, { (p0.x + p1.x) * 0.5f, p0.y + 31.0f }, k_samples[i].type,
+                                    (MapIconStyle)style, 0.0f, 1.0f, 0.85f);
+            dl->PopClipRect();
+            const float tw = ui_tracked_width(g_font_micro, UI_SZ_MICRO, k_samples[i].label);
+            ui_tracked_text(dl, g_font_micro, UI_SZ_MICRO, { (p0.x + p1.x - tw) * 0.5f, p1.y - 16.0f },
+                            ui_col_label(), k_samples[i].label);
+        }
+        ImGui::Spacing();
+    }
+
+    section("ASSISTANT (MCP)");
+
+    // ── MCP server ────────────────────────────────────────────────────────────
+    //
+    // Saved on change, like everything above, and applied on the next frame by
+    // main.cpp's mcp_sync() — so switching actions off takes them away from a
+    // client that is already connected, not just from the next one.
+    {
+        bool on = settings.mcp_enabled;
+        if (ImGui::Checkbox("MCP server", &on)) {
+            settings.mcp_enabled = on;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 8);
+        if (!settings.mcp_enabled)
+            ImGui::TextDisabled("off");
+        else if (gcs_mcp_listening())
+            ImGui::TextDisabled("listening on 127.0.0.1:%d", settings.mcp_port);
+        else
+            ImGui::TextColored(g_theme.col_error, "not running \xe2\x80\x94 port in use?");
+
+        // Edited in a buffer and applied on release, so typing "8737" does not
+        // restart the server on 8, 87 and 873 along the way.
+        static int s_port = -1;
+        if (s_port < 0) s_port = settings.mcp_port;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Port");
+        ImGui::SameLine(110.0f);
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::InputInt("##mcp_port", &s_port, 0, 0);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            s_port = std::clamp(s_port, 1024, 65535);
+            settings.mcp_port = s_port;
+            settings_save(settings);
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Token");
+        ImGui::SameLine(110.0f);
+        ImGui::TextDisabled("%s", settings.mcp_token.empty() ? "made on first start"
+                                                             : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
+
+        const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+        ImGui::BeginDisabled(settings.mcp_token.empty());
+        if (ui_grid_button("COPY TOKEN##mcp", { half, 0.0f }))
+            ImGui::SetClipboardText(settings.mcp_token.c_str());
+        ImGui::EndDisabled();
+        ImGui::SameLine(0, 4.0f);
+        // A new token cuts off every client configured with the old one.
+        if (ui_grid_button("NEW TOKEN##mcp", { half, 0.0f })) {
+            settings.mcp_token = mcp_generate_token();
+            settings_save(settings);
+        }
+        disabled_tip("Clients set up with the old token stop working.");
+
+        // Where the adapter is, for the host's config. Most hosts launch an
+        // MCP server as a program over stdio; this is the program. The
+        // Windows installer does not put it on PATH, so the full path is the
+        // one thing a user cannot guess.
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Adapter");
+        ImGui::SameLine(110.0f);
+        const std::string& adapter = gcs_mcp_adapter_path();
+        if (adapter.empty()) {
+            ImGui::TextColored(g_theme.col_error, "not found beside the GCS");
+        } else {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", adapter.c_str());
+            ImGui::PopTextWrapPos();
+            if (ui_grid_button("COPY ADAPTER PATH##mcp", { ImGui::GetContentRegionAvail().x, 0.0f }))
+                ImGui::SetClipboardText(adapter.c_str());
+            disabled_tip("The program an agent host launches to reach this GCS. "
+                         "Give this path as the command in the host's MCP settings; "
+                         "it finds the port and token on its own.");
+        }
+
+
+        // Edited in a buffer and saved when the box loses focus, as the port
+        // is. Agents already connected get it from get_guidelines; the copy
+        // sent at connect time only reaches the next ones.
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Instructions for agents");
+        static char s_rules[4096] = {};
+        static bool s_rules_init  = false;
+        if (!s_rules_init) {
+            std::strncpy(s_rules, settings.mcp_instructions.c_str(), sizeof(s_rules) - 1);
+            s_rules_init = true;
+        }
+        ImGui::InputTextMultiline("##mcp_rules", s_rules, sizeof(s_rules), { -1.0f, 110.0f });
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            settings.mcp_instructions = s_rules;
+            settings_save(settings);
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Sent when an agent connects, and by get_guidelines.");
+        ImGui::PopTextWrapPos();
+
+        ImGui::Spacing();
+        bool act = settings.mcp_actions_enabled;
+        if (ImGui::Checkbox("Allow actions", &act)) {
+            settings.mcp_actions_enabled = act;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 8);
+        ImGui::TextDisabled(act ? "the assistant can command vehicles" : "read-only");
+
+        // One row per action. Ticked runs the moment the assistant asks;
+        // unticked puts the ALLOW / REFUSE dialog in front of the operator.
+        ImGui::BeginDisabled(!act);
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Run without asking \xe2\x80\x94 the rest ask on screen first:");
+        ImGui::PopTextWrapPos();
+        for (const McpActionInfo& a : mcp_actions()) {
+            bool unasked = false;
+            auto it = settings.mcp_auto_allow.find(a.tool);
+            if (it != settings.mcp_auto_allow.end()) unasked = it->second;
+            ImGui::PushID(a.tool);
+            if (ImGui::Checkbox(a.label, &unasked)) {
+                settings.mcp_auto_allow[a.tool] = unasked;
+                settings_save(settings);
+            }
+            ImGui::PopID();
+            disabled_tip(a.hint);
+        }
+        ImGui::Spacing();
+        const float half2 = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+        if (ui_grid_button("ASK FOR ALL##mcp", { half2, 0.0f })) {
+            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = false;
+            settings_save(settings);
+        }
+        ImGui::SameLine(0, 4.0f);
+        if (ui_grid_button("ALLOW ALL##mcp", { half2, 0.0f })) {
+            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = true;
+            settings_save(settings);
+        }
+        ImGui::EndDisabled();
+
+        // Vehicles agents have reserved for themselves. A claim keeps other
+        // agents off a vehicle; it never limits the operator, who can also
+        // clear them all here — for an agent that died holding one, say.
+        ImGui::Spacing();
+        const std::vector<McpClaim> claims = gcs_mcp_claims();
+        if (claims.empty()) {
+            ImGui::TextDisabled("Vehicle claims: none");
+        } else {
+            ImGui::TextDisabled("Vehicle claims:");
+            for (const McpClaim& c : claims)
+                ImGui::Text("  (%u)  %s   idle %.0f s", (unsigned)c.vehicle, c.label.c_str(), c.idle_s);
+            if (ui_grid_button("RELEASE ALL CLAIMS##mcp", { -1.0f, 0.0f }))
+                gcs_mcp_release_claims();
+        }
+        ImGui::Spacing();
+    }
+
+    section("APPEARANCE");
 
     // ── Theme cards ───────────────────────────────────────────────────────────
     static std::string s_pending;   // theme asked for while the active one is edited
@@ -665,6 +1171,33 @@ void draw_themes_panel(AppSettings& settings)
     }
     ImGui::Spacing();
 
+    section("FONT");
+
+    // ── UI face ───────────────────────────────────────────────────────────────
+    //
+    // Saved on change and in force from the next frame. A face whose file is
+    // missing from this install is listed but cannot be picked.
+    {
+        const UiFace cur = (UiFace)std::clamp(settings.ui_font, 0, (int)UiFace::Count - 1);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##ui_font", ui_face_name(cur))) {
+            for (int i = 0; i < (int)UiFace::Count; ++i) {
+                const UiFace face = (UiFace)i;
+                ImGui::BeginDisabled(!ui_face_available(face));
+                if (ImGui::Selectable(ui_face_name(face), face == cur)) {
+                    settings.ui_font = i;
+                    ui_face_select(face);
+                    settings_save(settings);
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("Geist Mono: fixed width. Roboto: proportional, fixed-width digits.");
+        ImGui::PopStyleColor();
+    }
+
     section("CRT EFFECTS");
 
     // ── CRT effects ───────────────────────────────────────────────────────────
@@ -691,6 +1224,34 @@ void draw_themes_panel(AppSettings& settings)
         effect("Edge darkening", "crt_vignette", settings.crt_vignette,  settings.crt_vignette_strength);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Cosmetic only: scanlines in boxes and buttons, dark edges.");
+        ImGui::PopTextWrapPos();
+    }
+
+    section("HUD");
+
+    // ── HUD style ─────────────────────────────────────────────────────────────
+    //
+    // Per view, since what suits a panel a third of the screen wide is not
+    // what suits a card in a grid of them. Saved on change, as the tones are.
+    {
+        auto style_row = [&](const char* label, const char* id, bool& tapes) {
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(110.0f);
+            int v = tapes ? 1 : 0;
+            ImGui::PushID(id);
+            bool changed = ImGui::RadioButton("Classic", &v, 0);
+            ImGui::SameLine(0, 12);
+            changed |= ImGui::RadioButton("Tapes", &v, 1);
+            ImGui::PopID();
+            if (changed) {
+                tapes = (v == 1);
+                settings_save(settings);
+            }
+        };
+        style_row("Main view", "hud_main",  settings.hud_tapes_main);
+        style_row("Swarm",     "hud_swarm", settings.hud_tapes_swarm);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Classic: attitude ball. Tapes: speed / heading / altitude.");
         ImGui::PopTextWrapPos();
     }
 
@@ -727,510 +1288,5 @@ void draw_themes_panel(AppSettings& settings)
         if (ui_grid_button("TEST##audio", { -1.0f, 0.0f }))
             gcs_tone(GcsTone::Success);
         ImGui::EndDisabled();
-    }
-
-    section("HUD");
-
-    // ── HUD style ─────────────────────────────────────────────────────────────
-    //
-    // Per view, since what suits a panel a third of the screen wide is not
-    // what suits a card in a grid of them. Saved on change, as the tones are.
-    {
-        auto style_row = [&](const char* label, const char* id, bool& tapes) {
-            ImGui::TextUnformatted(label);
-            ImGui::SameLine(110.0f);
-            int v = tapes ? 1 : 0;
-            ImGui::PushID(id);
-            bool changed = ImGui::RadioButton("Classic", &v, 0);
-            ImGui::SameLine(0, 12);
-            changed |= ImGui::RadioButton("Tapes", &v, 1);
-            ImGui::PopID();
-            if (changed) {
-                tapes = (v == 1);
-                settings_save(settings);
-            }
-        };
-        style_row("Main view", "hud_main",  settings.hud_tapes_main);
-        style_row("Swarm",     "hud_swarm", settings.hud_tapes_swarm);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Classic: attitude ball. Tapes: speed / heading / altitude.");
-        ImGui::PopTextWrapPos();
-    }
-
-    section("FONT");
-
-    // ── UI face ───────────────────────────────────────────────────────────────
-    //
-    // Saved on change and in force from the next frame. A face whose file is
-    // missing from this install is listed but cannot be picked.
-    {
-        const UiFace cur = (UiFace)std::clamp(settings.ui_font, 0, (int)UiFace::Count - 1);
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##ui_font", ui_face_name(cur))) {
-            for (int i = 0; i < (int)UiFace::Count; ++i) {
-                const UiFace face = (UiFace)i;
-                ImGui::BeginDisabled(!ui_face_available(face));
-                if (ImGui::Selectable(ui_face_name(face), face == cur)) {
-                    settings.ui_font = i;
-                    ui_face_select(face);
-                    settings_save(settings);
-                }
-                ImGui::EndDisabled();
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("Geist Mono: fixed width. Roboto: proportional, fixed-width digits.");
-        ImGui::PopStyleColor();
-    }
-
-    section("MAP ICONS");
-
-    // ── Vehicle symbols ───────────────────────────────────────────────────────
-    //
-    // Saved on change. The strip below draws what each kind of vehicle gets
-    // under the chosen style, so BY VEHICLE TYPE shows its own mapping rather
-    // than leaving it to be guessed.
-    {
-        static const char* k_styles[] = {
-            "Legacy arrow", "By vehicle type", "Plane", "Multicopter", "Helicopter",
-        };
-        int style = std::clamp(settings.map_icon_style, 0, 4);
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::Combo("##map_icon_style", &style, k_styles, IM_ARRAYSIZE(k_styles))) {
-            settings.map_icon_style = style;
-            map_view_set_icon_style((MapIconStyle)style);
-            settings_save(settings);
-        }
-
-        struct Sample { const char* label; uint8_t type; };
-        static const Sample k_samples[] = {
-            { "PLANE",  MAV_TYPE_FIXED_WING   },
-            { "MULTI",  MAV_TYPE_QUADROTOR    },
-            { "HELI",   MAV_TYPE_HELICOPTER   },
-            { "OTHER",  MAV_TYPE_GROUND_ROVER },
-        };
-        constexpr float CELL_H = 76.0f;
-        const float  cell_w = (ImGui::GetContentRegionAvail().x - 3.0f * CARD_GAP) / 4.0f;
-        ImDrawList*  dl     = ImGui::GetWindowDrawList();
-        for (int i = 0; i < 4; ++i) {
-            if (i) ImGui::SameLine(0, CARD_GAP);
-            ImGui::Dummy({ cell_w, CELL_H });
-            const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
-            dl->AddRectFilled(p0, p1, ui_col_well());
-            dl->AddRect(p0, p1, ui_col_seam());
-            dl->PushClipRect(p0, p1, true);
-            map_draw_vehicle_symbol(dl, { (p0.x + p1.x) * 0.5f, p0.y + 31.0f }, k_samples[i].type,
-                                    (MapIconStyle)style, 0.0f, 1.0f, 0.85f);
-            dl->PopClipRect();
-            const float tw = ui_tracked_width(g_font_micro, UI_SZ_MICRO, k_samples[i].label);
-            ui_tracked_text(dl, g_font_micro, UI_SZ_MICRO, { (p0.x + p1.x - tw) * 0.5f, p1.y - 16.0f },
-                            ui_col_label(), k_samples[i].label);
-        }
-        ImGui::Spacing();
-    }
-
-    section("TERRAIN");
-
-    // ── Terrain clearance ─────────────────────────────────────────────────────
-    // How near the ground a planned path may come before the mission tab, the
-    // 3D map and GO HERE warn about it.
-    {
-        float m = settings.terrain_clearance_m;
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Warn when a mission leg or GO HERE path comes within");
-        ImGui::PopTextWrapPos();
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::SliderFloat("##terrain_clear", &m, 0.0f, 300.0f, "CLEARANCE  %.0f M")) {
-            settings.terrain_clearance_m = m;
-            set_terrain_clearance_m(m);
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            settings_save(settings);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("of the terrain data (bare ground: no trees or buildings)");
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-    }
-
-    // ── Terrain source ────────────────────────────────────────────────────────
-    // Laid out as MAP SOURCE below. The attribution is what the 3D map shows
-    // and the mission tab quotes, so it says how far the data can be trusted.
-    {
-        static char s_turl[512]  = {};
-        static char s_tattr[160] = {};
-        static int  s_tenc       = 0;
-        static bool s_tinit      = false;
-        if (!s_tinit) {
-            strncpy(s_turl,  settings.terrain_url.c_str(),         sizeof(s_turl)  - 1);
-            strncpy(s_tattr, settings.terrain_attribution.c_str(), sizeof(s_tattr) - 1);
-            s_tenc  = settings.terrain_encoding;
-            s_tinit = true;
-        }
-        const auto apply = [&] {
-            settings.terrain_url         = s_turl;
-            settings.terrain_encoding    = s_tenc;
-            settings.terrain_attribution = s_tattr;
-            terrain_set_source(settings.terrain_url, (TerrainEncoding)settings.terrain_encoding,
-                               settings.terrain_attribution);
-            settings_save(settings);
-        };
-
-        ImGui::TextDisabled("Terrain URL  ({z} {x} {y} placeholders, PNG)");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##terrain_url", s_turl, sizeof(s_turl));
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Encoding");
-        static const char* k_encs[] = { "TERRARIUM  (AWS Terrain Tiles)",
-                                        "TERRAIN-RGB  (Mapbox, MapTiler)" };
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::Combo("##terrain_enc", &s_tenc, k_encs, 2);
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Attribution  (include its accuracy)");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##terrain_attr", s_tattr, sizeof(s_tattr));
-
-        ImGui::Spacing();
-        if (ui_grid_button("APPLY##terrain", { -1.0f, 0.0f })) apply();
-        ImGui::Spacing();
-        if (ui_grid_button("RESET TO DEFAULT##terrain", { -1.0f, 0.0f })) {
-            strncpy(s_turl,  TERRAIN_DEFAULT_URL,         sizeof(s_turl)  - 1);
-            strncpy(s_tattr, TERRAIN_DEFAULT_ATTRIBUTION, sizeof(s_tattr) - 1);
-            s_tenc = (int)TerrainEncoding::Terrarium;
-            apply();
-        }
-        ImGui::Spacing();
-    }
-
-    section("MAP SOURCE");
-
-    // ── Map tile source ───────────────────────────────────────────────────────
-    //
-    // Edited in buffers and applied together by APPLY: a key typed a character at a
-    // time must not be sent to the provider at each one.
-    {
-        static int  s_provider = 0;
-        static int  s_kind     = 0;
-        static int  s_gibs_layer = 0;
-        static char s_gibs_date[16] = {};
-        static char s_esri_key[256]   = {};
-        static char s_google_key[256] = {};
-        static char s_custom_key[256] = {};
-        static char s_url_buf[512]    = {};
-        static char s_attr_buf[128]   = {};
-        static bool s_map_init        = false;
-        if (!s_map_init) {
-            s_provider = settings.tile_provider;
-            s_kind     = settings.tile_kind;
-            s_gibs_layer = settings.tile_gibs_layer;
-            strncpy(s_gibs_date, settings.tile_source().gibs_date.c_str(), sizeof(s_gibs_date) - 1);
-            strncpy(s_esri_key,   settings.tile_key_esri.c_str(),    sizeof(s_esri_key)   - 1);
-            strncpy(s_google_key, settings.tile_key_google.c_str(),  sizeof(s_google_key) - 1);
-            strncpy(s_custom_key, settings.tile_key_custom.c_str(),  sizeof(s_custom_key) - 1);
-            strncpy(s_url_buf,    settings.tile_url.c_str(),         sizeof(s_url_buf)    - 1);
-            strncpy(s_attr_buf,   settings.tile_attribution.c_str(), sizeof(s_attr_buf)   - 1);
-            s_map_init = true;
-        }
-
-        const auto apply = [&] {
-            settings.tile_provider    = s_provider;
-            settings.tile_kind        = s_kind;
-            settings.tile_gibs_layer  = s_gibs_layer;
-            settings.tile_gibs_date   = s_gibs_date;
-            settings.tile_key_esri    = s_esri_key;
-            settings.tile_key_google  = s_google_key;
-            settings.tile_key_custom  = s_custom_key;
-            settings.tile_url         = s_url_buf;
-            settings.tile_attribution = s_attr_buf;
-            map_view_set_tile_source(settings.tile_source());
-            settings_save(settings);
-        };
-
-        ImGui::TextDisabled("Provider");
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##tile_provider", tile_provider_label((TileProvider)s_provider))) {
-            static constexpr TileProvider ORDER[] = {
-                TileProvider::Esri, TileProvider::Google, TileProvider::Sentinel2,
-                TileProvider::NasaGibs, TileProvider::OpenStreetMap, TileProvider::Custom,
-            };
-            for (const TileProvider p : ORDER)
-                if (ImGui::Selectable(tile_provider_label(p), (int)p == s_provider))
-                    s_provider = (int)p;
-            ImGui::EndCombo();
-        }
-
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("%s", tile_provider_note((TileProvider)s_provider));
-        ImGui::TextDisabled("You are responsible for following the terms of the map service you use.");
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-
-        if (tile_provider_has_kinds((TileProvider)s_provider)) {
-            ImGui::TextDisabled("Data");
-            const float w = (ImGui::GetContentRegionAvail().x - 8.0f) / TILE_KIND_COUNT;
-            for (int k = 0; k < TILE_KIND_COUNT; ++k) {
-                if (k) ImGui::SameLine(0, 4);
-                ImGui::PushID(k);
-                if (ui_grid_button(tile_kind_label((TileKind)k), { w, 0.0f }, s_kind == k)) s_kind = k;
-                ImGui::PopID();
-            }
-            ImGui::Spacing();
-        }
-
-        if ((TileProvider)s_provider == TileProvider::NasaGibs) {
-            ImGui::TextDisabled("Layer");
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::BeginCombo("##gibs_layer", tile_gibs_layer(s_gibs_layer).label)) {
-                for (int i = 0; i < tile_gibs_layer_count(); ++i)
-                    if (ImGui::Selectable(tile_gibs_layer(i).label, i == s_gibs_layer)) {
-                        s_gibs_layer = i;
-                        // Already on GIBS: show it. Coming from another provider
-                        // waits for APPLY, like everything else.
-                        if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs) apply();
-                    }
-                ImGui::EndCombo();
-            }
-            ImGui::Spacing();
-
-            if (tile_gibs_layer(s_gibs_layer).dated) {
-                // Applied at once, not on APPLY: stepping through days looking for a
-                // clear one is the whole use of this.
-                const auto set_date = [&](const std::string& d) {
-                    strncpy(s_gibs_date, d.c_str(), sizeof(s_gibs_date) - 1);
-                    s_gibs_date[sizeof(s_gibs_date) - 1] = 0;
-                    if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs ||
-                        (TileProvider)s_provider == TileProvider::NasaGibs) apply();
-                };
-                constexpr float STEP_W = 34.0f, TODAY_W = 58.0f;
-                const std::string today = tile_date_today();
-
-                ImGui::TextDisabled("Date (UTC)");
-                if (ui_grid_button("\xe2\x86\x90##gibs_prev", { STEP_W, 0.0f }))
-                    set_date(tile_date_add(s_gibs_date, -1));
-                ImGui::SameLine(0, 4);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - STEP_W - TODAY_W - 8.0f);
-                ImGui::InputText("##gibs_date", s_gibs_date, sizeof(s_gibs_date));
-                if (ImGui::IsItemDeactivatedAfterEdit()) set_date(s_gibs_date);
-                ImGui::SameLine(0, 4);
-                const bool at_today = std::string(s_gibs_date) >= today;
-                ImGui::BeginDisabled(at_today);
-                if (ui_grid_button("\xe2\x86\x92##gibs_next", { STEP_W, 0.0f }))
-                    set_date(tile_date_add(s_gibs_date, 1));
-                ImGui::EndDisabled();
-                ImGui::SameLine(0, 4);
-                if (ui_grid_button("TODAY##gibs", { TODAY_W, 0.0f })) set_date(today);
-                ImGui::Spacing();
-            }
-        }
-
-        const auto key_field = [](const char* label, const char* id, char* buf, size_t len) {
-            ImGui::TextDisabled("%s", label);
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText(id, buf, len, ImGuiInputTextFlags_Password);
-            ImGui::Spacing();
-        };
-        switch ((TileProvider)s_provider) {
-        case TileProvider::Esri:
-            key_field("ArcGIS API key", "##tile_key_esri", s_esri_key, sizeof(s_esri_key));
-            break;
-        case TileProvider::OpenStreetMap:
-        case TileProvider::Sentinel2:
-        case TileProvider::NasaGibs:
-            break;
-        case TileProvider::Google:
-            key_field("Google API key", "##tile_key_google", s_google_key, sizeof(s_google_key));
-            break;
-        case TileProvider::Custom:
-            ImGui::TextDisabled("Tile URL  ({z} {x} {y} placeholders)");
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##tile_url", s_url_buf, sizeof(s_url_buf));
-            ImGui::Spacing();
-            key_field("API key  (fills {key})", "##tile_key_custom", s_custom_key, sizeof(s_custom_key));
-            ImGui::TextDisabled("Attribution");
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##tile_attr", s_attr_buf, sizeof(s_attr_buf));
-            ImGui::Spacing();
-            break;
-        }
-
-        const std::string status = map_view_tile_status();
-        if (!status.empty()) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(g_theme.col_error, "%s", status.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-        }
-
-        if (ui_grid_button("APPLY##map", { -1.0f, 0.0f })) apply();
-
-        ImGui::Spacing();
-        if (ui_grid_button("RESET TO DEFAULT##map", { -1.0f, 0.0f })) {
-            // Back to Esri, and the custom URL with it. Keys are kept: retyping one
-            // is more trouble than leaving it unused.
-            s_provider = (int)TileProvider::Esri;
-            s_kind     = (int)TileKind::Satellite;
-            strncpy(s_url_buf,  TILE_ESRI_URL,         sizeof(s_url_buf)  - 1);
-            strncpy(s_attr_buf, TILE_ESRI_ATTRIBUTION, sizeof(s_attr_buf) - 1);
-            apply();
-        }
-        ImGui::Spacing();
-    }
-
-    section("ASSISTANT (MCP)");
-
-    // ── MCP server ────────────────────────────────────────────────────────────
-    //
-    // Saved on change, like everything above, and applied on the next frame by
-    // main.cpp's mcp_sync() — so switching actions off takes them away from a
-    // client that is already connected, not just from the next one.
-    {
-        bool on = settings.mcp_enabled;
-        if (ImGui::Checkbox("MCP server", &on)) {
-            settings.mcp_enabled = on;
-            settings_save(settings);
-        }
-        ImGui::SameLine(0, 8);
-        if (!settings.mcp_enabled)
-            ImGui::TextDisabled("off");
-        else if (gcs_mcp_listening())
-            ImGui::TextDisabled("listening on 127.0.0.1:%d", settings.mcp_port);
-        else
-            ImGui::TextColored(g_theme.col_error, "not running \xe2\x80\x94 port in use?");
-
-        // Edited in a buffer and applied on release, so typing "8737" does not
-        // restart the server on 8, 87 and 873 along the way.
-        static int s_port = -1;
-        if (s_port < 0) s_port = settings.mcp_port;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Port");
-        ImGui::SameLine(110.0f);
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::InputInt("##mcp_port", &s_port, 0, 0);
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            s_port = std::clamp(s_port, 1024, 65535);
-            settings.mcp_port = s_port;
-            settings_save(settings);
-        }
-
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Token");
-        ImGui::SameLine(110.0f);
-        ImGui::TextDisabled("%s", settings.mcp_token.empty() ? "made on first start"
-                                                             : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
-
-        const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
-        ImGui::BeginDisabled(settings.mcp_token.empty());
-        if (ui_grid_button("COPY TOKEN##mcp", { half, 0.0f }))
-            ImGui::SetClipboardText(settings.mcp_token.c_str());
-        ImGui::EndDisabled();
-        ImGui::SameLine(0, 4.0f);
-        // A new token cuts off every client configured with the old one.
-        if (ui_grid_button("NEW TOKEN##mcp", { half, 0.0f })) {
-            settings.mcp_token = mcp_generate_token();
-            settings_save(settings);
-        }
-        disabled_tip("Clients set up with the old token stop working.");
-
-        // Where the adapter is, for the host's config. Most hosts launch an
-        // MCP server as a program over stdio; this is the program. The
-        // Windows installer does not put it on PATH, so the full path is the
-        // one thing a user cannot guess.
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Adapter");
-        ImGui::SameLine(110.0f);
-        const std::string& adapter = gcs_mcp_adapter_path();
-        if (adapter.empty()) {
-            ImGui::TextColored(g_theme.col_error, "not found beside the GCS");
-        } else {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("%s", adapter.c_str());
-            ImGui::PopTextWrapPos();
-            if (ui_grid_button("COPY ADAPTER PATH##mcp", { ImGui::GetContentRegionAvail().x, 0.0f }))
-                ImGui::SetClipboardText(adapter.c_str());
-            disabled_tip("The program an agent host launches to reach this GCS. "
-                         "Give this path as the command in the host's MCP settings; "
-                         "it finds the port and token on its own.");
-        }
-
-
-        // Edited in a buffer and saved when the box loses focus, as the port
-        // is. Agents already connected get it from get_guidelines; the copy
-        // sent at connect time only reaches the next ones.
-        ImGui::Spacing();
-        ImGui::TextUnformatted("Instructions for agents");
-        static char s_rules[4096] = {};
-        static bool s_rules_init  = false;
-        if (!s_rules_init) {
-            std::strncpy(s_rules, settings.mcp_instructions.c_str(), sizeof(s_rules) - 1);
-            s_rules_init = true;
-        }
-        ImGui::InputTextMultiline("##mcp_rules", s_rules, sizeof(s_rules), { -1.0f, 110.0f });
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            settings.mcp_instructions = s_rules;
-            settings_save(settings);
-        }
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Sent when an agent connects, and by get_guidelines.");
-        ImGui::PopTextWrapPos();
-
-        ImGui::Spacing();
-        bool act = settings.mcp_actions_enabled;
-        if (ImGui::Checkbox("Allow actions", &act)) {
-            settings.mcp_actions_enabled = act;
-            settings_save(settings);
-        }
-        ImGui::SameLine(0, 8);
-        ImGui::TextDisabled(act ? "the assistant can command vehicles" : "read-only");
-
-        // One row per action. Ticked runs the moment the assistant asks;
-        // unticked puts the ALLOW / REFUSE dialog in front of the operator.
-        ImGui::BeginDisabled(!act);
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Run without asking \xe2\x80\x94 the rest ask on screen first:");
-        ImGui::PopTextWrapPos();
-        for (const McpActionInfo& a : mcp_actions()) {
-            bool unasked = false;
-            auto it = settings.mcp_auto_allow.find(a.tool);
-            if (it != settings.mcp_auto_allow.end()) unasked = it->second;
-            ImGui::PushID(a.tool);
-            if (ImGui::Checkbox(a.label, &unasked)) {
-                settings.mcp_auto_allow[a.tool] = unasked;
-                settings_save(settings);
-            }
-            ImGui::PopID();
-            disabled_tip(a.hint);
-        }
-        ImGui::Spacing();
-        const float half2 = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
-        if (ui_grid_button("ASK FOR ALL##mcp", { half2, 0.0f })) {
-            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = false;
-            settings_save(settings);
-        }
-        ImGui::SameLine(0, 4.0f);
-        if (ui_grid_button("ALLOW ALL##mcp", { half2, 0.0f })) {
-            for (const McpActionInfo& a : mcp_actions()) settings.mcp_auto_allow[a.tool] = true;
-            settings_save(settings);
-        }
-        ImGui::EndDisabled();
-
-        // Vehicles agents have reserved for themselves. A claim keeps other
-        // agents off a vehicle; it never limits the operator, who can also
-        // clear them all here — for an agent that died holding one, say.
-        ImGui::Spacing();
-        const std::vector<McpClaim> claims = gcs_mcp_claims();
-        if (claims.empty()) {
-            ImGui::TextDisabled("Vehicle claims: none");
-        } else {
-            ImGui::TextDisabled("Vehicle claims:");
-            for (const McpClaim& c : claims)
-                ImGui::Text("  (%u)  %s   idle %.0f s", (unsigned)c.vehicle, c.label.c_str(), c.idle_s);
-            if (ui_grid_button("RELEASE ALL CLAIMS##mcp", { -1.0f, 0.0f }))
-                gcs_mcp_release_claims();
-        }
-        ImGui::Spacing();
     }
 }

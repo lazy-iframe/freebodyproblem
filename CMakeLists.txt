@@ -426,6 +426,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     backend/mavlink_sender.cpp
     backend/vehicle.cpp
     backend/link.cpp
+    backend/signing.cpp
     backend/fleet.cpp
     backend/connection.cpp
     backend/rc_calibration.cpp
@@ -503,6 +504,9 @@ target_link_libraries(freebodyproblem PRIVATE
     ${GST_LIBRARIES}
 )
 target_compile_definitions(freebodyproblem PRIVATE
+    # Streams a ground station can hear at once, per sysid, compid and link. New ones
+    # past this are refused, and a swarm has many.
+    MAVLINK_MAX_SIGNING_STREAMS=256
     GCS_VERSION="${PROJECT_VERSION}"
     GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
     GCS_FONT_BOLD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Bold.ttf"

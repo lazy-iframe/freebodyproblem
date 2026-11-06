@@ -67,6 +67,8 @@ struct LinkInfo {
     std::string name;                        // "udp:0.0.0.0:14550"
     LinkStatus  status   = LinkStatus::Idle;
     int         vehicles = 0;                // heard on this link
+    uint64_t    bad_signature    = 0;        // frames dropped: wrong key, forged, replayed
+    uint64_t    unsigned_dropped = 0;        // frames dropped: no signature, and one required
 };
 
 // One transport: a UDP socket, a TCP connection, or a serial port.
@@ -105,6 +107,14 @@ public:
     // "udp:0.0.0.0:14550", "serial:/dev/ttyACM0@57600" — for the UI.
     const std::string& name() const { return name_; }
 
+    void set_signing_counts(uint64_t bad, uint64_t no_sig)
+    {
+        bad_signature_.store(bad, std::memory_order_relaxed);
+        unsigned_dropped_.store(no_sig, std::memory_order_relaxed);
+    }
+    uint64_t bad_signature()    const { return bad_signature_.load(std::memory_order_relaxed); }
+    uint64_t unsigned_dropped() const { return unsigned_dropped_.load(std::memory_order_relaxed); }
+
 private:
     const uint32_t   id_;
     const LinkConfig cfg_;
@@ -116,4 +126,6 @@ private:
     bool         is_serial_ = false;
 
     std::atomic<LinkStatus> status_{LinkStatus::Idle};
+    std::atomic<uint64_t>   bad_signature_{0};
+    std::atomic<uint64_t>   unsigned_dropped_{0};
 };

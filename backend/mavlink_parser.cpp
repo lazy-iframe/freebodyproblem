@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "signing.hpp"
 #include "../frontend/app_log.hpp"   // gcs_log — thread-safe, see the header
 
 namespace {
@@ -247,6 +248,16 @@ void MavlinkParser::handle(const mavlink_message_t& msg)
         state_.mav_state     = static_cast<MAV_STATE>(hb.system_status);
         state_.custom_mode   = hb.custom_mode;
         state_.armed         = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
+        {
+            // Said once a change, for the log. Going from signed to not is the one to
+            // look at: a vehicle told to stop, or something else using its sysid.
+            const bool is_signed = (msg.incompat_flags & MAVLINK_IFLAG_SIGNED) != 0;
+            if (state_.has_heartbeat && is_signed != state_.heartbeat_signed)
+                gcs_log(is_signed ? "sys%u: heartbeats now signed"
+                                  : "sys%u: heartbeats NO LONGER SIGNED", (unsigned)msg.sysid);
+            state_.heartbeat_signed      = is_signed;
+            state_.heartbeat_signing_gen = signing::generation();
+        }
         state_.has_heartbeat = true;
         ++state_.heartbeat_count;
         break;

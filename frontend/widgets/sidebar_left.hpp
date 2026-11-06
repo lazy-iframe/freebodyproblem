@@ -48,6 +48,11 @@ struct ConnectionRequest {
     // Named rather than implied by the active vehicle: the list reboots any
     // aircraft in the fleet, not only the one on screen.
     VehicleId reboot_vehicle{};
+
+    // Set for one frame when SEND KEY (true) or STOP SIGNING (false) has been confirmed,
+    // for any vehicle on the link whose signing section is open.
+    VehicleId signing_vehicle{};
+    bool      signing_install = false;
 };
 
 // Feed the RC panel's calibration the live receiver stream.

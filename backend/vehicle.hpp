@@ -92,6 +92,8 @@ struct VehicleChip {
     bool      armed         = false;
     bool      has_heartbeat = false;
     bool      stale         = false;
+    bool      heartbeat_signed = false;      // see VehicleState
+    uint64_t  heartbeat_signing_gen = 0;
 
     // Which link this one came in on, e.g. "udp:0.0.0.0:14560".
     //

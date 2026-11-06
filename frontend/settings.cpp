@@ -413,6 +413,9 @@ void settings_load(AppSettings& out)
     if (root.contains("mcp_token") && root["mcp_token"].is_string())
         out.mcp_token = root["mcp_token"].get<std::string>();
 
+    if (root.contains("gcs_sysid") && root["gcs_sysid"].is_number_integer())
+        out.gcs_sysid = std::clamp(root["gcs_sysid"].get<int>(), 0, 255);
+
     if (root.contains("terrain_clearance_m") && root["terrain_clearance_m"].is_number())
         out.terrain_clearance_m = std::clamp(root["terrain_clearance_m"].get<float>(), 0.0f, 1000.0f);
 
@@ -483,6 +486,7 @@ void settings_save(const AppSettings& s)
     }
     root["grid_cells"] = jcells;
 
+    root["gcs_sysid"]           = s.gcs_sysid;
     root["terrain_clearance_m"] = s.terrain_clearance_m;
     root["terrain_url"]         = s.terrain_url;
     root["terrain_encoding"]    = s.terrain_encoding;

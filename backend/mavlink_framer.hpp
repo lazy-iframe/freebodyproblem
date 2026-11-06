@@ -23,6 +23,11 @@
 
 #include <mavlink/ardupilotmega/mavlink.h>
 
+#include "signing.hpp"
+
+#include <cstring>
+#include <mutex>
+
 // MavlinkFramer — byte stream in, whole MAVLink messages out.
 //
 // The reassembly buffer lives in this object rather than in the library's
@@ -43,20 +48,52 @@ public:
     int feed(const uint8_t* buf, size_t len, Fn&& cb)
     {
         total_bytes_ += len;
+        if (signing_link_) sync_signing();
 
         int parsed = 0;
         mavlink_message_t msg;
         mavlink_status_t  st;
 
         for (size_t i = 0; i < len; ++i) {
-            const uint8_t result =
-                mavlink_frame_char_buffer(&rxmsg_, &status_, buf[i], &msg, &st);
+            uint8_t result;
+            if (status_.signing && status_.signature_wait > 0) {
+                // A signature's bytes: the last of them checks it against the
+                // streams all links share.
+                std::lock_guard<std::mutex> lk(signing::streams_mutex());
+                result = mavlink_frame_char_buffer(&rxmsg_, &status_, buf[i], &msg, &st);
+            } else {
+                result = mavlink_frame_char_buffer(&rxmsg_, &status_, buf[i], &msg, &st);
+            }
             if (result == MAVLINK_FRAMING_OK) {
+                // A signature that passed moves this link's clock on, and the
+                // clock everything is signed with: a vehicle ahead of this ground
+                // station's clock would refuse it otherwise.
+                if (status_.signing && (msg.incompat_flags & MAVLINK_IFLAG_SIGNED))
+                    signing::observe_timestamp(signing_.timestamp);
+
+                // Radios make RADIO_STATUS themselves, and cannot sign it.
+                if (status_.signing && !(msg.incompat_flags & MAVLINK_IFLAG_SIGNED) &&
+                    signing::require_signed(signing_link_) &&
+                    msg.msgid != MAVLINK_MSG_ID_RADIO_STATUS) {
+                    ++unsigned_dropped_;
+                    continue;
+                }
                 ++total_messages_;
                 ++parsed;
                 cb(static_cast<const mavlink_message_t&>(msg));
-            } else if (result == MAVLINK_FRAMING_BAD_CRC ||
-                       result == MAVLINK_FRAMING_BAD_SIGNATURE) {
+            } else if (result == MAVLINK_FRAMING_BAD_SIGNATURE) {
+                if (!(msg.incompat_flags & MAVLINK_IFLAG_SIGNED)) {
+                    ++unsigned_dropped_;
+                } else if (signing_.last_status == MAVLINK_SIGNING_STATUS_OLD_TIMESTAMP) {
+                    // Signed with this key, so it is the vehicle, but its clock is
+                    // far behind: an autopilot with no GPS, restarted after a long
+                    // while off. See take_stale_signed().
+                    ++stale_signed_;
+                    stale_pending_ = true;
+                } else {
+                    ++bad_signature_;
+                }
+            } else if (result == MAVLINK_FRAMING_BAD_CRC) {
                 // A frame carrying a message this dialect does not define
                 // fails its CRC for a reason that is not corruption: the check
                 // is seeded with a per-message constant, and there is none for
@@ -91,9 +128,60 @@ public:
     // define. Not an error — nothing is lost that this GCS could have used.
     uint64_t unknown_msgs()   const { return unknown_msgs_;   }
 
+    // Check signatures on this framer, with this connection's key. Left unset where
+    // what is fed in is not live traffic.
+    void set_signing_link(signing::LinkKey* link) { signing_link_ = link; }
+
+    // Dropped for failing a signature, a replay among them: a wrong key, a forgery.
+    uint64_t bad_signature()    const { return bad_signature_;    }
+    // Dropped for having none, under signing::require_signed(). Both since this
+    // connection's key was last set.
+    uint64_t unsigned_dropped() const { return unsigned_dropped_; }
+
+    // True once after a frame correctly signed but too old to accept. A vehicle takes
+    // its clock from what it hears, so one signed frame from here puts it right; but
+    // with none of its frames accepted the fleet has no vehicle to send that from, and
+    // the link would stay silent both ways for good. The caller answers.
+    bool take_stale_signed()
+    {
+        const bool r = stale_pending_;
+        stale_pending_ = false;
+        return r;
+    }
+
 private:
+    void sync_signing()
+    {
+        const uint64_t gen = signing::link_generation(signing_link_);
+        if (gen == signing_gen_) return;
+        signing_gen_ = gen;
+
+        // Drops under the old key are no news about this one. A key put right should
+        // not leave its link showing a warning.
+        bad_signature_ = unsigned_dropped_ = stale_signed_ = 0;
+
+        status_.signing         = nullptr;
+        status_.signing_streams = nullptr;
+        std::memset(&signing_, 0, sizeof(signing_));
+
+        if (signing::copy_key(signing_link_, signing_.secret_key)) {
+            signing_.timestamp                = signing::next_timestamp();
+            signing_.accept_unsigned_callback = &signing::accept_unverified;
+            status_.signing         = &signing_;
+            status_.signing_streams = signing::streams();
+        }
+    }
+
     mavlink_message_t rxmsg_{};
     mavlink_status_t  status_{};
+
+    signing::LinkKey* signing_link_ = nullptr;
+    uint64_t          signing_gen_ = 0;
+    mavlink_signing_t signing_{};   // flags left 0: this one is never signed with
+    uint64_t          bad_signature_    = 0;
+    uint64_t          unsigned_dropped_ = 0;
+    uint64_t          stale_signed_     = 0;
+    bool              stale_pending_    = false;
 
     uint64_t total_bytes_    = 0;
     uint64_t total_messages_ = 0;

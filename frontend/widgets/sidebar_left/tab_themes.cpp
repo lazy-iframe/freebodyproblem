@@ -20,7 +20,7 @@
 #include "../sidebar_themes.hpp"
 #include "imgui.h"
 
-void draw_tab_themes(AppSettings* settings)
+void draw_tab_themes(AppSettings* settings, const std::vector<VehicleChip>& vehicles)
 {
     if (!settings) return;
 
@@ -33,7 +33,7 @@ void draw_tab_themes(AppSettings* settings)
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_darker());
     if (ImGui::BeginChild("##themes_scroll", { -1.0f, avail_h }, false)) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 4.0f, 4.0f });
-        draw_themes_panel(*settings);
+        draw_themes_panel(*settings, vehicles);
         ImGui::PopStyleVar();
     }
     ImGui::EndChild();

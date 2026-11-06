@@ -24,6 +24,7 @@ Settings contents:
 - **Active theme**: Selected color scheme
 - **Custom themes**: User-defined color palettes
 - **Map source**: `tile_provider` (0 Esri, 1 OpenStreetMap, 2 Google, 3 Custom, 4 Sentinel-2, 5 NASA GIBS), `tile_kind` (0 satellite, 1 hybrid, 2 terrain), `tile_gibs_layer` and `tile_gibs_date`, `tile_key_esri`, `tile_key_google` and `tile_key_custom`, with `tile_url` and `tile_attribution` for the custom source. Keys are stored in plain text
+- **GCS system ID**: `gcs_sysid`, 0 to 255, default 255. Set in **SETTINGS → MAVLINK**. On ArduPilot, set `MAV_GCS_SYSID` (`SYSID_MYGCS` on older firmware) to match, because joystick, RC override and GCS failsafe only answer to that ID
 - **Video URL**: Last used stream source
 - **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token

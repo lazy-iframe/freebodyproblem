@@ -201,6 +201,12 @@ struct VehicleState {
     uint32_t      custom_mode   = 0;
     bool          armed         = false;
     bool          has_heartbeat = false;
+    bool          heartbeat_signed = false;   // the last one from its autopilot carried a signature
+
+    // The signing::generation() that heartbeat got through under. One from before the
+    // key changed says nothing about this key: with the wrong key nothing more arrives,
+    // and heartbeat_signed alone would go on claiming a vehicle that cannot be heard.
+    uint64_t      heartbeat_signing_gen = 0;
     // Ticks once per HEARTBEAT from the locked autopilot. The UI beeps on the
     // change rather than on a clock, so the cue is the vehicle's pulse and not
     // the ground station's: heartbeats stop, beeping stops.

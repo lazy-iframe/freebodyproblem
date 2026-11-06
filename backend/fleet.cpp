@@ -23,6 +23,7 @@
 #include <cstdio>
 
 #include "mavlink_framer.hpp"
+#include "signing.hpp"
 #include "../frontend/app_log.hpp"
 
 using Clock = std::chrono::steady_clock;
@@ -162,8 +163,11 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
     // MAV_AUTOPILOT_INVALID. So does another GCS on the same network, and so do
     // our own datagrams coming back on a loopback UDP bind. None of them is a
     // vehicle, and creating one for them would put a phantom in the switcher.
+    //
+    // By what it says it is, and never by comparing its sysid with this GCS's own: that
+    // is a setting, and a vehicle on the same number must not vanish.
     if (hb.autopilot == MAV_AUTOPILOT_INVALID)      return nullptr;
-    if (msg.sysid    == MavlinkSender::GCS_SYSID)   return nullptr;
+    if (hb.type      == MAV_TYPE_GCS)               return nullptr;
 
     std::shared_ptr<Vehicle> created;
     bool first = false;
@@ -217,7 +221,15 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
     Link& link = *slot->link;
 
     MavlinkFramer framer;
+    signing::LinkKey* const signing_link = signing::for_link(link.name());
+    framer.set_signing_link(signing_link);
     uint8_t       buf[2048];
+
+    // Answers a vehicle whose clock is too far behind for its frames to be accepted;
+    // see MavlinkFramer::take_stale_signed(). No vehicle exists yet to send it from.
+    MavlinkSender clock_setter;
+    clock_setter.set_signing_link(signing_link);
+    auto last_clock_set = Clock::now() - std::chrono::seconds(1);
 
     auto link_start = Clock::now();
     auto last_rx    = Clock::now();
@@ -271,6 +283,7 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
                 if (!v) {
                     v = route(msg, link.id());
                     if (!v) return;
+                    v->sender().set_signing_link(signing_link);
                     mine.push_back(v);
                 }
 
@@ -278,6 +291,14 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
                 v->set_link_counters(framer.total_bytes(), framer.parse_errors());
                 v->deliver(msg);
             });
+
+            link.set_signing_counts(framer.bad_signature(), framer.unsigned_dropped());
+            if (framer.take_stale_signed() &&
+                Clock::now() - last_clock_set >= std::chrono::seconds(1)) {
+                last_clock_set = Clock::now();
+                clock_setter.send_heartbeat();
+                link.flush_to(clock_setter, src_valid ? &src : nullptr);
+            }
         } else if (!had_data) {
             const double elapsed =
                 std::chrono::duration<double>(Clock::now() - link_start).count();
@@ -384,6 +405,8 @@ std::vector<LinkInfo> Fleet::links() const
         li.id     = s->link->id();
         li.name   = s->link->name();
         li.status = s->link->status();
+        li.bad_signature    = s->link->bad_signature();
+        li.unsigned_dropped = s->link->unsigned_dropped();
         for (const auto& [vid, v] : vehicles_)
             if (vid.link_id == li.id) ++li.vehicles;
         out.push_back(li);

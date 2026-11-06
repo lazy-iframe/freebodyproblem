@@ -126,6 +126,10 @@ struct AppSettings {
     // to every agent when it connects and returned by get_guidelines.
     std::string                 mcp_instructions;
 
+    // ── MAVLink ───────────────────────────────────────────────────────────────
+    // The sysid this ground station sends as, 0 to 255.
+    int gcs_sysid = 255;
+
     // ── Terrain ───────────────────────────────────────────────────────────────
     // The least height above the terrain data a planned path may come: a
     // mission leg or a GO HERE line closer than this warns.
