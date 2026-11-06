@@ -20,15 +20,18 @@
 #include "../../backend/vehicle.hpp"
 #include "../goto_target.hpp"
 #include "../mission_pick.hpp"
+#include "../tile_source.hpp"
 #include "imgui.h"
 #include <string>
 #include <vector>
 
-// Set the tile URL template and attribution string.  Safe to call from the main
-// thread at any time; workers pick up the new host on their next request.
-// URL format: "https://host/path/{z}/{x}/{y}" — {z}/{x}/{y} are substituted per tile.
-// Some providers use {z}/{y}/{x} ordering (e.g. Esri) — match your provider.
-void map_view_set_tile_source(const std::string& url, const std::string& attribution);
+// Choose where imagery comes from. Main thread only, as it drops the tiles of the
+// source before: nothing from one provider stays on screen as another's.
+void map_view_set_tile_source(const TileSourceConfig& source);
+
+// What is wrong with the source right now, for the settings panel: a missing key, a
+// refused request. Empty while all is well. Never contains a key.
+std::string map_view_tile_status();
 
 // How aircraft are drawn: the legacy arrow, a top-down silhouette chosen from
 // each vehicle's MAV_TYPE (the arrow for anything that is not a plane,

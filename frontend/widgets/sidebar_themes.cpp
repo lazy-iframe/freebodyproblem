@@ -907,46 +907,174 @@ void draw_themes_panel(AppSettings& settings)
     section("MAP SOURCE");
 
     // ── Map tile source ───────────────────────────────────────────────────────
+    //
+    // Edited in buffers and applied together by APPLY: a key typed a character at a
+    // time must not be sent to the provider at each one.
     {
-        static constexpr char k_default_url[]   = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-        static constexpr char k_default_attr[]  = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";
-
-        // Local edit buffers — initialised from settings on first draw
-        static char s_url_buf[512]  = {};
-        static char s_attr_buf[128] = {};
-        static bool s_map_init      = false;
+        static int  s_provider = 0;
+        static int  s_kind     = 0;
+        static int  s_gibs_layer = 0;
+        static char s_gibs_date[16] = {};
+        static char s_esri_key[256]   = {};
+        static char s_google_key[256] = {};
+        static char s_custom_key[256] = {};
+        static char s_url_buf[512]    = {};
+        static char s_attr_buf[128]   = {};
+        static bool s_map_init        = false;
         if (!s_map_init) {
-            strncpy(s_url_buf,  settings.tile_url.c_str(),         sizeof(s_url_buf)  - 1);
-            strncpy(s_attr_buf, settings.tile_attribution.c_str(), sizeof(s_attr_buf) - 1);
+            s_provider = settings.tile_provider;
+            s_kind     = settings.tile_kind;
+            s_gibs_layer = settings.tile_gibs_layer;
+            strncpy(s_gibs_date, settings.tile_source().gibs_date.c_str(), sizeof(s_gibs_date) - 1);
+            strncpy(s_esri_key,   settings.tile_key_esri.c_str(),    sizeof(s_esri_key)   - 1);
+            strncpy(s_google_key, settings.tile_key_google.c_str(),  sizeof(s_google_key) - 1);
+            strncpy(s_custom_key, settings.tile_key_custom.c_str(),  sizeof(s_custom_key) - 1);
+            strncpy(s_url_buf,    settings.tile_url.c_str(),         sizeof(s_url_buf)    - 1);
+            strncpy(s_attr_buf,   settings.tile_attribution.c_str(), sizeof(s_attr_buf)   - 1);
             s_map_init = true;
         }
 
-        ImGui::TextDisabled("Tile URL  ({z} {x} {y} placeholders)");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##tile_url", s_url_buf, sizeof(s_url_buf));
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Attribution");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##tile_attr", s_attr_buf, sizeof(s_attr_buf));
-
-        ImGui::Spacing();
-
-        if (ui_grid_button("APPLY##map", { -1.0f, 0.0f })) {
+        const auto apply = [&] {
+            settings.tile_provider    = s_provider;
+            settings.tile_kind        = s_kind;
+            settings.tile_gibs_layer  = s_gibs_layer;
+            settings.tile_gibs_date   = s_gibs_date;
+            settings.tile_key_esri    = s_esri_key;
+            settings.tile_key_google  = s_google_key;
+            settings.tile_key_custom  = s_custom_key;
             settings.tile_url         = s_url_buf;
             settings.tile_attribution = s_attr_buf;
-            map_view_set_tile_source(settings.tile_url, settings.tile_attribution);
+            map_view_set_tile_source(settings.tile_source());
             settings_save(settings);
+        };
+
+        ImGui::TextDisabled("Provider");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##tile_provider", tile_provider_label((TileProvider)s_provider))) {
+            static constexpr TileProvider ORDER[] = {
+                TileProvider::Esri, TileProvider::Google, TileProvider::Sentinel2,
+                TileProvider::NasaGibs, TileProvider::OpenStreetMap, TileProvider::Custom,
+            };
+            for (const TileProvider p : ORDER)
+                if (ImGui::Selectable(tile_provider_label(p), (int)p == s_provider))
+                    s_provider = (int)p;
+            ImGui::EndCombo();
         }
 
         ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", tile_provider_note((TileProvider)s_provider));
+        ImGui::TextDisabled("You are responsible for following the terms of the map service you use.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (tile_provider_has_kinds((TileProvider)s_provider)) {
+            ImGui::TextDisabled("Data");
+            const float w = (ImGui::GetContentRegionAvail().x - 8.0f) / TILE_KIND_COUNT;
+            for (int k = 0; k < TILE_KIND_COUNT; ++k) {
+                if (k) ImGui::SameLine(0, 4);
+                ImGui::PushID(k);
+                if (ui_grid_button(tile_kind_label((TileKind)k), { w, 0.0f }, s_kind == k)) s_kind = k;
+                ImGui::PopID();
+            }
+            ImGui::Spacing();
+        }
+
+        if ((TileProvider)s_provider == TileProvider::NasaGibs) {
+            ImGui::TextDisabled("Layer");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("##gibs_layer", tile_gibs_layer(s_gibs_layer).label)) {
+                for (int i = 0; i < tile_gibs_layer_count(); ++i)
+                    if (ImGui::Selectable(tile_gibs_layer(i).label, i == s_gibs_layer)) {
+                        s_gibs_layer = i;
+                        // Already on GIBS: show it. Coming from another provider
+                        // waits for APPLY, like everything else.
+                        if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs) apply();
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::Spacing();
+
+            if (tile_gibs_layer(s_gibs_layer).dated) {
+                // Applied at once, not on APPLY: stepping through days looking for a
+                // clear one is the whole use of this.
+                const auto set_date = [&](const std::string& d) {
+                    strncpy(s_gibs_date, d.c_str(), sizeof(s_gibs_date) - 1);
+                    s_gibs_date[sizeof(s_gibs_date) - 1] = 0;
+                    if ((TileProvider)settings.tile_provider == TileProvider::NasaGibs ||
+                        (TileProvider)s_provider == TileProvider::NasaGibs) apply();
+                };
+                constexpr float STEP_W = 34.0f, TODAY_W = 58.0f;
+                const std::string today = tile_date_today();
+
+                ImGui::TextDisabled("Date (UTC)");
+                if (ui_grid_button("\xe2\x86\x90##gibs_prev", { STEP_W, 0.0f }))
+                    set_date(tile_date_add(s_gibs_date, -1));
+                ImGui::SameLine(0, 4);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - STEP_W - TODAY_W - 8.0f);
+                ImGui::InputText("##gibs_date", s_gibs_date, sizeof(s_gibs_date));
+                if (ImGui::IsItemDeactivatedAfterEdit()) set_date(s_gibs_date);
+                ImGui::SameLine(0, 4);
+                const bool at_today = std::string(s_gibs_date) >= today;
+                ImGui::BeginDisabled(at_today);
+                if (ui_grid_button("\xe2\x86\x92##gibs_next", { STEP_W, 0.0f }))
+                    set_date(tile_date_add(s_gibs_date, 1));
+                ImGui::EndDisabled();
+                ImGui::SameLine(0, 4);
+                if (ui_grid_button("TODAY##gibs", { TODAY_W, 0.0f })) set_date(today);
+                ImGui::Spacing();
+            }
+        }
+
+        const auto key_field = [](const char* label, const char* id, char* buf, size_t len) {
+            ImGui::TextDisabled("%s", label);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText(id, buf, len, ImGuiInputTextFlags_Password);
+            ImGui::Spacing();
+        };
+        switch ((TileProvider)s_provider) {
+        case TileProvider::Esri:
+            key_field("ArcGIS API key", "##tile_key_esri", s_esri_key, sizeof(s_esri_key));
+            break;
+        case TileProvider::OpenStreetMap:
+        case TileProvider::Sentinel2:
+        case TileProvider::NasaGibs:
+            break;
+        case TileProvider::Google:
+            key_field("Google API key", "##tile_key_google", s_google_key, sizeof(s_google_key));
+            break;
+        case TileProvider::Custom:
+            ImGui::TextDisabled("Tile URL  ({z} {x} {y} placeholders)");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##tile_url", s_url_buf, sizeof(s_url_buf));
+            ImGui::Spacing();
+            key_field("API key  (fills {key})", "##tile_key_custom", s_custom_key, sizeof(s_custom_key));
+            ImGui::TextDisabled("Attribution");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##tile_attr", s_attr_buf, sizeof(s_attr_buf));
+            ImGui::Spacing();
+            break;
+        }
+
+        const std::string status = map_view_tile_status();
+        if (!status.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(g_theme.col_error, "%s", status.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+        }
+
+        if (ui_grid_button("APPLY##map", { -1.0f, 0.0f })) apply();
+
+        ImGui::Spacing();
         if (ui_grid_button("RESET TO DEFAULT##map", { -1.0f, 0.0f })) {
-            strncpy(s_url_buf,  k_default_url,  sizeof(s_url_buf)  - 1);
-            strncpy(s_attr_buf, k_default_attr, sizeof(s_attr_buf) - 1);
-            settings.tile_url         = k_default_url;
-            settings.tile_attribution = k_default_attr;
-            map_view_set_tile_source(settings.tile_url, settings.tile_attribution);
-            settings_save(settings);
+            // Back to Esri, and the custom URL with it. Keys are kept: retyping one
+            // is more trouble than leaving it unused.
+            s_provider = (int)TileProvider::Esri;
+            s_kind     = (int)TileKind::Satellite;
+            strncpy(s_url_buf,  TILE_ESRI_URL,         sizeof(s_url_buf)  - 1);
+            strncpy(s_attr_buf, TILE_ESRI_ATTRIBUTION, sizeof(s_attr_buf) - 1);
+            apply();
         }
         ImGui::Spacing();
     }

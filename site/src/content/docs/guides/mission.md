@@ -44,6 +44,13 @@ leg is checked against the terrain along its length: one that comes within the
 clearance set in **Settings → TERRAIN** (30 m by default) is marked amber, one
 that goes into the ground red.
 
+:::caution[A planning aid, not a guarantee]
+Terrain heights are approximate (about ±25 m) and leave out buildings, trees, wires and
+anything else on the ground, so a leg marked as clear can still hit something. The source
+data is provided as is, and part of it (ETOPO1) is marked not to be used for navigation.
+Check the route yourself.
+:::
+
 ## Geofence
 The parameter fence needs no editing here: set `FENCE_ENABLE`, `FENCE_TYPE`,
 `FENCE_RADIUS` and `FENCE_ALT_MAX` in **PARAMS** (PX4: `GF_ACTION`,

@@ -17,11 +17,13 @@ Map tiles are cached separately, under
 `$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and macOS, and
 `%LOCALAPPDATA%\freebodyproblem\tiles` on Windows. Deleting that directory is
 safe — tiles are refetched on demand.
+Each map source caches in its own folder there, except Google with an API key, whose tiles are
+not written to disk.
 
 Settings contents:
 - **Active theme**: Selected color scheme
 - **Custom themes**: User-defined color palettes
-- **Tile server**: URL template and attribution string
+- **Map source**: `tile_provider` (0 Esri, 1 OpenStreetMap, 2 Google, 3 Custom, 4 Sentinel-2, 5 NASA GIBS), `tile_kind` (0 satellite, 1 hybrid, 2 terrain), `tile_gibs_layer` and `tile_gibs_date`, `tile_key_esri`, `tile_key_google` and `tile_key_custom`, with `tile_url` and `tile_attribution` for the custom source. Keys are stored in plain text
 - **Video URL**: Last used stream source
 - **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
@@ -30,8 +32,10 @@ Example `settings.json`:
 ```json
 {
   "active_theme": "Tactical",
-  "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-  "tile_attribution": "© OpenStreetMap contributors",
+  "tile_provider": 3,
+  "tile_url": "https://tiles.example.org/{z}/{x}/{y}.png?key={key}",
+  "tile_key_custom": "your-key",
+  "tile_attribution": "© Example Maps",
   "video_url": "udp://0.0.0.0:5600",
   "themes": {
     "Custom": {

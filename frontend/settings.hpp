@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include "terrain.hpp"
+#include "tile_source.hpp"
 #include "widgets/theme.hpp"
 #include "../backend/joystick_control.hpp"
 
@@ -138,8 +139,35 @@ struct AppSettings {
     std::string terrain_attribution = TERRAIN_DEFAULT_ATTRIBUTION;
 
     // ── Map tile source ───────────────────────────────────────────────────────
-    std::string tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-    std::string tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";
+    // Which provider, and the keys for those that take one. Keys sit here in plain
+    // text, like the MCP token: anyone who can read this file can use them.
+    // tile_url and tile_attribution are the Custom provider's.
+    int         tile_provider    = (int)TileProvider::Esri;
+    int         tile_kind        = (int)TileKind::Satellite;
+    int         tile_gibs_layer  = 0;
+    std::string tile_gibs_date;      // empty until one is chosen: see tile_source()
+    std::string tile_key_esri;
+    std::string tile_key_google;
+    std::string tile_key_custom;
+    std::string tile_url         = TILE_ESRI_URL;
+    std::string tile_attribution = TILE_ESRI_ATTRIBUTION;
+
+    TileSourceConfig tile_source() const
+    {
+        TileSourceConfig c;
+        c.provider           = (TileProvider)tile_provider;
+        c.kind               = (TileKind)tile_kind;
+        c.gibs_layer         = tile_gibs_layer;
+        // A week back, as the newest days are often still being processed.
+        c.gibs_date          = tile_gibs_date.empty() ? tile_date_add(tile_date_today(), -7)
+                                                      : tile_gibs_date;
+        c.esri_key           = tile_key_esri;
+        c.google_key         = tile_key_google;
+        c.custom_url         = tile_url;
+        c.custom_key         = tile_key_custom;
+        c.custom_attribution = tile_attribution;
+        return c;
+    }
 };
 
 // Returns the path to the settings JSON file for this platform.

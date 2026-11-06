@@ -427,6 +427,21 @@ void settings_load(AppSettings& out)
         out.tile_url = root["tile_url"].get<std::string>();
     if (root.contains("tile_attribution") && root["tile_attribution"].is_string())
         out.tile_attribution = root["tile_attribution"].get<std::string>();
+    // A file from before there were providers has only a URL: its own URL is a
+    // custom source, and the old default is Esri.
+    if (root.contains("tile_provider") && root["tile_provider"].is_number_integer())
+        out.tile_provider = std::clamp(root["tile_provider"].get<int>(), 0, TILE_PROVIDER_COUNT - 1);
+    else
+        out.tile_provider = (out.tile_url == TILE_ESRI_URL) ? (int)TileProvider::Esri
+                                                            : (int)TileProvider::Custom;
+    if (root.contains("tile_kind") && root["tile_kind"].is_number_integer())
+        out.tile_kind = std::clamp(root["tile_kind"].get<int>(), 0, TILE_KIND_COUNT - 1);
+    if (root.contains("tile_gibs_layer") && root["tile_gibs_layer"].is_number_integer())
+        out.tile_gibs_layer = std::clamp(root["tile_gibs_layer"].get<int>(), 0, tile_gibs_layer_count() - 1);
+    for (const auto& [name, field] : { std::pair<const char*, std::string*>
+             { "tile_gibs_date", &out.tile_gibs_date }, { "tile_key_esri", &out.tile_key_esri }, { "tile_key_google", &out.tile_key_google },
+             { "tile_key_custom", &out.tile_key_custom } })
+        if (root.contains(name) && root[name].is_string()) *field = root[name].get<std::string>();
 
     if (root.contains("connection_profiles") && root["connection_profiles"].is_array()) {
         for (const auto& jp : root["connection_profiles"]) {
@@ -474,6 +489,13 @@ void settings_save(const AppSettings& s)
     root["terrain_attribution"] = s.terrain_attribution;
     root["tile_url"]         = s.tile_url;
     root["tile_attribution"] = s.tile_attribution;
+    root["tile_provider"]    = s.tile_provider;
+    root["tile_kind"]        = s.tile_kind;
+    root["tile_gibs_layer"]  = s.tile_gibs_layer;
+    root["tile_gibs_date"]   = s.tile_gibs_date;
+    root["tile_key_esri"]    = s.tile_key_esri;
+    root["tile_key_google"]  = s.tile_key_google;
+    root["tile_key_custom"]  = s.tile_key_custom;
     root["audio_enabled"]    = s.audio_enabled;
     root["audio_volume"]     = s.audio_volume;
     root["hud_tapes_main"]   = s.hud_tapes_main;

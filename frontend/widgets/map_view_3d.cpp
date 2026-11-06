@@ -1553,7 +1553,7 @@ GLuint imagery_for(const Key& k, float uv[4], std::vector<MapTileId>& wanted)
     uv[0] = 0; uv[1] = 0; uv[2] = 1; uv[3] = 1;
     if (GLuint t = map_tile_texture(k.z, k.x, k.y, true)) return t;
     wanted.push_back({ k.z, k.x, k.y });
-    for (int dz = 1; dz <= 6 && k.z - dz >= 0; ++dz) {
+    for (int dz = 1; dz <= 12 && k.z - dz >= 0; ++dz) {
         GLuint t = map_tile_texture(k.z - dz, k.x >> dz, k.y >> dz, false);
         if (!t) continue;
         const float cells = (float)(1 << dz);

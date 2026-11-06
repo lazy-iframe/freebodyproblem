@@ -18,14 +18,12 @@
 
 // frontend/widgets/map_view.cpp
 //
-// Slippy tile map backed by ESRI World Imagery satellite tiles.
+// Slippy tile map, its imagery from the provider chosen in frontend/tile_source.hpp.
 // Tile fetching runs on a pool of background threads; decoded pixels are
 // queued for GL texture upload on the main thread.
 //
-// ESRI World Imagery is free to use (same source as QGroundControl satellite view).
-// Attribution must be displayed:
-//   Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics
-//   Reasonable caching (tiles are cached on disk across sessions)
+// Each provider's terms differ, and this project has no agreement with any of them;
+// see tile_source.hpp. Tiles are kept on disk across sessions where that is allowed.
 //
 // Performance improvements over v1:
 //   - Thread pool (N_WORKERS threads), one persistent SSL connection per worker
@@ -159,26 +157,27 @@ static void init_cache_dir()
     g_cache_dir = app_cache_dir("tiles");
 }
 
-static std::string tile_cache_path(const TileKey& k)
+// `subdir` is the provider's own folder under the cache.
+static std::string tile_cache_path(const std::string& subdir, const TileKey& k)
 {
-    return g_cache_dir
+    return g_cache_dir + (subdir.empty() ? "" : "/" + subdir)
          + "/" + std::to_string(k.z)
          + "/" + std::to_string(k.x)
          + "/" + std::to_string(k.y) + ".jpg";
 }
 
 // Returns empty vector on cache miss.
-static std::vector<uint8_t> disk_load(const TileKey& k)
+static std::vector<uint8_t> disk_load(const std::string& subdir, const TileKey& k)
 {
-    std::ifstream f(tile_cache_path(k), std::ios::binary);
+    std::ifstream f(tile_cache_path(subdir, k), std::ios::binary);
     if (!f) return {};
     return {std::istreambuf_iterator<char>(f), {}};
 }
 
 // Best-effort write; silently ignores errors.
-static void disk_save(const TileKey& k, const void* data, size_t sz)
+static void disk_save(const std::string& subdir, const TileKey& k, const void* data, size_t sz)
 {
-    std::string path = tile_cache_path(k);
+    std::string path = tile_cache_path(subdir, k);
     mkdirs_for_file(path);
     std::ofstream f(path, std::ios::binary);
     if (f) f.write(static_cast<const char*>(data), sz);
@@ -193,15 +192,56 @@ static std::unordered_set<TileKey, TileKeyHash>          g_pending;
 
 struct DecodedTile {
     TileKey              key;
+    uint64_t             source_gen = 0;   // the source it was fetched from; see below
     int                  w = 0, h = 0;
     std::vector<uint8_t> rgba;
 };
 
-// ── Tile source config (written from UI/main thread, read by workers) ─────────
+// ── Tile source (written from the main thread, read by workers) ───────────────
 
-static std::mutex  g_tile_cfg_mtx;
-static std::string g_tile_url         = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-static std::string g_tile_attribution = "\xc2\xa9 Esri \xe2\x80\x94 Source: Esri, Maxar, Earthstar Geographics";
+static std::mutex       g_tile_cfg_mtx;
+static TileSourceConfig g_tile_cfg;
+static std::string      g_tile_status;        // for the operator; never holds a key
+
+// Bumped on every change of source, so a tile on its way when the source changed
+// is not shown as the new one's.
+static std::atomic<uint64_t> g_tile_gen{1};
+
+// Past this zoom the source has no tiles: its last one is fetched and stretched.
+static std::atomic<int> g_tile_max_zoom{TILE_DEFAULT_MAX_ZOOM};
+
+// How often one tile may be asked for again after a refusal, a failure to connect or a
+// server error. Then it is left alone until the source is applied again: a provider
+// that is refusing must not be sent the same requests over and over, which is how an
+// app earns a block. Under g_tile_cfg_mtx.
+static constexpr int MAX_TILE_ATTEMPTS = 3;
+static std::unordered_map<TileKey, int, TileKeyHash> g_tile_attempts;
+
+// Tiles of this source that stayed blank however often they were asked for.
+static std::atomic<int> g_tile_blanks{0};
+
+static TileKey capped_tile(TileKey k)
+{
+    const int over = k.z - g_tile_max_zoom.load();
+    if (over > 0) { k.x >>= over; k.y >>= over; k.z -= over; }
+    return k;
+}
+
+// Google's session and its live credit, all under g_tile_cfg_mtx.
+static std::string                           g_google_session;
+static int64_t                               g_google_expiry = 0;
+static std::string                           g_google_copyright;
+static std::chrono::steady_clock::time_point g_google_retry_at{};
+static std::chrono::steady_clock::time_point g_google_credit_at{};
+
+// One worker at a time asks for a session; the rest wait for its answer.
+static std::mutex g_google_session_mtx;
+
+static void set_tile_status(const std::string& s)
+{
+    std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+    g_tile_status = s;
+}
 
 // Split a full URL template into host (with scheme) and path template.
 // e.g. "https://host/path/{z}/{y}/{x}" → host="https://host", path="/path/{z}/{y}/{x}"
@@ -236,9 +276,34 @@ static std::queue<TileKey>     g_fetch_queue;
 
 static std::mutex              g_upload_mtx;
 static std::queue<DecodedTile> g_upload_queue;
+static std::vector<TileKey>    g_retry_tiles;   // under g_upload_mtx; asked for again when next wanted
 
 static std::atomic<bool>        g_running{false};
 static std::vector<std::thread> g_fetch_threads;
+
+// The overlay over the base, where it is not transparent. Same size or not at all.
+static void blend_overlay(DecodedTile& base, const DecodedTile& over)
+{
+    if (base.w != over.w || base.h != over.h) return;
+    const size_t n = (size_t)base.w * base.h * 4;
+    if (base.rgba.size() != n || over.rgba.size() != n) return;
+    for (size_t i = 0; i < n; i += 4) {
+        const unsigned a = over.rgba[i + 3];
+        for (size_t c = 0; c < 3; ++c)
+            base.rgba[i + c] = (uint8_t)((over.rgba[i + c] * a + base.rgba[i + c] * (255 - a)) / 255);
+    }
+}
+
+// All transparent, or all black: GIBS's empty tile, in PNG and JPEG.
+static bool tile_is_blank(const DecodedTile& t)
+{
+    bool transparent = true, black = true;
+    for (size_t i = 0; i + 3 < t.rgba.size() && (transparent || black); i += 4) {
+        if (t.rgba[i + 3] != 0) transparent = false;
+        if (t.rgba[i] > 2 || t.rgba[i + 1] > 2 || t.rgba[i + 2] > 2) black = false;
+    }
+    return transparent || black;
+}
 
 static bool decode_png(const uint8_t* data, int sz, DecodedTile& out)
 {
@@ -252,18 +317,95 @@ static bool decode_png(const uint8_t* data, int sz, DecodedTile& out)
     return true;
 }
 
+// The session to fetch Google's tiles with, made or renewed if need be. Empty if
+// there is none to be had, with the reason in the status, and no second try for a
+// while: a bad key must not be sent to Google on every frame.
+static std::string google_session(const std::string& key, TileKind kind)
+{
+    using Clock = std::chrono::steady_clock;
+    std::lock_guard<std::mutex> one_at_a_time(g_google_session_mtx);
+    {
+        std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+        // Renewed a day early: "two weeks", the documents say, "but this might change".
+        const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+        if (!g_google_session.empty() && (g_google_expiry == 0 || now < g_google_expiry - 86400))
+            return g_google_session;
+        if (Clock::now() < g_google_retry_at) return {};
+    }
+
+    httplib::Client c(TILE_GOOGLE_HOST);
+    c.set_connection_timeout(8);
+    c.set_read_timeout(10);
+    c.set_default_headers({{"User-Agent", tile_user_agent(TILE_GOOGLE_HOST)}});
+    const auto res = c.Post(tile_google_session_path(key), tile_google_session_body(kind), "application/json");
+
+    std::string session;
+    int64_t     expiry = 0;
+    const bool  ok = res && res->status == 200 && tile_google_parse_session(res->body, session, expiry);
+
+    std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+    if (g_tile_cfg.provider != TileProvider::Google || g_tile_cfg.google_key != key) return {};
+    if (!ok) {
+        g_tile_status = res ? "Google refused the session (HTTP " + std::to_string(res->status) + ")"
+                            : std::string("Google could not be reached");
+        g_google_retry_at = Clock::now() + std::chrono::seconds(30);
+        return {};
+    }
+    g_google_session = session;
+    g_google_expiry  = expiry;
+    return session;
+}
+
+// Google's credit depends on where the imagery is. Asked for around the tile just
+// fetched, which is near enough to the view in either the 2D or the 3D map, and no
+// oftener than this.
+static void refresh_google_credit(httplib::Client& c, const std::string& session,
+                                  const std::string& key, const TileKey& t)
+{
+    using Clock = std::chrono::steady_clock;
+    {
+        std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+        if (Clock::now() < g_google_credit_at) return;
+        g_google_credit_at = Clock::now() + std::chrono::seconds(5);
+    }
+    constexpr int SPAN = 3;   // tiles either side
+    double north, south, east, west;
+    tile_frac_to_lat_lon(t.x - SPAN,     t.y - SPAN,     t.z, north, west);
+    tile_frac_to_lat_lon(t.x + SPAN + 1, t.y + SPAN + 1, t.z, south, east);
+
+    const auto res = c.Get(tile_google_viewport_path(session, key, t.z, north, south, east, west));
+    if (!res || res->status != 200) return;
+    const std::string credit = tile_google_parse_copyright(res->body);
+    if (credit.empty()) return;
+    std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+    g_google_copyright = credit;
+}
+
+// Each worker keeps to one of a provider's numbered servers, so it can hold one
+// persistent connection and the load still spreads across them.
+static std::string with_server_number(std::string url, int server)
+{
+    for (size_t p; (p = url.find("{s}")) != std::string::npos;)
+        url.replace(p, 3, std::to_string(server));
+    return url;
+}
+
 static void fetch_worker()
 {
+    static std::atomic<int> s_next_worker{0};
+    const int server = s_next_worker.fetch_add(1) % 4;
+
     // One persistent connection per worker, rebuilt whenever the tile host changes.
-    std::string                      cur_host;
-    std::unique_ptr<httplib::Client> cli;
+    std::string                      cur_host, overlay_host;
+    std::unique_ptr<httplib::Client> cli, overlay_cli;
 
     auto make_cli = [](const std::string& host) {
         auto c = std::make_unique<httplib::Client>(host);
         c->set_connection_timeout(8);
         c->set_read_timeout(10);
         c->set_follow_location(true);
-        c->set_default_headers({{"User-Agent", "freebodyproblem-gcs/1.0"}});
+        c->set_default_headers({{"User-Agent", tile_user_agent(host)}});
         return c;
     };
 
@@ -279,25 +421,86 @@ static void fetch_worker()
             g_fetch_queue.pop();
         }
 
-        // ── Disk cache ────────────────────────────────────────────────────────
-        auto cached = disk_load(key);
-        if (!cached.empty()) {
-            DecodedTile dt;
-            dt.key = key;
-            if (decode_png(cached.data(), (int)cached.size(), dt)) {
-                std::lock_guard<std::mutex> ulk(g_upload_mtx);
-                g_upload_queue.push(std::move(dt));
-                continue;
+        TileSourceConfig source;
+        uint64_t         gen;
+        {
+            std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+            source = g_tile_cfg;
+            gen    = g_tile_gen.load();
+        }
+
+        // Given back to be asked for again, a limited number of times.
+        const auto give_back = [&] {
+            bool again;
+            {
+                std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+                again = gen == g_tile_gen.load() && ++g_tile_attempts[key] < MAX_TILE_ATTEMPTS;
             }
-            // Corrupt cache entry — fall through to network fetch
+            if (!again) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::lock_guard<std::mutex> ulk(g_upload_mtx);
+            g_retry_tiles.push_back(key);
+        };
+
+        // Nothing to send until the settings change, and changing them starts over.
+        if (const char* problem = tile_source_problem(source)) {
+            set_tile_status(problem);
+            continue;
+        }
+
+        std::string cache_subdir;
+        const bool  use_disk = tile_source_cache_dir(source, cache_subdir);
+
+        // Hybrid's second layer, blended onto a base tile however that was come by.
+        // Without it the base still shows: streets missing beats no map.
+        const std::string overlay_tmpl = tile_source_overlay_template(source);
+        const auto add_overlay = [&](DecodedTile& dt) {
+            if (overlay_tmpl.empty()) return;
+            const std::string dir = tile_source_overlay_cache_dir(source);
+            DecodedTile over;
+            auto bytes = disk_load(dir, key);
+            if (!bytes.empty() && decode_png(bytes.data(), (int)bytes.size(), over)) {
+                blend_overlay(dt, over);
+                return;
+            }
+            std::string h, path_t;
+            parse_tile_url(overlay_tmpl, h, path_t);
+            if (h != overlay_host || !overlay_cli) { overlay_host = h; overlay_cli = make_cli(h); }
+            auto res = overlay_cli->Get(make_tile_path(path_t, key.x, key.y, key.z));
+            if (!res || res->status != 200) return;
+            const auto* b = reinterpret_cast<const uint8_t*>(res->body.data());
+            if (!decode_png(b, (int)res->body.size(), over)) return;
+            disk_save(dir, key, res->body.data(), res->body.size());
+            blend_overlay(dt, over);
+        };
+
+        // ── Disk cache ────────────────────────────────────────────────────────
+        if (use_disk) {
+            auto cached = disk_load(cache_subdir, key);
+            if (!cached.empty()) {
+                DecodedTile dt;
+                dt.key        = key;
+                dt.source_gen = gen;
+                if (decode_png(cached.data(), (int)cached.size(), dt)) {
+                    add_overlay(dt);
+                    std::lock_guard<std::mutex> ulk(g_upload_mtx);
+                    g_upload_queue.push(std::move(dt));
+                    continue;
+                }
+                // Corrupt cache entry — fall through to network fetch
+            }
         }
 
         // ── Network fetch ─────────────────────────────────────────────────────
-        std::string url_tmpl;
-        { std::lock_guard<std::mutex> lk(g_tile_cfg_mtx); url_tmpl = g_tile_url; }
+        std::string session;
+        if (tile_source_uses_google_api(source)) {
+            session = google_session(source.google_key, source.kind);
+            if (session.empty()) { give_back(); continue; }
+        }
 
         std::string host, path_tmpl;
-        parse_tile_url(url_tmpl, host, path_tmpl);
+        parse_tile_url(with_server_number(tile_source_template(source, session), server),
+                       host, path_tmpl);
 
         if (host != cur_host || !cli) {
             cur_host = host;
@@ -307,14 +510,70 @@ static void fetch_worker()
         std::string path = make_tile_path(path_tmpl, key.x, key.y, key.z);
 
         auto res = cli->Get(path);
-        if (!res || res->status != 200) continue;
 
-        disk_save(key, res->body.data(), res->body.size());
+        // GIBS sometimes answers a good request with a blank tile, and the real one
+        // on asking again: measured, the same URL gave 107,797 bytes, then 334. A tile
+        // with truly nothing in it costs these extra requests.
+        const bool gibs = source.provider == TileProvider::NasaGibs;
+        const auto blank_reply = [&] {
+            DecodedTile probe;
+            return res && res->status == 200 &&
+                   decode_png(reinterpret_cast<const uint8_t*>(res->body.data()), (int)res->body.size(), probe) &&
+                   tile_is_blank(probe);
+        };
+        for (int retry = 0; gibs && retry < 3 && blank_reply(); ++retry) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            res = cli->Get(path);
+        }
+
+        if (!res) {
+            set_tile_status("Map source could not be reached");
+            give_back();
+            continue;
+        }
+        if (res->status == 401 || res->status == 403 || res->status == 498 || res->status == 499) {
+            // A refusal is about the key or the session, not this tile. Esri answers
+            // a bad token with 498 or 499.
+            set_tile_status("Map source refused the request (HTTP " + std::to_string(res->status) + ")");
+            if (tile_source_uses_google_api(source)) {
+                std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+                g_google_session.clear();
+                g_google_retry_at = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            }
+            give_back();
+            continue;
+        }
+        if (gibs && (res->status == 400 || res->status == 404)) {
+            // Too far back or in the future for this layer; the rest of the date's
+            // tiles would only say the same.
+            set_tile_status("NASA GIBS has no data for that date");
+            continue;
+        }
+        if (res->status >= 500) {
+            give_back();
+            continue;
+        }
+        if (res->status != 200) continue;
+
+        if (gen != g_tile_gen.load()) continue;   // a different source now
 
         DecodedTile dt;
-        dt.key = key;
+        dt.key        = key;
+        dt.source_gen = gen;
         const auto* body = reinterpret_cast<const uint8_t*>(res->body.data());
         if (!decode_png(body, (int)res->body.size(), dt)) continue;
+
+        // After the decode: a 200 that is not an image, like an error or block page,
+        // must not be kept as a tile, and nor must a blank that may yet have imagery.
+        const bool blank = gibs && tile_is_blank(dt);
+        if (blank) ++g_tile_blanks;
+        if (use_disk && !blank) disk_save(cache_subdir, key, res->body.data(), res->body.size());
+
+        add_overlay(dt);
+
+        set_tile_status({});
+        if (tile_source_uses_google_api(source))
+            refresh_google_credit(*cli, session, source.google_key, key);
 
         std::lock_guard<std::mutex> ulk(g_upload_mtx);
         g_upload_queue.push(std::move(dt));
@@ -325,8 +584,15 @@ static void fetch_worker()
 static void drain_upload_queue()
 {
     std::lock_guard<std::mutex> lk(g_upload_mtx);
+    for (const TileKey& k : g_retry_tiles) g_pending.erase(k);
+    g_retry_tiles.clear();
+
     while (!g_upload_queue.empty()) {
         DecodedTile& dt = g_upload_queue.front();
+        if (dt.source_gen != g_tile_gen.load()) {
+            g_upload_queue.pop();
+            continue;
+        }
 
         GLuint tex = 0;
         glGenTextures(1, &tex);
@@ -346,8 +612,9 @@ static void drain_upload_queue()
     }
 }
 
-static void queue_tile(const TileKey& key)
+static void queue_tile(const TileKey& wanted)
 {
+    const TileKey key = capped_tile(wanted);
     if (g_textures.count(key) || g_pending.count(key)) return;
     g_pending.insert(key);
     {
@@ -360,7 +627,7 @@ static void queue_tile(const TileKey& key)
 void map_tile_queue_retain(const std::vector<MapTileId>& keep)
 {
     std::unordered_set<TileKey, TileKeyHash> wanted;
-    for (const MapTileId& t : keep) wanted.insert({ t.x, t.y, t.z });
+    for (const MapTileId& t : keep) wanted.insert(capped_tile({ t.x, t.y, t.z }));
 
     std::lock_guard<std::mutex> lk(g_fetch_mtx);
     std::queue<TileKey> kept;
@@ -391,7 +658,7 @@ static void flush_stale_requests(int keep_zoom)
     while (!g_fetch_queue.empty()) {
         TileKey k = g_fetch_queue.front();
         g_fetch_queue.pop();
-        if (k.z == keep_zoom) {
+        if (k.z == keep_zoom || k.z == g_tile_max_zoom.load()) {
             keep.push(k);
         } else {
             // Not going to be fetched — remove from pending so it can be re-queued
@@ -420,7 +687,8 @@ static bool draw_fallback_tile(ImDrawList* dl,
                                 float sx, float sy)
 {
     constexpr int TILE_PX = 256;
-    for (int dz = 1; dz <= 3 && (z - dz) >= 0; ++dz) {
+    // As far back as a source with few zooms can need.
+    for (int dz = 1; dz <= 12 && (z - dz) >= 0; ++dz) {
         int pz  = z - dz;
         int px  = tx >> dz;
         int py  = ty >> dz;
@@ -1056,14 +1324,55 @@ static void draw_clear_menu(GotoTargetState& go)
 std::string map_tile_attribution()
 {
     std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
-    return g_tile_attribution;
+    // A map gone blank should say why where the operator is looking, and it should
+    // not credit a source it is not showing.
+    if (!g_tile_status.empty()) return "Map unavailable: " + g_tile_status;
+    std::string line = tile_source_attribution(g_tile_cfg);
+    if (g_tile_cfg.provider == TileProvider::Google && !g_google_copyright.empty())
+        line += " \xc2\xb7 " + g_google_copyright;
+    if (g_tile_cfg.provider == TileProvider::NasaGibs && g_tile_blanks.load() > 0)
+        line += " \xc2\xb7 No imagery in some tiles";
+    return line;
 }
 
-void map_view_set_tile_source(const std::string& url, const std::string& attribution)
+std::string map_view_tile_status()
 {
     std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
-    g_tile_url         = url;
-    g_tile_attribution = attribution;
+    return g_tile_status;
+}
+
+void map_view_set_tile_source(const TileSourceConfig& source)
+{
+    {
+        // Applying the same source again is how an operator asks to try again, so
+        // this does not return early when nothing changed.
+        std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
+        g_tile_attempts.clear();
+        g_tile_cfg = source;
+        g_tile_status.clear();
+        g_google_session.clear();
+        g_google_expiry = 0;
+        g_google_copyright.clear();
+        g_google_retry_at = {};
+        g_google_credit_at = {};
+    }
+    ++g_tile_gen;
+    g_tile_max_zoom = tile_source_max_zoom(source);
+    g_tile_blanks   = 0;
+
+    // Nothing of the old source stays: not on screen, not on the way.
+    {
+        std::lock_guard<std::mutex> lk(g_fetch_mtx);
+        g_fetch_queue = {};
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_upload_mtx);
+        g_upload_queue = {};
+        g_retry_tiles.clear();
+    }
+    for (auto& [k, tex] : g_textures) glDeleteTextures(1, &tex);
+    g_textures.clear();
+    g_pending.clear();
 }
 
 void map_view_shutdown()
@@ -1466,9 +1775,48 @@ static void draw_north_pointer(ImDrawList* dl, ImVec2 wp, float win_w, float win
 static void draw_attribution(ImDrawList* dl, ImVec2 wp, float win_w, float win_h, const char* extra)
 {
     float bottom = wp.y + win_h - 4.0f;
+
+    // Wrapped to the window, never clipped: several providers require their credit
+    // in full, and a narrow map or a hybrid's two credits would otherwise cut it.
+    // Built bottom line first, as they are drawn from the bottom up.
+    const float max_w = std::max(60.0f, win_w - 16.0f);
+    std::vector<std::string> lines;
+    const auto add_wrapped = [&](const std::string& text) {
+        std::vector<std::string> wrapped;
+        std::string cur;
+        size_t start = 0;
+        while (start <= text.size()) {
+            const size_t sp   = text.find(' ', start);
+            const std::string word = text.substr(start, sp == std::string::npos ? sp : sp - start);
+            const std::string next = cur.empty() ? word : cur + " " + word;
+            if (!cur.empty() && ImGui::CalcTextSize(next.c_str()).x > max_w) {
+                wrapped.push_back(cur);
+                cur = word;
+            } else {
+                cur = next;
+            }
+            if (sp == std::string::npos) break;
+            start = sp + 1;
+        }
+        if (!cur.empty()) wrapped.push_back(cur);
+        lines.insert(lines.end(), wrapped.rbegin(), wrapped.rend());
+    };
+
+    // A provider's separate credits go on lines of their own, the first on top.
     const std::string attr_str = map_tile_attribution();
-    for (const char* line : { attr_str.c_str(), extra }) {
-        if (!line) continue;
+    const std::string sep = " \xc2\xb7 ";
+    std::vector<std::string> credits;
+    for (size_t pos = 0;;) {
+        const size_t hit = attr_str.find(sep, pos);
+        credits.push_back(attr_str.substr(pos, hit == std::string::npos ? hit : hit - pos));
+        if (hit == std::string::npos) break;
+        pos = hit + sep.size();
+    }
+    for (auto it = credits.rbegin(); it != credits.rend(); ++it) add_wrapped(*it);
+    if (extra) add_wrapped(extra);
+
+    for (const std::string& text : lines) {
+        const char* line = text.c_str();
         const ImVec2 asz = ImGui::CalcTextSize(line);
         const float  ax  = wp.x + win_w - asz.x - 6.0f;
         const float  ay  = bottom - asz.y;

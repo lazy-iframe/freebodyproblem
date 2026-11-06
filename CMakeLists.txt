@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.13)
 # assets/Info.plist.in. Has to be set before project(); ignored elsewhere.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(freebodyproblem VERSION 0.8.1 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.8.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -448,6 +448,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/terrain_clearance.cpp
     frontend/audio.cpp
     frontend/joystick.cpp
+    frontend/tile_source.cpp
     frontend/widgets/topbar.cpp
     frontend/widgets/swarm_view.cpp
     frontend/widgets/sidebar_left.cpp
@@ -502,6 +503,7 @@ target_link_libraries(freebodyproblem PRIVATE
     ${GST_LIBRARIES}
 )
 target_compile_definitions(freebodyproblem PRIVATE
+    GCS_VERSION="${PROJECT_VERSION}"
     GCS_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Regular.ttf"
     GCS_FONT_BOLD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/GeistMono-Bold.ttf"
     GCS_FONT_FALLBACK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf"

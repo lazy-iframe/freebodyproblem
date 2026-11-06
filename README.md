@@ -130,7 +130,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Status text log**: vehicle-generated messages with severity color-coding
 
 ### Mission Planning
-- **Interactive map view**: slippy map with OpenStreetMap tile support (configurable tile server)
+- **Interactive map view**: slippy map with a choice of source: Esri (default), Google, Sentinel-2, NASA GIBS, OpenStreetMap or a custom tile URL, as satellite, hybrid or terrain where the provider offers it, with API key fields where it takes one. See [Map sources](#map-sources)
 - **3D view**: the map's **3D** button stands the imagery on real terrain — the aircraft as 3D models at their altitude, the mission as a path with its shadow cast on the ground, the geofence as walls. Missions and GO HERE points are placed in it in place and height, and **EDIT** moves waypoints in both. See [3D view](#3d-view)
 - **Terrain reference**: every vehicle labelled with its height above the terrain data, not only above home, and every mission leg and GO HERE line checked against the ground — a leg that comes within the clearance set in Settings (30 m by default) is marked, one that goes into the ground is marked red. Terrain from AWS Terrain Tiles (SRTM, ±25 m) by default, or any `{z}/{x}/{y}` PNG source
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
@@ -856,6 +856,12 @@ leg is checked against the terrain along its length: one that comes within the
 clearance set in **Settings → TERRAIN** (30 m by default) is marked amber, one
 that goes into the ground red.
 
+> [!WARNING]
+> **A planning aid, not a guarantee.** Terrain heights are approximate (about ±25 m) and leave
+> out buildings, trees, wires and anything else on the ground, so a leg marked as clear can
+> still hit something. The source data is provided as is, and part of it (ETOPO1) is marked not
+> to be used for navigation. Check the route yourself.
+
 ### Geofence
 The parameter fence needs no editing here: set `FENCE_ENABLE`, `FENCE_TYPE`,
 `FENCE_RADIUS` and `FENCE_ALT_MAX` in **PARAMS** (PX4: `GF_ACTION`,
@@ -933,6 +939,56 @@ small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
   <a href="screens/cap2.png"><img src="screens/cap2.png" alt="MAP FULL: the map takes the right sidebar, with attitude and the event log in its corner" width="100%"></a>
 </p>
 
+#### Map sources
+
+Choose where the imagery comes from in **SETTINGS → MAP SOURCE**, then press **APPLY**. The
+map changes at once and shows nothing from the previous source.
+
+| Provider | Key | What to know |
+|---|---|---|
+| **Esri World Imagery** (default) | Optional ArcGIS key | Works without a key, but Esri's staff say the service [needs a licence and isn't for commercial use](https://community.esri.com/t5/arcgis-location-platform-developers-ques/inquiry-about-world-imagery/m-p/1569266). This project has no agreement with Esri. An invalid key shows no error: in testing, Esri served imagery for a made-up token |
+| **Sentinel-2 Cloudless** | None | [EOX's](https://cloudless.eox.at/) cloud-free mosaic of Copernicus data, 10 m per pixel: you can make out valleys, roads and towns, not individual buildings. It stops at zoom 14 and is stretched past that. The 2024 mosaic is [CC BY-NC-SA](https://cloudless.eox.at/documentation/license): free for non-commercial use, and commercial use needs a licence from EOX |
+| **NASA GIBS** | None | [NASA's imagery service](https://nasa-gibs.github.io/gibs-api-docs/): pick a **Layer**, listed below. These are coarse, and stretched past their last zoom, so they suit regional views rather than placing waypoints. See [NASA's data use guidance](https://www.earthdata.nasa.gov/engage/open-data-services-software-policies/data-use-guidance) |
+| **OpenStreetMap** | None | A street map, not satellite imagery. Its [tile policy](https://operations.osmfoundation.org/policies/tiles/) doesn't permit offline use, and access can be blocked without notice |
+| **Google Satellite** | Optional: a Map Tiles API key | With a key, the official API, [billed to your Google account](https://developers.google.com/maps/documentation/tile). Without one, an unofficial endpoint that Google's terms do not provide for and that could stop working at any time; check Google's terms before using it, especially commercially. Tiles from the endpoint are cached on disk like other sources'. API tiles are not, because Google's [policy](https://developers.google.com/maps/documentation/tile/policies) forbids storing them |
+| **Custom URL** | Optional | Any tile server. Use `{z}`, `{x}` and `{y}`, `{s}` for numbered servers 0 to 3, and `{key}` where it wants the key. Set the attribution it requires |
+
+Keyless Esri and Google, and custom URLs, are sent a desktop Firefox User-Agent for your platform, as other ground stations send. The keyed APIs, EOX and NASA are told it's freebodyproblem. So is OpenStreetMap, even through a custom URL, because its policy forbids impersonating a browser.
+
+**Data** chooses what's fetched, for the providers that offer a choice:
+
+| Provider | Satellite | Hybrid | Terrain |
+|---|---|---|---|
+| **Esri** | World Imagery | Imagery with places and boundaries | World Topo Map |
+| **Google** | Satellite | Satellite with roads and labels | Terrain with roads and labels |
+| **Sentinel-2** | 2024 mosaic | Mosaic with EOX's streets, which draw heavily over the imagery | EOX's terrain layer |
+
+An ArcGIS key applies to Esri's satellite data only, since Esri's keyed host doesn't serve the other two.
+
+**NASA GIBS layers:**
+
+| Layer | Dated | Last zoom | Good for |
+|---|---|---|---|
+| HLS Sentinel-2, true color, 30 m | Yes | 12 | Recent imagery, on a clear day |
+| Landsat true color, 30 m | No, around 2000 | 12 | An old but sharp base map, with gaps over some mountains |
+| Landsat infrared, bands 7-4-3 and 1-5-7, 30 m | No, around 2000 | 12 | Telling vegetation, bare ground and water apart in detail |
+| VIIRS shortwave infrared, M11-I2-I1 | Daily | 9 | Current vegetation, water and burn scars at a regional scale |
+| VIIRS snow and cloud, M3-I3-M11 | Daily | 9 | Telling snow and ice from cloud |
+| VIIRS thermal infrared, band I5, day | Daily | 9 | Brightness temperature: mostly cloud tops and warm ground |
+| ASTER shaded relief | No | 12 | The shape of the land |
+
+A dated layer takes a **Date (UTC)**: type one, or step with the arrows, and the map updates at once so you can look for a clear day. Each date shows only that day's satellite passes, so expect cloud and gaps, and `No imagery in some tiles` in the credit where a tile has none. GIBS sometimes returns a blank tile for a good request, so a blank is asked for up to 3 more times, and is never cached. GIBS has no recent infrared at 30 m: for that resolution the infrared layers are from around 2000.
+
+If a source refuses or can't be reached, each tile is tried at most 3 times, so the app doesn't keep sending requests. Press **APPLY** to try again.
+
+**Use without an API key at your own risk; it might stop working. You are responsible for following the terms of the source you choose.** Being free and open
+source does not grant this project or its users any right to a provider's imagery, and any of
+these services could stop working at any time, so don't depend on the imagery in flight.
+
+If a source can't be used, the map's credit line says why, for example `Map unavailable: Map source
+refused the request (HTTP 403)`, and so does the settings panel. Keys are stored unencrypted in `settings.json`,
+so anyone who can read that file can use them, and they are never written to the log.
+
 #### 3D view
 **3D**, under **CENTER** in the map's top-left corner, stands the map on the
 terrain. Drag to orbit, right-drag to pan, wheel to zoom; the camera keeps
@@ -969,6 +1025,44 @@ OpenGL 3.3; where the driver lacks it, the button says so and stays off.
 - **EDIT** works in 3D. Drag a waypoint's marker to move it over the ground at
   the same height, or drag its vertical line up and down to change only its
   height. A drag anywhere else still orbits.
+
+#### Terrain data
+
+The terrain comes from AWS Terrain Tiles (SRTM, ±25 m) unless another `{z}/{x}/{y}` PNG source
+is set in **Settings → TERRAIN**, which also sets the clearance a planned path must keep from it.
+
+Terrain data credits, as [its licence](https://github.com/tilezen/joerd/blob/master/docs/attribution.md) requires:
+
+```
+* Mapzen
+* ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and
+  funded under National Science Foundation awards 1043681, 1559691, and 1542736;
+* Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017;
+* Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM)
+  Österreich;
+* Canada terrain data contains information licensed under the Open Government
+  Licence – Canada;
+* Europe terrain data produced using Copernicus data and information funded by the
+  European Union - EU-DEM layers;
+* Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration
+* Mexico terrain data source: INEGI, Continental relief, 2016;
+* New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New
+  Zealand and the New Zealand Government (All rights reserved);
+* Norway terrain data © Kartverket;
+* United Kingdom terrain data © Environment Agency copyright and/or database right
+  2015. All rights reserved;
+* United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data
+  courtesy of the U.S. Geological Survey.
+```
+
+These are also in [`NOTICE`](NOTICE). Terrain data is free to use under these terms, with
+no key. Nothing promises the AWS bucket will stay available, so terrain could stop loading.
+
+> [!WARNING]
+> **A planning aid, not a guarantee.** Terrain heights are approximate (about ±25 m) and leave
+> out buildings, trees, wires and anything else on the ground, so a leg marked as clear can
+> still hit something. The source data is provided as is, and part of it (ETOPO1) is marked not
+> to be used for navigation. Check the route yourself.
 
 ### Radio Calibration
 1. Fetch parameters first — **PARAMS → FETCH ALL**. Every WRITE on this tab is
@@ -1444,11 +1538,13 @@ Map tiles are cached separately, under
 `$XDG_CACHE_HOME`/`~/.cache/freebodyproblem/tiles` on Linux and macOS, and
 `%LOCALAPPDATA%\freebodyproblem\tiles` on Windows. Deleting that directory is
 safe — tiles are refetched on demand.
+Each map source caches in its own folder there, except Google with an API key, whose tiles are
+not written to disk.
 
 Settings contents:
 - **Active theme**: Selected color scheme
 - **Custom themes**: User-defined color palettes
-- **Tile server**: URL template and attribution string
+- **Map source**: `tile_provider` (0 Esri, 1 OpenStreetMap, 2 Google, 3 Custom, 4 Sentinel-2, 5 NASA GIBS), `tile_kind` (0 satellite, 1 hybrid, 2 terrain), `tile_gibs_layer` and `tile_gibs_date`, `tile_key_esri`, `tile_key_google` and `tile_key_custom`, with `tile_url` and `tile_attribution` for the custom source. Keys are stored in plain text
 - **Video URL**: Last used stream source
 - **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
@@ -1457,8 +1553,10 @@ Example `settings.json`:
 ```json
 {
   "active_theme": "Tactical",
-  "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-  "tile_attribution": "© OpenStreetMap contributors",
+  "tile_provider": 3,
+  "tile_url": "https://tiles.example.org/{z}/{x}/{y}.png?key={key}",
+  "tile_key_custom": "your-key",
+  "tile_attribution": "© Example Maps",
   "video_url": "udp://0.0.0.0:5600",
   "themes": {
     "Custom": {

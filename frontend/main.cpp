@@ -637,7 +637,7 @@ int main()
     // Load persisted settings and apply the saved theme
     settings_load(g_settings);
     joystick_init(&g_settings);
-    map_view_set_tile_source(g_settings.tile_url, g_settings.tile_attribution);
+    map_view_set_tile_source(g_settings.tile_source());
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
     set_terrain_clearance_m(g_settings.terrain_clearance_m);
     terrain_set_source(g_settings.terrain_url, (TerrainEncoding)g_settings.terrain_encoding,

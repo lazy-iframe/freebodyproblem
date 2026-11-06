@@ -25,6 +25,7 @@
 
 #include "terrain.hpp"
 #include "cache_dir.hpp"
+#include "tile_source.hpp"
 
 // The httplib CMake target already defines this; guard so the two definitions
 // (empty here vs. 1 on the command line) do not collide.
@@ -242,7 +243,7 @@ void worker()
             cli->set_connection_timeout(8);
             cli->set_read_timeout(10);
             cli->set_follow_location(true);
-            cli->set_default_headers({{"User-Agent", "freebodyproblem-gcs/1.0"}});
+            cli->set_default_headers({{"User-Agent", GCS_USER_AGENT}});
         }
         auto res = cli->Get(tile_path(path, k));
         if (!res || res->status != 200) { finish(k, src.gen, nullptr); continue; }
