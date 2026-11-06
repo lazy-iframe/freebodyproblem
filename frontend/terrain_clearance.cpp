@@ -62,10 +62,13 @@ struct KeyHash {
 };
 std::unordered_map<Key, Clearance, KeyHash> g_cache;
 
-Clearance compute(double lat0, double lon0, double amsl0, double lat1, double lon1, double amsl1)
+// `earth_radius_m`, if not 0, raises the ground by the earth's curve under the path.
+Clearance compute(double lat0, double lon0, double amsl0, double lat1, double lon1, double amsl1,
+                  double earth_radius_m = 0.0)
 {
     Clearance c;
-    const int n = std::clamp((int)std::ceil(rough_metres(lat0, lon0, lat1, lon1) / STEP_M), 1, MAX_SAMPLES);
+    const double len = rough_metres(lat0, lon0, lat1, lon1);
+    const int n = std::clamp((int)std::ceil(len / STEP_M), 1, MAX_SAMPLES);
     c.complete = true;
     for (int i = 0; i <= n; ++i) {
         const double t   = (double)i / n;
@@ -73,7 +76,9 @@ Clearance compute(double lat0, double lon0, double amsl0, double lat1, double lo
         const double h   = amsl0 + (amsl1 - amsl0) * t;
         const auto   g   = terrain_amsl(lat, lon);
         if (!g) { c.complete = false; continue; }
-        const float clear = (float)(h - *g);
+        // d0 * d1 / 2R, for the distances to the two ends.
+        const double bulge = earth_radius_m > 0.0 ? t * (1.0 - t) * len * len / (2.0 * earth_radius_m) : 0.0;
+        const float clear = (float)(h - *g - bulge);
         if (!c.has_min || clear < c.min_m) {
             c.has_min   = true;
             c.min_m     = clear;
@@ -102,6 +107,13 @@ Clearance path_clearance(double lat0, double lon0, double amsl0,
         return it->second;
     if (g_cache.size() > 1024) g_cache.clear();
     return g_cache[k] = compute(lat0, lon0, amsl0, lat1, lon1, amsl1);
+}
+
+Clearance line_of_sight_clearance(double lat0, double lon0, double amsl0,
+                                  double lat1, double lon1, double amsl1)
+{
+    constexpr double RADIO_EARTH_RADIUS_M = 6371000.0 * 4.0 / 3.0;
+    return compute(lat0, lon0, amsl0, lat1, lon1, amsl1, RADIO_EARTH_RADIUS_M);
 }
 
 std::optional<float> plan_home_amsl(std::optional<float> reported,

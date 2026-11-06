@@ -143,7 +143,8 @@ void MavlinkSender::arm(uint8_t tsys, uint8_t tcomp)
 void MavlinkSender::disarm(uint8_t tsys, uint8_t tcomp, bool force)
 {
     // MAV_CMD_COMPONENT_ARM_DISARM (400), param1=0 (disarm)
-    // param2=21196 is the ArduPilot magic number for a forced disarm in-flight
+    // param2=21196 is the magic number for a forced disarm, honoured in flight:
+    // the motors stop, whatever the vehicle's own checks would say
     enqueue_command_long(tsys, tcomp, 400, 0.f, force ? 21196.f : 0.f);
 }
 

@@ -45,6 +45,11 @@ static constexpr float BTN_CLOSE   = 22.0f;   // × exit button
 // Set by topbar_request_close(), taken by the next draw_topbar().
 static bool s_close_pending = false;
 
+// Beside the second way out of the disarm dialogs. MAV_CMD_COMPONENT_ARM_DISARM with
+// 21196 in param2, which the vehicle obeys even in flight.
+static constexpr char FORCE_DISARM_NOTE[] =
+    "Stops the motors now, even in flight. An airborne aircraft will fall.";
+
 void topbar_request_close() { s_close_pending = true; }
 
 static constexpr float CELL_PAD    = 13.0f;   // horizontal padding inside a cell
@@ -172,8 +177,16 @@ static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
     }
 
     ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always, { 1.0f, 0.0f });
-    if (ui_confirm_popup("##confirm_disarm_swarm", "DISARM VEHICLES", q_disarm,
-                         "CONFIRM DISARM", g_theme.btn_disarm_base) == UiConfirm::Confirmed) {
+    const UiConfirm disarm_answer =
+        ui_confirm_popup("##confirm_disarm_swarm", "DISARM VEHICLES", q_disarm,
+                         "CONFIRM DISARM", g_theme.btn_disarm_base, false,
+                         "FORCE DISARM", FORCE_DISARM_NOTE, g_theme.btn_stop_base);
+    if (disarm_answer == UiConfirm::Alternate) {
+        const MavlinkSender::BatchRetry retry(live.size() > 1);
+        for (const FlightTarget* t : live) t->sender->disarm(t->vs->sysid, t->vs->compid, true);
+        gcs_log("FORCE DISARM sent \xe2\x86\x92%s", who.c_str());
+    }
+    if (disarm_answer == UiConfirm::Confirmed) {
         const MavlinkSender::BatchRetry retry(live.size() > 1);
         for (const FlightTarget* t : live) t->sender->disarm(t->vs->sysid, t->vs->compid);
         gcs_log("disarm command sent â%s", who.c_str());
@@ -718,10 +731,15 @@ void draw_topbar(const VehicleState& vs,
 
             ImGui::SetNextWindowPos({ popup_rx, popup_ty }, ImGuiCond_Always,
                                     { 1.0f, 0.0f });
-            if (ui_confirm_popup("##confirm_disarm", "DISARM VEHICLE",
+            const UiConfirm disarm_answer =
+                ui_confirm_popup("##confirm_disarm", "DISARM VEHICLE",
                                  "Disarm the vehicle?",
-                                 "CONFIRM DISARM", g_theme.btn_disarm_base)
-                    == UiConfirm::Confirmed) {
+                                 "CONFIRM DISARM", g_theme.btn_disarm_base, false,
+                                 "FORCE DISARM", FORCE_DISARM_NOTE, g_theme.btn_stop_base);
+            if (disarm_answer == UiConfirm::Alternate) {
+                sender->disarm(tsys, tcomp, true);
+                gcs_log("FORCE DISARM sent");
+            } else if (disarm_answer == UiConfirm::Confirmed) {
                 sender->disarm(tsys, tcomp);
                 gcs_log("disarm command sent");
             }

@@ -70,6 +70,18 @@ const std::deque<TrackPoint>* map_track_of(VehicleId id);
 // The helipad the 2D map marks home with, centred on `c`.
 void map_draw_home_symbol(ImDrawList* dl, ImVec2 c, bool active);
 
+// "HOME 1.24 km": how far (lat, lon) is from this vehicle's home over the ground, by the
+// geodesic. Empty with no vehicle, or none that has told us its home.
+std::string map_home_distance(const MapVehicle* mv, double lat, double lon);
+
+// A thin dotted line, by the same dots everywhere on the maps.
+void map_dotted_line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float w);
+
+// From home to the vehicle, at the screen points given: dotted cyan and "LOS", or red
+// and "NO LOS" with the terrain data in the way, "LOS ?" while that is still loading.
+// Nothing when the two are too close on screen for a label to fit.
+void map_draw_los(ImDrawList* dl, ImVec2 home, ImVec2 vehicle, const MapVehicle& mv);
+
 // The airframe a vehicle is drawn as, under the icon style the settings chose.
 enum class SymbolKind { Arrow, Plane, Multicopter, Helicopter };
 SymbolKind map_symbol_kind(uint8_t mav_type);

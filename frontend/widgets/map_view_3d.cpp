@@ -20,7 +20,8 @@
 //
 // How the 3D map is built, per frame:
 //
-//   World   A flat east/north/up frame in metres, centred on the point the
+//   World   An east/north/up frame in metres, curved down with the earth about
+//           the centre (Frame::drop), centred on the point the
 //           camera orbits. Web Mercator tile coordinates are scaled by the
 //           cosine of that point's latitude, which is true to well under a
 //           percent across the tens of kilometres in view. Heights are AMSL
@@ -65,6 +66,7 @@
 namespace {
 
 constexpr double EARTH_C   = 40075016.686;   // Web Mercator world width, metres
+constexpr double EARTH_R   = 6371000.0;      // for the curve; the terrain shader has its own copy
 constexpr double DEG       = M_PI / 180.0;
 constexpr int    GRID      = 32;             // cells per tile edge
 constexpr int    GV        = GRID + 1;       // vertices per tile edge
@@ -74,14 +76,25 @@ constexpr double SPLIT_K   = 2.0;            // split while distance < SPLIT_K Ã
 constexpr int    MAX_LEAVES = 250;
 
 // How far out the camera may go, and how far it then sees. The work is all in
-// the range: tiles fetched, heights built, draws made. Five kilometres out is
-// a whole mission area in view; past that the terrain is a texture, and the
-// 2D map shows it better and cheaper.
+// the range: tiles fetched, heights built, draws made, and it stays bounded because
+// the quadtree only splits near the camera. Far enough out to see the earth curve
+// away. Past that this frame stops being a fair picture of it: the map is still
+// Mercator, bent by a parabola about the centre.
 constexpr double MIN_DIST   = 30.0;
-constexpr double MAX_DIST   = 5000.0;
+constexpr double MAX_DIST   = 1500000.0;
 constexpr double RANGE_K    = 8.0;           // range, in camera distances
 constexpr double MIN_RANGE  = 3000.0;
-constexpr double MAX_RANGE  = 40000.0;
+constexpr double MAX_RANGE  = 4000000.0;
+
+// Past this no terrain can stand between the camera and what it looks at, so that
+// is not checked: it would only fetch detailed tiles from far under the camera.
+constexpr double CAMERA_LOS_MAX_DIST = 100000.0;
+
+// The finest tile worth drawing, as a width against the camera's distance from what it
+// looks at. The split below follows the distance to each tile, which alone would still
+// go deep under a high camera tilted low, in ground no one can make out from up there.
+// This leaves the views flown in as they were: from 1 km it allows the finest tiles.
+constexpr double FINEST_TILE_K = 0.1;
 constexpr int    BUILDS_PER_FRAME = 24;      // height textures made per frame, at most
 constexpr int    TRIES_PER_FRAME  = 96;      // terrain reads attempted per frame, at most
 constexpr float  FOV_Y     = 45.0f * (float)DEG;
@@ -234,6 +247,7 @@ void main() {
     vec3  p = vec3(u_origin.x + f.x * u_size.x,
                    u_origin.y - f.y * u_size.y,
                    (h - u_href) * u_exag - a_grid.z * u_skirt);
+    p.z    -= dot(p.xy, p.xy) / (2.0 * 6371000.0) * u_exag;   // Frame::drop()
     v_uv    = mix(u_uv.xy, u_uv.zw, f);
     v_dist  = distance(p, u_eye);
     v_world = p;
@@ -1253,8 +1267,17 @@ struct Frame {
     {
         double u, v;
         merc(lat, lon, u, v);
-        return { (u - u0) * m, -(v - v0) * m, (amsl - href) * exag };
+        const double x = (u - u0) * m, y = -(v - v0) * m;
+        return { x, y, (amsl - href) * exag - drop(x, y) };
     }
+
+    // How far the earth has curved away at (x, y), from the centre of the view. In world
+    // units, so by the same exaggeration as the heights it is measured against. The
+    // terrain shader does the same sum.
+    double drop(double x, double y) const { return (x * x + y * y) / (2.0 * EARTH_R) * exag; }
+
+    // The other way from world(): the height AMSL of a world point.
+    double amsl_at(V3 p) const { return (p.z + drop(p.x, p.y)) / exag + href; }
 
     // Screen position of a world point, or false behind the camera.
     bool screen(V3 p, ImVec2& out) const
@@ -1479,7 +1502,7 @@ std::optional<double> ground_z(const Frame& f, double ex, double ey)
 {
     double lat, lon;
     unmerc(f.u0 + ex / f.m, f.v0 - ey / f.m, lat, lon);
-    if (auto g = terrain_amsl(lat, lon)) return (*g - f.href) * f.exag;
+    if (auto g = terrain_amsl(lat, lon)) return (*g - f.href) * f.exag - f.drop(ex, ey);
     return std::nullopt;
 }
 
@@ -1497,6 +1520,8 @@ void select_tiles(const Frame& f, V3 eye, double range, std::vector<Leaf>& leave
     const double span = range / size0 * n;   // range in tiles at zr
     const int x0 = std::max(0, (int)std::floor(f.u0 * n - span)), x1 = std::min(n - 1, (int)std::floor(f.u0 * n + span));
     const int y0 = std::max(0, (int)std::floor(f.v0 * n - span)), y1 = std::min(n - 1, (int)std::floor(f.v0 * n + span));
+
+    const int z_finest = std::clamp((int)std::floor(std::log2(size0 / (s_cam.dist * FINEST_TILE_K))), zr, ZMAX);
 
     std::vector<Key> stack;
     for (int y = y0; y <= y1; ++y)
@@ -1520,6 +1545,9 @@ void select_tiles(const Frame& f, V3 eye, double range, std::vector<Leaf>& leave
             hz0 = (it->second.hmin - f.href) * f.exag - 50.0;
             hz1 = (it->second.hmax - f.href) * f.exag + 50.0;
         }
+        // Less the curve: most at its farthest corner, least at its nearest point.
+        hz0 -= f.drop(std::max(std::fabs(e0), std::fabs(e1)), std::max(std::fabs(n0), std::fabs(n1)));
+        hz1 -= f.drop(cx, cy);
 
         // Frustum: all eight corners beyond one clip plane.
         int out[6] = {};
@@ -1536,7 +1564,7 @@ void select_tiles(const Frame& f, V3 eye, double range, std::vector<Leaf>& leave
         const double nz = std::clamp(eye.z, hz0, hz1);
         const double d  = std::sqrt((eye.x - nx) * (eye.x - nx) + (eye.y - ny) * (eye.y - ny) +
                                     (eye.z - nz) * (eye.z - nz));
-        if (k.z < ZMAX && d < SPLIT_K * s) {
+        if (k.z < z_finest && d < SPLIT_K * s) {
             for (int c = 0; c < 4; ++c)
                 stack.push_back({ k.x * 2 + (c & 1), k.y * 2 + (c >> 1), k.z + 1 });
             continue;
@@ -1744,15 +1772,58 @@ void render_scene(const Frame& f, V3 eye, double range, int fb_w, int fb_h,
 // amber of the labels and marks and from anything in the imagery.
 ImU32 drop_col(float alpha) { return IM_COL32(255, 105, 180, (int)(255.0f * alpha)); }
 
-// A line from a point down to the ground under it, and a small dotted ring
+// What is inside the terrain data, through the terrain: the amber of an aircraft's
+// cage, and dotted. The data is coarse and the operator may know better, so nothing
+// is kept out of it, only shown for what it is.
+ImU32 under_col(float alpha = 1.0f) { return IM_COL32(255, 194, 56, (int)(255.0f * alpha)); }
+
+// A path flown from a to b: solid over the terrain, dotted in `under` where it is
+// inside. It holds its height above sea level, so it follows the earth's curve; a
+// straight line through the world would dip into the ground on a long leg flown level.
+void draw_path(ImDrawList* dl, const Frame& f, V3 a, V3 b, ImU32 col, float w, ImU32 under)
+{
+    ImVec2 sa, sb;
+    if (!f.segment(a, b, sa, sb)) return;
+    const int n = std::clamp((int)(std::hypot(sb.x - sa.x, sb.y - sa.y) / 12.0f), 2, 64);
+    const double da = f.drop(a.x, a.y), db = f.drop(b.x, b.y);
+    const auto at = [&](double t) {
+        V3 p = a + (b - a) * t;
+        p.z += da + (db - da) * t - f.drop(p.x, p.y);
+        return p;
+    };
+    const auto inside = [&](double t) {
+        const V3   p  = at(t);
+        const auto gz = ground_z(f, p.x, p.y);
+        return gz && p.z < *gz;
+    };
+    int  start = 0;
+    bool in    = inside(0.5 / n);
+    for (int i = 1; i <= n; ++i) {
+        const bool next = i < n && inside((i + 0.5) / n);
+        if (i < n && next == in) continue;
+        for (int k = start; k < i; ++k) {
+            ImVec2 p, q;
+            if (!f.segment(at((double)k / n), at((double)(k + 1) / n), p, q)) continue;
+            if (in) map_dotted_line(dl, p, q, under, w);
+            else    dl->AddLine(p, q, col, w);
+        }
+        start = i;
+        in    = next;
+    }
+}
+
+// A line from a point down to the ground under it, or up to it from inside, and a small dotted ring
 // lying on the ground where it lands â€” drawn in the ground's plane, so in
 // perspective it is an ellipse, and kept a few pixels across at any distance.
 void drop_line(ImDrawList* dl, const Frame& f, V3 eye, V3 top, double ground_amsl, float alpha = 1.0f)
 {
     const ImU32 col  = drop_col(0.92f * alpha);
-    const V3    foot = { top.x, top.y, (ground_amsl - f.href) * f.exag };
+    const V3    foot = { top.x, top.y, (ground_amsl - f.href) * f.exag - f.drop(top.x, top.y) };
     ImVec2 a, b;
-    if (f.segment(top, foot, a, b)) dl->AddLine(a, b, col, 1.5f);
+    if (f.segment(top, foot, a, b)) {
+        if (top.z < foot.z) map_dotted_line(dl, a, b, under_col(0.92f * alpha), 1.5f);
+        else                dl->AddLine(a, b, col, 1.5f);
+    }
 
     const V3     d = foot - eye;
     const double r = 7.0 * 2.0 * std::sqrt(dot(d, d)) * std::tan(FOV_Y * 0.5) / std::max(1.0f, f.size.y);
@@ -1810,17 +1881,17 @@ void draw_clearance(ImDrawList* dl, const Frame& f, V3 a, V3 b, const Clearance&
 {
     if (!c.too_close()) return;
     const ImU32 col = c.collides() ? ui_col(g_theme.col_error) : ui_col(g_theme.col_warning);
-    ImVec2 sa, sb;
-    if (f.segment(a, b, sa, sb)) dl->AddLine(sa, sb, col, 3.5f);
+    draw_path(dl, f, a, b, col, 3.5f, col);
     ImVec2 sp;
     if (!f.screen(f.world(c.lat, c.lon, c.path_amsl), sp)) return;
     dl->AddCircleFilled(sp, 5.0f, col);
     dl->AddCircle(sp, 5.0f, IM_COL32(0, 0, 0, 200), 0, 1.5f);
     char t[40];
-    if (c.collides()) snprintf(t, sizeof(t), "HITS TERRAIN %.0f m", (double)-c.min_m);
-    else              snprintf(t, sizeof(t), "%.0f m TO TERRAIN", (double)c.min_m);
+    if (c.collides()) snprintf(t, sizeof(t), "HITS TERRAIN ~%.0f m", (double)-c.min_m);
+    else              snprintf(t, sizeof(t), "~%.0f m TO TERRAIN", (double)c.min_m);
     const ImVec2 ts = ImGui::CalcTextSize(t);
-    const ImVec2 tp = { sp.x + 8.0f, sp.y - ts.y - 4.0f };
+    // High enough to clear the readout of a point being set, when it is the closest.
+    const ImVec2 tp = { sp.x + 8.0f, sp.y - ts.y - 16.0f };
     dl->AddRectFilled({ tp.x - 3, tp.y - 1 }, { tp.x + ts.x + 3, tp.y + ts.y + 1 }, IM_COL32(0, 0, 0, 180), 3.0f);
     dl->AddText(tp, col, t);
 }
@@ -1844,10 +1915,8 @@ void draw_mission(ImDrawList* dl, const Frame& f, V3 eye, const std::vector<Miss
     }
 
     const ImU32 path = IM_COL32(255, 200, 50, 200);
-    for (size_t i = 1; i < placed.size(); ++i) {
-        ImVec2 a, b;
-        if (f.segment(placed[i - 1].p, placed[i].p, a, b)) dl->AddLine(a, b, path, 2.0f);
-    }
+    for (size_t i = 1; i < placed.size(); ++i)
+        draw_path(dl, f, placed[i - 1].p, placed[i].p, path, 2.0f, under_col());
     for (const Placed& pl : placed)
         drop_line(dl, f, eye, pl.p, pl.ground, 0.8f);
 
@@ -1913,6 +1982,13 @@ void draw_vehicles(ImDrawList* dl, const Frame& f, V3 eye, const std::vector<Map
         }
         if (!mv.has_pos) return;
         const Pose ps = vehicle_pose(f, eye, mv);
+        if (mv.active && mv.has_home) {
+            const std::optional<float> g = terrain_amsl(mv.home_lat, mv.home_lon);
+            const double h = g ? *g : mv.has_home_alt ? mv.home_alt_amsl : f.href;
+            ImVec2 a, b;
+            if (f.segment(f.world(mv.home_lat, mv.home_lon, h), ps.p, a, b))
+                map_draw_los(dl, a, b, mv);
+        }
         if (ps.ground) drop_line(dl, f, eye, ps.p, *ps.ground, A);
         if (mv.has_att) draw_gizmo(dl, f, ps, A);
         ImVec2 sp;
@@ -1941,6 +2017,20 @@ void draw_vehicles(ImDrawList* dl, const Frame& f, V3 eye, const std::vector<Map
 
 constexpr float DEFAULT_REL_ALT = 20.0f;   // as the mission tab's DEFAULT_ALT_M
 
+// How far either side of the ground a point can ride its line. Going into the terrain
+// is the operator's call and only warned of; this is what stops a pointer near the
+// horizon throwing the point out of sight.
+constexpr double POINT_MAX_REACH = 3000.0;
+
+// The height a point is being set to: above home, and above the terrain data. Then
+// how far it is from home, if that is known.
+void height_readout(char* out, size_t n, double rel, double agl, const std::string& home_dist)
+{
+    const char* sep = home_dist.empty() ? "" : "  \xc2\xb7  ";
+    if (agl < 0.0) snprintf(out, n, "%.0f m  \xc2\xb7  ~%.0f m IN TERRAIN%s%s", rel, -agl, sep, home_dist.c_str());
+    else           snprintf(out, n, "%.0f m  \xc2\xb7  ALT AGL TER ~%.0f%s%s", rel, agl, sep, home_dist.c_str());
+}
+
 // One 3D point being picked: where on the ground, then how high over it.
 struct PointPick {
     bool   active    = false;
@@ -1964,6 +2054,7 @@ struct PickStyle {
     double            start_rel;    // height above home the preview starts at
     std::optional<Geo> from;        // a faint leg from here to the point, checked against the terrain
     bool              tagged = false;   // its readout in the instruction's green box
+    const MapVehicle* active = nullptr; // whose home its distance is from
 };
 
 PointPick s_place;                  // the mission tab's LOC?, left button
@@ -2039,6 +2130,8 @@ std::optional<double> vertical_z_nearest(V3 o, V3 d, double x, double y)
     return (b * e - w0.z) / den;
 }
 
+ImVec4 ok_or_error(bool error) { return error ? g_theme.col_error : col_ok(); }
+
 // The relative altitude the new item starts at: the last placed item's
 // height above home, as the mission tab would carry it on; else the default.
 double starting_rel_alt(const std::vector<MissionItem>* mission, std::optional<float> home)
@@ -2075,7 +2168,7 @@ bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye, V3 ta
         const auto hit = ray_ground(f, eye, ray, range);
         if (!hit) return false;
         unmerc(f.u0 + hit->x / f.m, f.v0 - hit->y / f.m, pp.lat, pp.lon);
-        pp.ground = hit->z / f.exag + f.href;
+        pp.ground = f.amsl_at(*hit);
         // Where it would start, but never in the hill: over rising ground the
         // line has to reach down to the spot chosen.
         pp.amsl   = std::max((home ? *home : pp.ground) + st.start_rel, pp.ground + DEFAULT_REL_ALT);
@@ -2084,7 +2177,8 @@ bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye, V3 ta
         const V3 foot = f.world(pp.lat, pp.lon, pp.ground);
         if (hovered) {
             if (auto z = vertical_z_nearest(eye, ray, foot.x, foot.y))
-                pp.amsl = std::clamp(*z / f.exag + f.href, pp.ground, pp.ground + 3000.0);
+                pp.amsl = std::clamp(f.amsl_at({ foot.x, foot.y, *z }), pp.ground - POINT_MAX_REACH,
+                                     pp.ground + POINT_MAX_REACH);
             else
                 steep = true;
         }
@@ -2092,11 +2186,11 @@ bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye, V3 ta
     }
 
     const V3 top = f.world(pp.lat, pp.lon, pp.amsl);
-    ImVec2 a, b;
+    const bool in_terrain = pp.alt_phase && pp.amsl < pp.ground;
     std::optional<Clearance> leg;
     if (st.from) {
         const V3 fw = f.world(st.from->lat, st.from->lon, st.from->amsl);
-        if (f.segment(fw, top, a, b)) dl->AddLine(a, b, (st.fill & 0x00FFFFFFu) | 0x78000000u, 1.5f);
+        draw_path(dl, f, fw, top, (st.fill & 0x00FFFFFFu) | 0x78000000u, 1.5f, under_col(0.7f));
         leg = path_clearance(st.from->lat, st.from->lon, st.from->amsl, pp.lat, pp.lon, pp.amsl);
         draw_clearance(dl, f, fw, top, *leg);
     }
@@ -2107,28 +2201,30 @@ bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye, V3 ta
         if (st.tagged) {
             // The marker as the readout beside it: dark, tinted green, a green
             // ring, green letters.
-            const ImVec4 ok = col_ok();
+            const ImVec4 ok = in_terrain ? g_theme.col_error : col_ok();
             const float  r  = std::max(9.0f, ts.x * 0.5f + 3.0f);
             dl->AddCircleFilled(sp, r, ui_col(g_theme.bg_topbar, 0.92f));
             dl->AddCircleFilled(sp, r, ImGui::GetColorU32({ ok.x, ok.y, ok.z, 0.14f }));
             dl->AddCircle(sp, r, ImGui::GetColorU32(ok), 0, 1.5f);
             dl->AddText({ sp.x - ts.x * 0.5f, sp.y - ts.y * 0.5f }, ImGui::GetColorU32(ok), st.tag);
         } else {
-            dl->AddCircleFilled(sp, 9.0f, st.fill);
+            dl->AddCircleFilled(sp, 9.0f, in_terrain ? ui_col(g_theme.col_error, 0.95f) : st.fill);
             dl->AddCircle(sp, 9.0f, IM_COL32(255, 255, 255, 220), 0, 1.5f);
-            dl->AddText({ sp.x - ts.x * 0.5f, sp.y - ts.y * 0.5f }, st.text, st.tag);
+            dl->AddText({ sp.x - ts.x * 0.5f, sp.y - ts.y * 0.5f },
+                        in_terrain ? IM_COL32(255, 255, 255, 255) : st.text, st.tag);
         }
 
-        char ro[48];
+        char ro[96];
         const double base = home ? *home : pp.ground;
-        snprintf(ro, sizeof(ro), "%.0f m  \xc2\xb7  %.0f AGL", pp.amsl - base, pp.amsl - pp.ground);
+        height_readout(ro, sizeof(ro), pp.amsl - base, pp.amsl - pp.ground,
+                       map_home_distance(st.active, pp.lat, pp.lon));
         if (st.tagged) {
-            map_draw_tag(dl, { sp.x + 14.0f, sp.y }, ro);
+            map_draw_tag(dl, { sp.x + 14.0f, sp.y }, ro, ok_or_error(in_terrain));
         } else {
             const ImVec2 rs = ImGui::CalcTextSize(ro);
             const ImVec2 rp = { sp.x + 14.0f, sp.y - rs.y * 0.5f };
             dl->AddRectFilled({ rp.x - 3, rp.y - 1 }, { rp.x + rs.x + 3, rp.y + rs.y + 1 }, IM_COL32(0, 0, 0, 180), 3.0f);
-            dl->AddText(rp, IM_COL32(255, 230, 60, 255), ro);
+            dl->AddText(rp, in_terrain ? ui_col(g_theme.col_error) : IM_COL32(255, 230, 60, 255), ro);
         }
     }
 
@@ -2138,6 +2234,9 @@ bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye, V3 ta
         snprintf(hint, sizeof(hint), "  %s the ground under %s  \xe2\x80\x94  Esc to cancel  ", btn, st.what);
     else if (steep)
         snprintf(hint, sizeof(hint), "  Tilt the view to set the height  \xe2\x80\x94  Esc to cancel  ");
+    else if (in_terrain)
+        snprintf(hint, sizeof(hint), "  ~%.0f m inside the terrain data here  \xe2\x80\x94  %s to set anyway, Esc to cancel  ",
+                 pp.ground - pp.amsl, st.button == ImGuiMouseButton_Right ? "right-click" : "click");
     else
         snprintf(hint, sizeof(hint), "  Move up or down for its height, %s to set  \xe2\x80\x94  Esc to cancel  ",
                  st.button == ImGuiMouseButton_Right ? "right-click" : "click");
@@ -2171,7 +2270,7 @@ void place_item(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double range,
     snprintf(what, sizeof(what), "the new %s", pick.add_label ? pick.add_label : "item");
     snprintf(tag, sizeof(tag), "%d", mission ? (int)mission->size() : 0);
     const PickStyle st{ ImGuiMouseButton_Left, what, tag, IM_COL32(255, 240, 0, 240),
-                        IM_COL32(0, 0, 0, 255), starting_rel_alt(mission, home), from };
+                        IM_COL32(0, 0, 0, 255), starting_rel_alt(mission, home), from, false, active };
 
     if (run_point_pick(s_place, dl, f, eye, target, range, hovered, home, st)) {
         const double base = home ? *home : s_place.ground;
@@ -2212,7 +2311,7 @@ void pick_goto(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double range, 
     if (active && active->has_pos && active->has_alt)
         from = Geo{ active->lat, active->lon, active->alt_amsl };
     const PickStyle st{ ImGuiMouseButton_Left, "the GO HERE target", "GO", map_amber_u32(),
-                        IM_COL32(0, 0, 0, 255), go.current_alt_m, from, true };
+                        IM_COL32(0, 0, 0, 255), go.current_alt_m, from, true, active };
 
     if (run_point_pick(s_goto, dl, f, eye, target, range, hovered, home, st)) {
         const double base = home ? *home : s_goto.ground;
@@ -2234,10 +2333,9 @@ void draw_goto_target(ImDrawList* dl, const Frame& f, V3 eye, const GotoTargetSt
     if (!ground) return;
     const V3 p = f.world(go.target_lat, go.target_lon, (home ? *home : *ground) + go.target_alt_m);
     const ImU32 col = map_amber_u32();
-    ImVec2 a, b;
-    if (active && active->has_pos && active->has_alt &&
-        f.segment(f.world(active->lat, active->lon, active->alt_amsl), p, a, b))
-        dl->AddLine(a, b, map_amber_u32(0.5f), 1.5f);
+    if (active && active->has_pos && active->has_alt)
+        draw_path(dl, f, f.world(active->lat, active->lon, active->alt_amsl), p,
+                  map_amber_u32(0.5f), 1.5f, under_col(0.7f));
     drop_line(dl, f, eye, p, *ground);
     ImVec2 tp;
     if (!f.screen(p, tp)) return;
@@ -2494,7 +2592,6 @@ const BandSet& fence_bands(const FencePlan* zones, const MapVehicle* active,
 
 constexpr float  WP_MARKER_REACH = 12.0f;   // marker radius plus a little slack, as in 2D
 constexpr float  WP_LINE_REACH   = 6.0f;
-constexpr double WP_MAX_HEIGHT   = 3000.0;  // above the ground, as placing allows
 
 struct WaypointDrag {
     int    index  = -1;      // into the editor's mission; -1 when nothing is held
@@ -2503,7 +2600,7 @@ struct WaypointDrag {
     double off_x = 0.0, off_y = 0.0;   // pointer to marker on that plane, so a grab
                                        // off-centre does not make it jump
     double off_z = 0.0;      // the same for a height, along the line
-    double low   = 0.0;      // the least height it may take, AMSL
+    double low   = 0.0;      // the least height it may take, AMSL: see POINT_MAX_REACH
     std::optional<float> home;   // held for the whole drag: see below
 };
 WaypointDrag s_wp_drag;
@@ -2592,7 +2689,7 @@ void edit_waypoints(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double ra
         // With no vehicle, home is the ground under the first item, and moving that
         // item would shift the reference while it is being measured against.
         d.home = plan_home;
-        d.low  = std::min((double)ground, (double)amsl);   // one already underground can still be raised
+        d.low  = std::min(ground - POINT_MAX_REACH, (double)amsl);
         if (auto hit = ray_plane(eye, ray, top.z, range * 4.0)) {
             d.off_x = top.x - hit->x;
             d.off_y = top.y - hit->y;
@@ -2604,7 +2701,8 @@ void edit_waypoints(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double ra
         center.follow = false;   // and the view must hold still under it
     }
 
-    bool steep = false;
+    bool   steep = false;
+    double into_terrain = 0.0;   // how far the one held is inside it, metres
     if (s_wp_drag.index >= 0) {
         MissionItem& it = mission[s_wp_drag.index];
         if (!s_wp_drag.height) {
@@ -2614,8 +2712,8 @@ void edit_waypoints(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double ra
         } else if (const std::optional<float> ground = terrain_amsl(it.lat, it.lon)) {
             const V3 foot = f.world(it.lat, it.lon, *ground);
             if (auto z = vertical_z_nearest(eye, ray, foot.x, foot.y)) {
-                const double amsl = std::clamp((*z + s_wp_drag.off_z) / f.exag + f.href, s_wp_drag.low,
-                                               (double)*ground + WP_MAX_HEIGHT);
+                const double amsl = std::clamp(f.amsl_at({ foot.x, foot.y, *z + s_wp_drag.off_z }), s_wp_drag.low,
+                                               (double)*ground + POINT_MAX_REACH);
                 if (auto alt = mission_alt_for_amsl(it.frame, (float)amsl, s_wp_drag.home, ground))
                     it.alt = std::round(*alt);
             } else {
@@ -2637,21 +2735,29 @@ void edit_waypoints(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double ra
             const float amsl = mission_item_amsl(it, home, ground).value_or(*ground);
             const V3    top  = f.world(it.lat, it.lon, amsl);
             ImVec2 a, b, sp;
-            if (shown.height && f.segment(top, f.world(it.lat, it.lon, *ground), a, b))
-                dl->AddLine(a, b, drop_col(1.0f), 3.5f);
+            if (shown.height && f.segment(top, f.world(it.lat, it.lon, *ground), a, b)) {
+                if (amsl < *ground) map_dotted_line(dl, a, b, under_col(), 3.5f);
+                else                dl->AddLine(a, b, drop_col(1.0f), 3.5f);
+            }
             if (f.screen(top, sp)) {
                 dl->AddCircle(sp, shown.height ? 10.0f : 12.0f, ui_col(g_theme.accent), 0, 2.0f);
                 if (s_wp_drag.index >= 0) {
-                    char ro[48];
+                    char ro[96];
                     const double base = home ? *home : *ground;
-                    snprintf(ro, sizeof(ro), "%.0f m  \xc2\xb7  %.0f AGL", amsl - base, amsl - *ground);
-                    map_draw_tag(dl, { sp.x + 16.0f, sp.y }, ro);
+                    height_readout(ro, sizeof(ro), amsl - base, amsl - *ground,
+                                   map_home_distance(active, it.lat, it.lon));
+                    map_draw_tag(dl, { sp.x + 16.0f, sp.y }, ro, ok_or_error(amsl < *ground));
+                    into_terrain = (double)*ground - amsl;
                 }
             }
         }
     }
 
-    draw_banner(f, steep ? "  Tilt the view to set the height  "
+    char hint[96];
+    if (into_terrain > 0.0)
+        snprintf(hint, sizeof(hint), "  ~%.0f m inside the terrain data here  \xe2\x80\x94  release to set anyway  ", into_terrain);
+    draw_banner(f, into_terrain > 0.0 ? hint
+                 : steep ? "  Tilt the view to set the height  "
                          : "  Drag a waypoint to move it  \xe2\x80\x94  drag its line to set its height  ");
 }
 
@@ -2812,7 +2918,7 @@ bool map3d_draw(ImDrawList* dl, ImVec2 p0, ImVec2 size, bool hovered,
         }
         return true;
     };
-    if (!clear_at(s_cam.pitch_deg)) {
+    if (s_cam.dist < CAMERA_LOS_MAX_DIST && !clear_at(s_cam.pitch_deg)) {
         double lo = s_cam.pitch_deg, hi = 89.0;
         for (int k = 0; k < 10; ++k) {
             const double mid = 0.5 * (lo + hi);

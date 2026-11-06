@@ -267,14 +267,14 @@ static void draw_terrain_line(const MissionItem& item, std::optional<float> home
         return;
     }
     if (t.agl) {
-        ImGui::TextDisabled("Ground  %.0f m AMSL  \xc2\xb7", (double)*t.ground);
+        ImGui::TextDisabled("Ground  ~%.0f m AMSL  \xc2\xb7", (double)*t.ground);
         ImGui::SameLine(0, 4);
         if (*t.agl < 0.0f)
-            ImGui::TextColored(col_error(), "%.0f m BELOW GROUND", (double)-*t.agl);
+            ImGui::TextColored(col_error(), "~%.0f m BELOW TERRAIN", (double)-*t.agl);
         else
-            ImGui::TextDisabled("%.0f m AGL", (double)*t.agl);
+            ImGui::TextDisabled("ALT AGL TER ~%.0f", (double)*t.agl);
     } else {
-        ImGui::TextDisabled("Ground  %.0f m AMSL", (double)*t.ground);
+        ImGui::TextDisabled("Ground  ~%.0f m AMSL", (double)*t.ground);
         if (t.relative && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
             ImGui::SetTooltip("Height above ground needs home's altitude from the vehicle");
     }
@@ -290,13 +290,13 @@ static void draw_leg_line(const MissionLeg& leg)
     if (!c.has_min) {
         ImGui::TextDisabled("Leg from #%d  checking terrain...", leg.from);
     } else if (c.collides()) {
-        ImGui::TextColored(col_error(), "Leg from #%d  HITS TERRAIN (%.0f m into it)",
+        ImGui::TextColored(col_error(), "Leg from #%d  HITS TERRAIN (~%.0f m into it)",
                            leg.from, (double)-c.min_m);
     } else if (c.too_close()) {
-        ImGui::TextColored(col_warning(), "Leg from #%d  within %.0f m of terrain",
+        ImGui::TextColored(col_warning(), "Leg from #%d  within ~%.0f m of terrain",
                            leg.from, (double)c.min_m);
     } else {
-        ImGui::TextDisabled("Leg from #%d  clears terrain by %.0f m", leg.from, (double)c.min_m);
+        ImGui::TextDisabled("Leg from #%d  clears terrain by ~%.0f m", leg.from, (double)c.min_m);
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
         ImGui::SetTooltip("Closest point at %.6f, %.6f, the path %.0f m AMSL.\n"
@@ -989,7 +989,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             ImGui::TextColored(col_error(), "! #%d\xe2\x86\x92#%d HITS TERRAIN%s",
                                worst->from, worst->to, more);
         else
-            ImGui::TextColored(col_warning(), "! #%d\xe2\x86\x92#%d within %.0f m of terrain%s",
+            ImGui::TextColored(col_warning(), "! #%d\xe2\x86\x92#%d within ~%.0f m of terrain%s",
                                worst->from, worst->to, (double)worst->c.min_m, more);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
             ImGui::SetTooltip("%d leg%s closer to the terrain than %.0f m (Settings \xe2\x86\x92 Terrain)",
@@ -1048,7 +1048,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
             std::optional<float> agl;
             if (m && m->show_latlon) agl = item_terrain(item, plan_home).agl;
             if (m && m->show_alt && agl)
-                snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm  (%.0f AGL)", i, m->name,
+                snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm  (ALT AGL TER ~%.0f)", i, m->name,
                          (double)item.alt, (double)*agl);
             else if (m && m->show_alt)
                 snprintf(hdr, sizeof(hdr), "#%u  %s  %.0fm", i, m->name, (double)item.alt);

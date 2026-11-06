@@ -36,6 +36,7 @@
 #include "map_view_internal.hpp"
 #include "../terrain.hpp"
 #include "../terrain_clearance.hpp"
+#include "../geodesic.hpp"
 #include "../cache_dir.hpp"
 #include "layout.hpp"
 #include "ui_kit.hpp"
@@ -824,6 +825,9 @@ static void draw_home(ImDrawList* dl, ImVec2 c, bool active)
 
 void map_draw_home_symbol(ImDrawList* dl, ImVec2 c, bool active) { draw_home(dl, c, active); }
 
+// The aircraft's heading line and its line of sight home, so the two read as a pair.
+static constexpr float INDICATOR_LINE_W = 2.5f;
+
 // ── Vehicle symbols ───────────────────────────────────────────────────────────
 //
 // Top-down silhouettes, one per airframe family, or the legacy arrow. All of
@@ -1126,7 +1130,7 @@ static void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
             if (a1 <= a0) continue;
             dl->AddLine({ tip.x + dx * a0, tip.y + dy * a0 },
                         { tip.x + dx * a1, tip.y + dy * a1 },
-                        ui_col(g_theme.map_vehicle_ring, A), 1.5f);
+                        ui_col(g_theme.map_vehicle_ring, A), INDICATOR_LINE_W);
         }
     } else {
         // No heading — plain dot marker
@@ -1164,12 +1168,15 @@ static bool   s_go_press = false;        // the left press may be a GO HERE clic
 // Target altitude, metres above home. Seeded from the vehicle's own altitude
 // the first time the menu opens — "go there, stay at this height" is the
 // common ask — and remembered after that, since an operator working a series
-// of targets means the same height for all of them.
+// of targets means the same height for all of them. Negative is below home, as
+// in a valley under a mountain takeoff; the terrain check in the menu is what
+// speaks up if that is into the ground. The limits only catch a slip of the keyboard:
+// they are past any relief on earth, so no height the 3D map can pick is cut short.
 static float s_goto_alt_m     = 10.0f;
 static bool  s_goto_alt_seeded = false;
 
-static constexpr float GOTO_ALT_MIN_M = 0.0f;
-static constexpr float GOTO_ALT_MAX_M = 1000.0f;
+static constexpr float GOTO_ALT_MIN_M = -10000.0f;
+static constexpr float GOTO_ALT_MAX_M = 10000.0f;
 
 // The vehicle every other panel is showing, from the map's fleet list.
 static const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet)
@@ -1247,6 +1254,13 @@ static void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("m above home");
+
+            const std::string home_dist = map_home_distance(active, s_ctx_lat, s_ctx_lon);
+            if (!home_dist.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui_col_label());
+                ImGui::TextUnformatted(home_dist.c_str());
+                ImGui::PopStyleColor();
+            }
         }
 
         // The straight line from the vehicle to the target, against the
@@ -1265,11 +1279,11 @@ static void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
                 char t[64];
                 ImU32 col = ui_col_label();
                 if (!c.has_min)          snprintf(t, sizeof(t), "Checking terrain...");
-                else if (c.collides())   { snprintf(t, sizeof(t), "Path hits terrain (%.0f m into it)", (double)-c.min_m);
+                else if (c.collides())   { snprintf(t, sizeof(t), "Path hits terrain (~%.0f m into it)", (double)-c.min_m);
                                            col = ui_col(g_theme.col_error); }
-                else if (c.too_close())  { snprintf(t, sizeof(t), "Path within %.0f m of terrain", (double)c.min_m);
+                else if (c.too_close())  { snprintf(t, sizeof(t), "Path within ~%.0f m of terrain", (double)c.min_m);
                                            col = ui_col(g_theme.col_warning); }
-                else                     snprintf(t, sizeof(t), "Clears terrain by %.0f m", (double)c.min_m);
+                else                     snprintf(t, sizeof(t), "Clears terrain by ~%.0f m", (double)c.min_m);
                 ImGui::PushStyleColor(ImGuiCol_Text, col);
                 ImGui::TextUnformatted(t);
                 ImGui::PopStyleColor();
@@ -1641,6 +1655,90 @@ void map_draw_tag(ImDrawList* dl, ImVec2 left_mid, const char* text, ImVec4 col,
     dl->AddText({ a.x + TAG_PAD_X, a.y + TAG_PAD_Y }, ImGui::GetColorU32({ col.x, col.y, col.z, alpha }), text);
 }
 
+std::string map_home_distance(const MapVehicle* mv, double lat, double lon)
+{
+    if (!mv || !mv->has_home) return {};
+    const double d = geodesic_distance_m(mv->home_lat, mv->home_lon, lat, lon);
+    char t[32];
+    if (d < 1000.0) snprintf(t, sizeof(t), "HOME %.0f m", d);
+    else            snprintf(t, sizeof(t), "HOME %.2f km", d / 1000.0);
+    return t;
+}
+
+// The part of the line a to b inside the rectangle, as fractions along it. False if
+// none of it is.
+static bool clip_to_rect(ImVec2 a, ImVec2 b, ImVec2 r0, ImVec2 r1, double& t0, double& t1)
+{
+    t0 = 0.0;
+    t1 = 1.0;
+    const auto axis = [&](double p, double d, double lo, double hi) {
+        if (std::fabs(d) < 1e-6) return p >= lo && p <= hi;
+        const double u = (lo - p) / d, v = (hi - p) / d;
+        t0 = std::max(t0, std::min(u, v));
+        t1 = std::min(t1, std::max(u, v));
+        return t0 <= t1;
+    };
+    return axis(a.x, (double)b.x - a.x, r0.x, r1.x) && axis(a.y, (double)b.y - a.y, r0.y, r1.y);
+}
+
+void map_dotted_line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float w)
+{
+    // Only the part in view, and the dots always this far apart, whatever the width, so
+    // a warning's dots land on the path's. One end of a line can be very far off: cut
+    // at the camera plane in 3D, an end behind the camera lands millions of pixels away.
+    constexpr double ON = 3.0, PERIOD = 8.0;
+    const double dx = (double)b.x - a.x, dy = (double)b.y - a.y;
+    const double len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1.0) return;
+
+    double t0, t1;
+    if (!clip_to_rect(a, b, dl->GetClipRectMin(), dl->GetClipRectMax(), t0, t1)) return;
+
+    // Counted from a's end, so a dot stays put as the panel's edge passes over the line.
+    const double last = t1 * len;
+    for (double s = std::floor(t0 * len / PERIOD) * PERIOD; s < last; s += PERIOD) {
+        const double u = std::max(s, 0.0), v = std::min(s + ON, len);
+        dl->AddLine({ (float)(a.x + dx * u / len), (float)(a.y + dy * u / len) },
+                    { (float)(a.x + dx * v / len), (float)(a.y + dy * v / len) }, col, w);
+    }
+}
+
+void map_draw_los(ImDrawList* dl, ImVec2 home, ImVec2 vehicle, const MapVehicle& mv)
+{
+    constexpr float MIN_PX = 40.0f;   // parked on its pad, a label would only cover it
+    constexpr float HOME_MAST_M = 2.0f;   // off the ground: an operator or an antenna
+    const float dx = vehicle.x - home.x, dy = vehicle.y - home.y;
+    if (!mv.has_pos || !mv.has_alt || !mv.has_home || dx * dx + dy * dy < MIN_PX * MIN_PX) return;
+
+    // Each end stood on the terrain data at least. Home is on the ground and the data
+    // is tens of metres out in places, so otherwise the line can begin inside it, or
+    // end inside it under an aircraft that has landed, and always read as blocked.
+    const std::optional<float> gh = terrain_amsl(mv.home_lat, mv.home_lon);
+    const std::optional<float> gv = terrain_amsl(mv.lat, mv.lon);
+    bool blocked = false, known = false;
+    if (gh && gv) {
+        const float h0 = std::max(mv.has_home_alt ? mv.home_alt_amsl : *gh, *gh) + HOME_MAST_M;
+        const float h1 = std::max(mv.alt_amsl, *gv);
+        const Clearance c = line_of_sight_clearance(mv.home_lat, mv.home_lon, h0, mv.lat, mv.lon, h1);
+        blocked = c.collides();
+        known   = blocked || c.complete;   // one hill is enough, the rest still loading or not
+    }
+
+    constexpr ImVec4 CYAN = { 0.0f, 0.9f, 1.0f, 1.0f };
+    const ImVec4 col = blocked ? g_theme.col_error : CYAN;
+    map_dotted_line(dl, home, vehicle, ui_col(col, 0.9f), INDICATOR_LINE_W);
+
+    const char*  text = blocked ? "NO LOS" : known ? "LOS" : "LOS ?";
+    const ImVec2 ts   = map_tag_size(text);
+
+    // At the middle of the part in view: with one end off the panel the true middle
+    // may be too, and the line's whole message with it. Nothing if none of it is in view.
+    double t0, t1;
+    if (!clip_to_rect(home, vehicle, dl->GetClipRectMin(), dl->GetClipRectMax(), t0, t1)) return;
+    const float tm = (float)(0.5 * (t0 + t1));
+    map_draw_tag(dl, { home.x + dx * tm - ts.x * 0.5f, home.y + dy * tm }, text, col, 1.0f);
+}
+
 void map_draw_tag(ImDrawList* dl, ImVec2 left_mid, const char* text)
 {
     map_draw_tag(dl, left_mid, text, col_ok());
@@ -1654,14 +1752,19 @@ void map_draw_vehicle_tags(ImDrawList* dl, ImVec2 centre, float above, const Map
     // The GCS's word on the ground, not the vehicle's: its AMSL less the
     // terrain data there, so it differs from the vehicle's own "AGL" (above
     // home) wherever home and the ground under it differ.
-    char t[40] = "";
+    char t[80] = "";
     float agl = 0.0f;
+    const std::string home = mv.has_pos ? map_home_distance(&mv, mv.lat, mv.lon) : std::string();
     if (mv.has_pos && mv.has_alt)
         if (const std::optional<float> g = terrain_amsl(mv.lat, mv.lon)) {
             agl = mv.alt_amsl - *g;
-            if (agl < 0.0f) snprintf(t, sizeof(t), "BELOW TERRAIN %.0f m", (double)-agl);
-            else            snprintf(t, sizeof(t), "%.0f m AGL", (double)agl);
+            if (agl < 0.0f) snprintf(t, sizeof(t), "BELOW TERRAIN ~%.0f m", (double)-agl);
+            else            snprintf(t, sizeof(t), "ALT AGL TER ~%.0f m", (double)agl);
         }
+    if (!home.empty()) {
+        const size_t len = strlen(t);
+        snprintf(t + len, sizeof(t) - len, "%s%s", len ? "  \xc2\xb7  " : "", home.c_str());
+    }
 
     // Stacked upward from the vehicle: the height nearest it, the name on top.
     float bottom = centre.y - above;
@@ -1710,10 +1813,12 @@ void map_draw_instruction(ImVec2 p0, ImVec2 size, const char* text)
 }
 
 // The A/C state block, top left. Its third line is height above the terrain
-// data, `ter_agl`; red, and saying so, when the vehicle is below it.
+// data, `ter_agl`; red, and saying so, when the vehicle is below it. Then how far it
+// is from home.
 static void draw_ac_block(ImDrawList* dl, ImVec2 wp, bool has_pos,
                           double lat, double lon, float heading, bool has_hdg,
-                          float alt_rel, float gs, std::optional<float> ter_agl)
+                          float alt_rel, float gs, std::optional<float> ter_agl,
+                          const std::string& home_dist)
 {
     ImFont*     fm  = g_font_micro ? g_font_micro : ImGui::GetFont();
     const ImU32 lbl = ui_col_label();
@@ -1732,11 +1837,15 @@ static void draw_ac_block(ImDrawList* dl, ImVec2 wp, bool has_pos,
         snprintf(l2, sizeof(l2), "HDG %03d  ALT %.0f AGL  GS %.0f",
                  (int)heading, (double)alt_rel, (double)gs);
 
-    char l3[64];
+    char l3[96];
     const bool below = ter_agl && *ter_agl < 0.0f;
-    if (!ter_agl)    snprintf(l3, sizeof(l3), "TER AGL ---");
-    else if (below)  snprintf(l3, sizeof(l3), "BELOW TERRAIN %.0f m", (double)-*ter_agl);
-    else             snprintf(l3, sizeof(l3), "TER AGL %.0f", (double)*ter_agl);
+    if (!ter_agl)    snprintf(l3, sizeof(l3), "ALT AGL TER ---");
+    else if (below)  snprintf(l3, sizeof(l3), "BELOW TERRAIN ~%.0f m", (double)-*ter_agl);
+    else             snprintf(l3, sizeof(l3), "ALT AGL TER ~%.0f", (double)*ter_agl);
+    if (!home_dist.empty()) {
+        const size_t len = strlen(l3);
+        snprintf(l3 + len, sizeof(l3) - len, "  %s", home_dist.c_str());
+    }
 
     const float w1 = ui_tracked_width(fm, UI_SZ_MICRO, l1);
     const float w2 = ui_tracked_width(fm, UI_SZ_MICRO, l2);
@@ -1920,7 +2029,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
                        { g_map.center_lat, g_map.center_lon, g_map.follow }, scene)) {
             draw_overlay_buttons(wp, has_pos, lat, lon);
             draw_ac_block(dl, wp, has_pos, lat, lon, heading, has_hdg, alt_rel, gs,
-                          active_terrain_agl(fleet));
+                          active_terrain_agl(fleet),
+                          has_pos ? map_home_distance(active_vehicle(fleet), lat, lon) : std::string());
             draw_north_pointer(dl, wp, win_w, win_h, -map3d_yaw_deg(),
                                ImGui::GetTextLineHeight() + 6.0f);
             draw_attribution(dl, wp, win_w, win_h, terrain_attribution().c_str());
@@ -2146,7 +2256,11 @@ void draw_map_view(double lat, double lon, bool has_pos,
             double gy = ((double)(mouse.y - wp.y) + tl_py) / TILE_PX;
             tile_frac_to_lat_lon(gx, gy, g_map.zoom, s_ctx_lat, s_ctx_lon);
             if (!s_goto_alt_seeded) {
-                s_goto_alt_m = std::max(2.0f, std::round(go->current_alt_m));
+                // Not at home's own height, where it may be standing on the ground.
+                // Well below home is a real height, and is kept.
+                const float here = std::round(go->current_alt_m);
+                s_goto_alt_m = std::clamp(std::fabs(here) < 2.0f ? 2.0f : here,
+                                          GOTO_ALT_MIN_M, GOTO_ALT_MAX_M);
                 s_goto_alt_seeded = true;
             }
             ImGui::OpenPopup("##map_go");
@@ -2289,6 +2403,14 @@ void draw_map_view(double lat, double lon, bool has_pos,
         in_draw_order([&](const MapVehicle& mv) {
             if (!mv.has_home) return;
             draw_home(dl, project(mv.home_lat, mv.home_lon), mv.active);
+        });
+
+        // ── Line of sight ─────────────────────────────────────────────────────
+        // For the vehicle every other panel is showing; one per aircraft would
+        // lay a web over the imagery.
+        in_draw_order([&](const MapVehicle& mv) {
+            if (mv.active && mv.has_pos && mv.has_home)
+                map_draw_los(dl, project(mv.home_lat, mv.home_lon), project(mv.lat, mv.lon), mv);
         });
 
         // ── Aircraft ──────────────────────────────────────────────────────────
@@ -2459,7 +2581,8 @@ void draw_map_view(double lat, double lon, bool has_pos,
 
             draw_overlay_buttons(wp, has_pos, lat, lon);
             draw_ac_block(dl, wp, has_pos, lat, lon, heading, has_hdg, alt_rel, gs,
-                          active_terrain_agl(fleet));
+                          active_terrain_agl(fleet),
+                          has_pos ? map_home_distance(active_vehicle(fleet), lat, lon) : std::string());
 
             // Scale bar, bottom-left: 120 px of ground truth at this latitude.
             {

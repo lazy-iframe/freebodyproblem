@@ -90,14 +90,17 @@ void ui_tracked_text(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
 
 // Header strip across the full content width at the current cursor: tracked
 // title on the left, optional dim metadata right-aligned, hairline below.
-// Advances the ImGui cursor past the strip.
-void ui_panel_header(const char* title, const char* right_meta = nullptr);
+// Advances the ImGui cursor past the strip. `right_reserve` keeps that much of
+// its right end clear of the metadata, for a control the caller puts there.
+void ui_panel_header(const char* title, const char* right_meta = nullptr,
+                     float right_reserve = 0.0f);
 
 // Same, but drawn at an explicit screen rectangle (for overlays on the map /
 // video feed, where there is no ImGui layout cursor to advance).
 void ui_panel_header_at(ImDrawList* dl, ImVec2 p0, float width,
                         const char* title, const char* right_meta,
-                        float bg_alpha = 1.0f, float height = UI_HEADER_H);
+                        float bg_alpha = 1.0f, float height = UI_HEADER_H,
+                        float right_reserve = 0.0f);
 
 // 1 px seam rectangle.
 void ui_frame(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 col);
@@ -200,11 +203,17 @@ void ui_dialog_row(float row_w);
 // Confirm / cancel dialog, driven by an OpenPopup elsewhere. Draws the title,
 // question, a centred [confirm][cancel] row and the key hints, and closes
 // itself on either answer.  Returns what the operator chose this frame.
-enum class UiConfirm { None, Confirmed, Cancelled };
+//
+// With `alt_label`, a second, graver way to answer on a row of its own under the
+// hints, `alt_note` saying what it does: Alternate when pressed. By the mouse only,
+// so that no key meant for the first answer can land on it.
+enum class UiConfirm { None, Confirmed, Cancelled, Alternate };
 
 UiConfirm ui_confirm_popup(const char* id, const char* title, const char* question,
                            const char* confirm_label, ImVec4 confirm_col,
-                           bool modal = false);
+                           bool modal = false,
+                           const char* alt_label = nullptr, const char* alt_note = nullptr,
+                           ImVec4 alt_col = {});
 
 // ── Vehicle rows ─────────────────────────────────────────────────────────────
 //

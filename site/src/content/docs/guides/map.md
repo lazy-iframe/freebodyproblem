@@ -9,7 +9,7 @@ number then the sysid it reports — and under that its height above the terrain
 data, red and saying **BELOW TERRAIN** when it is inside it. The selected
 aircraft keeps full colour and a heading line run out to the edge of the panel,
 while the rest are dimmed with a short stub so three aircraft do not lay three
-dotted lines across the imagery.
+dotted lines across the imagery. The selected aircraft also has a dotted line to its home: cyan and **LOS**, or red and **NO LOS** where the terrain data or the curve of the earth stands between them. The curve is taken at the 4/3 earth radius usual for radio. The terrain data is coarse and knows no trees or buildings, so this is a guide and not a radio link prediction. Each label and the panel also read **HOME**, the distance from that aircraft's home over the ground, along the WGS84 geodesic. A point being placed in 3D, a waypoint being dragged and the **GO HERE** menu give the same for the point itself.
 
 ![MAP: five vehicles on the map, the selected one with its heading line and the parameter fence ring](../../../../../screens/cap3.png)
 
@@ -29,8 +29,9 @@ selected, so after switching vehicles it centres on the new one.
 **GO HERE** — click anywhere on the map for a guided position target; a drag
 still pans. In [3D](#3d-view) the click starts a pick of the point's place and
 then its height. The small menu at the pointer shows the coordinates under the
-cursor (click them to copy, as signed decimal degrees) and an altitude, which
-starts at the height the vehicle is already holding, and **GO** sends it as
+cursor (click them to copy, as signed decimal degrees) and an altitude above
+home, which starts at the height the vehicle is already holding and goes negative
+for a target below home, such as a valley under a mountain takeoff. **GO** sends it as
 `SET_POSITION_TARGET_GLOBAL_INT`. It only sends while the vehicle is in GUIDED,
 which is the only mode that acts on one; out of GUIDED the button is disabled
 and says why, rather than sending into silence. The menu also checks the
@@ -55,16 +56,6 @@ small the next time the map goes fullscreen. **ESC** or **EXIT FULL** restores.
 Choose where the imagery comes from in **SETTINGS → MAP SOURCE**, then press **APPLY**. The
 map changes at once and shows nothing from the previous source.
 
-| Provider | Key | What to know |
-|---|---|---|
-| **Esri World Imagery** (default) | Optional ArcGIS key | Works without a key, but Esri's staff say the service [needs a licence and isn't for commercial use](https://community.esri.com/t5/arcgis-location-platform-developers-ques/inquiry-about-world-imagery/m-p/1569266). This project has no agreement with Esri. An invalid key shows no error: in testing, Esri served imagery for a made-up token |
-| **Sentinel-2 Cloudless** | None | [EOX's](https://cloudless.eox.at/) cloud-free mosaic of Copernicus data, 10 m per pixel: you can make out valleys, roads and towns, not individual buildings. It stops at zoom 14 and is stretched past that. The 2024 mosaic is [CC BY-NC-SA](https://cloudless.eox.at/documentation/license): free for non-commercial use, and commercial use needs a licence from EOX |
-| **NASA GIBS** | None | [NASA's imagery service](https://nasa-gibs.github.io/gibs-api-docs/): pick a **Layer**, listed below. These are coarse, and stretched past their last zoom, so they suit regional views rather than placing waypoints. See [NASA's data use guidance](https://www.earthdata.nasa.gov/engage/open-data-services-software-policies/data-use-guidance) |
-| **OpenStreetMap** | None | A street map, not satellite imagery. Its [tile policy](https://operations.osmfoundation.org/policies/tiles/) doesn't permit offline use, and access can be blocked without notice |
-| **Google Satellite** | Optional: a Map Tiles API key | With a key, the official API, [billed to your Google account](https://developers.google.com/maps/documentation/tile). Without one, an unofficial endpoint that Google's terms do not provide for and that could stop working at any time; check Google's terms before using it, especially commercially. Tiles from the endpoint are cached on disk like other sources'. API tiles are not, because Google's [policy](https://developers.google.com/maps/documentation/tile/policies) forbids storing them |
-| **Custom URL** | Optional | Any tile server. Use `{z}`, `{x}` and `{y}`, `{s}` for numbered servers 0 to 3, and `{key}` where it wants the key. Set the attribution it requires |
-
-Keyless Esri and Google, and custom URLs, are sent a desktop Firefox User-Agent for your platform, as other ground stations send. The keyed APIs, EOX and NASA are told it's freebodyproblem. So is OpenStreetMap, even through a custom URL, because its policy forbids impersonating a browser.
 
 **Data** chooses what's fetched, for the providers that offer a choice:
 
@@ -92,9 +83,7 @@ A dated layer takes a **Date (UTC)**: type one, or step with the arrows, and the
 
 If a source refuses or can't be reached, each tile is tried at most 3 times, so the app doesn't keep sending requests. Press **APPLY** to try again.
 
-**Use without an API key at your own risk; it might stop working. You are responsible for following the terms of the source you choose.** Being free and open
-source does not grant this project or its users any right to a provider's imagery, and any of
-these services could stop working at any time, so don't depend on the imagery in flight.
+**Use without an API key at your own risk; it might stop working. You are responsible for following the terms of the source you choose. The Application only provides a way to fetch maps, it is recommended to use API keys and licenses wherever necessary.** Being free and open source does not grant this project or its users any right to a provider's imagery, and any of these services could stop working at any time, so don't depend on the imagery in flight.
 
 If a source can't be used, the map's credit line says why, for example `Map unavailable: Map source
 refused the request (HTTP 403)`, and so does the settings panel. Keys are stored unencrypted in `settings.json`,
@@ -112,14 +101,20 @@ the button says so and stays off.
 
 ![The map in 3D: a quadcopter in GUIDED over terrain, its body axes and pink line to the ground, labelled with its name and height above the terrain, and a GO HERE target with its own line to the ground](../../../../../screens/map_3d.png)
 
+- **The earth's curve** is in the view: the terrain, and everything over it, falls away
+  from the centre of the view as it does in fact, scaled with the height exaggeration. It
+  can't be seen at flying range, 2 m at 5 km, but the wheel zooms out to 1500 km, where the
+  horizon bends. It is the map bent round a sphere, not a globe, so shapes are rough that
+  far out. Detail falls with distance: the farther out, the coarser the terrain and imagery fetched and drawn. The **LOS** line stays straight, as a line of sight is, and the paths flown
+  follow the curve, as a vehicle holding its height does.
 - **Aircraft** are drawn as models of their type — multicopter, plane or
   helicopter — at their reported altitude and attitude, white with the livery
   in red and navigation lights red to port, green to starboard. Propellers and
   rotors turn while the vehicle is armed. Each carries its body axes (X forward
   in amber, Y right in green, Z down in blue), a pink line down to the ground
   under it, and above it its name and height above the terrain. Any part of an
-  aircraft inside the terrain shows through the ground as an amber cage, and
-  its label says **BELOW TERRAIN**.
+  aircraft inside the terrain shows through the ground as an amber cage, and its label says **BELOW TERRAIN**. Heights over the terrain read **ALT AGL TER ~**: the
+  terrain data is coarse, so they are estimates and the warnings they drive are advice.
 - **The mission** is drawn as its path with a translucent blue band hanging
   from it to the ground, so how high each leg runs over the terrain — and where
   the ground rises to meet it — reads from any angle. Legs too close to the
@@ -129,8 +124,9 @@ the button says so and stays off.
   where a ceiling is set. A fence that is not enabled is not drawn.
 - **Placing a point** takes two clicks: the first on the ground fixes where,
   then the point rides its vertical line with the pointer and the second click
-  sets its height. A mission item's **LOC?** works this way in 3D, and so does
-  **GO HERE**, which then opens its menu with that height filled in. Fence
+  sets its height, which can be below the terrain data: it warns in red and draws what is
+  inside the terrain dotted, but does not stop you. A mission item's **LOC?** works this way in
+  3D, and so does **GO HERE**, which then opens its menu with that height filled in. Fence
   drawing and editing are flat-map work and leave 3D.
 - **EDIT** works in 3D. Drag a waypoint's marker to move it over the ground at
   the same height, or drag its vertical line up and down to change only its

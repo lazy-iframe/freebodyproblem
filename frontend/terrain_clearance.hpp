@@ -56,6 +56,14 @@ struct Clearance {
 Clearance path_clearance(double lat0, double lon0, double amsl0,
                          double lat1, double lon1, double amsl1);
 
+// The same for a line of sight, which the earth's curve also gets in the way of: the
+// ground between two points stands higher against the straight line joining them than
+// its height alone says. By the 4/3 earth radius usual for radio, whose path bends a
+// little with the air. Worked out afresh, not cached: the line changes every frame, and
+// would only flush the planned legs out of the cache above.
+Clearance line_of_sight_clearance(double lat0, double lon0, double amsl0,
+                                  double lat1, double lon1, double amsl1);
+
 // Home's AMSL for planning: what the vehicle reported (`reported`), else the
 // ground under its home position, else under the first placed item — so a
 // plan made with no vehicle connected still stands on the ground it starts

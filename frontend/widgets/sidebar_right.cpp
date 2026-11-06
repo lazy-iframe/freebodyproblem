@@ -1208,6 +1208,38 @@ static void log_copy(size_t lo, size_t hi, bool tag_vehicles)
     ImGui::SetClipboardText(out.c_str());
 }
 
+// Empties the log as it stands. The cursors stay: they are what the log has
+// already taken in, and the vehicles still hold those messages, so without them
+// everything cleared would come straight back. New lines arrive as usual.
+static void fleet_log_clear()
+{
+    g_fleet_log.clear();
+    g_fleet_log_numbers.clear();
+    g_log_sel_anchor = g_log_sel_end = 0;
+    g_log_sel_dragging = false;
+}
+
+// The log's header strip, with its CLEAR button at the right end. One clear for
+// every place the log is drawn, since they all show the same log.
+static void draw_event_log_header(const char* meta)
+{
+    constexpr float BTN_W = 56.0f, BTN_H = 19.0f, MARGIN = 3.0f;
+    const ImVec2 p0    = ImGui::GetCursorScreenPos();
+    const float  width = ImGui::GetContentRegionAvail().x;
+
+    ui_panel_header("EVENT LOG", meta, BTN_W + MARGIN);
+    const ImVec2 below = ImGui::GetCursorScreenPos();
+
+    ImGui::SetCursorScreenPos({ p0.x + width - BTN_W - MARGIN,
+                                p0.y + (UI_HEADER_H - BTN_H) * 0.5f });
+    ImGui::BeginDisabled(g_fleet_log.empty());
+    if (ui_solid_button("CLEAR##event_log", { BTN_W, BTN_H }, btn_disconnect_base(),
+                        btn_disconnect_hov(), CmdFlashState::Normal, UI_SZ_MICRO))
+        fleet_log_clear();
+    ImGui::EndDisabled();
+    ImGui::SetCursorScreenPos(below);
+}
+
 // The scrolling body of the event log: a wall-clock stamp per vehicle message,
 // severity-coloured, pinned to the bottom while the view is already there.
 // `bg_alpha` scales the well behind it, so the overlay can let the map through.
@@ -1968,7 +2000,7 @@ void draw_sidebar_right(const VehicleState& vs,
                               false, ImGuiWindowFlags_NoScrollbar)) {
             char log_meta[24];
             snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)g_fleet_log.size());
-            ui_panel_header("EVENT LOG", log_meta);
+            draw_event_log_header(log_meta);
             draw_event_log_body(1.0f, /*small_text=*/false, /*wrap=*/true);
         }
         ImGui::EndChild();
@@ -2128,7 +2160,7 @@ void draw_map_overlay(const VehicleState& vs, bool hud_tapes)
                               ImGuiWindowFlags_NoScrollbar)) {
             char log_meta[24];
             snprintf(log_meta, sizeof(log_meta), "%d", (int)g_fleet_log.size());
-            ui_panel_header("EVENT LOG", log_meta);
+            draw_event_log_header(log_meta);
             draw_event_log_body(0.45f, /*small_text=*/!log_big, /*wrap=*/true);
         }
         ImGui::EndChild();
@@ -2227,6 +2259,6 @@ void draw_event_log_panel(bool wrap)
 {
     char log_meta[24];
     snprintf(log_meta, sizeof(log_meta), "%d ENTRIES", (int)g_fleet_log.size());
-    ui_panel_header("EVENT LOG", log_meta);
+    draw_event_log_header(log_meta);
     draw_event_log_body(1.0f, /*small_text=*/false, wrap);
 }

@@ -64,6 +64,10 @@ constexpr int N_WORKERS = 2;
 // How long a tile that failed stays failed before a lookup asks for it again.
 constexpr auto RETRY_AFTER = std::chrono::seconds(30);
 
+// A queued tile no lookup has asked for in this long is no longer wanted. Anything in
+// use asks every frame, so this only has to outlast a slow one.
+constexpr auto FORGET_AFTER = std::chrono::seconds(2);
+
 struct Key {
     int x, y, z;
     bool operator==(const Key& o) const { return x == o.x && y == o.y && z == o.z; }
@@ -81,6 +85,7 @@ struct Entry {
     enum class State { Pending, Ready, Failed } state = State::Pending;
     std::shared_ptr<const TerrainTile>          tile;
     std::chrono::steady_clock::time_point       failed_at{};
+    std::chrono::steady_clock::time_point       asked_at{};   // last wanted, while not Ready
 };
 
 // The source in use, with the generation it was set in. Workers take a copy
@@ -94,12 +99,23 @@ struct Source {
     uint64_t        gen = 0;
 };
 
-struct Job { Key k; Source src; };
+struct Job { Key k; Source src; uint64_t order = 0; };
+
+// Coarsest first, then as asked. A coarse tile stands in for a wide area until the
+// fine ones come, and there are few of them. Served in turn, a zoom out across the 3D
+// map leaves it waiting behind hundreds of fine tiles for the views passed through.
+struct JobLater {
+    bool operator()(const Job& a, const Job& b) const
+    {
+        return a.k.z != b.k.z ? a.k.z > b.k.z : a.order > b.order;
+    }
+};
 
 std::mutex                              g_mtx;
 std::condition_variable                 g_cv;
 std::unordered_map<Key, Entry, KeyHash> g_tiles;
-std::queue<Job>                         g_queue;
+std::priority_queue<Job, std::vector<Job>, JobLater> g_queue;
+uint64_t                                g_queue_order = 0;
 std::vector<std::thread>                g_workers;
 Source                                  g_src;
 std::string                             g_attribution = TERRAIN_DEFAULT_ATTRIBUTION;
@@ -223,8 +239,17 @@ void worker()
             std::unique_lock<std::mutex> lk(g_mtx);
             g_cv.wait(lk, [] { return !g_queue.empty() || !g_running; });
             if (!g_running) return;
-            job = std::move(g_queue.front());
+            job = g_queue.top();
             g_queue.pop();
+
+            // Nothing has asked for it lately: a view since left. Forgotten, not
+            // fetched, and a lookup that wants it after all starts it again.
+            auto it = g_tiles.find(job.k);
+            if (it == g_tiles.end() || job.src.gen != g_src.gen) continue;
+            if (std::chrono::steady_clock::now() - it->second.asked_at > FORGET_AFTER) {
+                g_tiles.erase(it);
+                continue;
+            }
         }
         const Key&    k   = job.k;
         const Source& src = job.src;
@@ -281,14 +306,17 @@ std::shared_ptr<const TerrainTile> terrain_tile(int z, int x, int y)
     if (it != g_tiles.end()) {
         Entry& e = it->second;
         if (e.state == Entry::State::Ready)   return e.tile;
+        e.asked_at = std::chrono::steady_clock::now();
         if (e.state == Entry::State::Pending) return nullptr;
         if (std::chrono::steady_clock::now() - e.failed_at < RETRY_AFTER) return nullptr;
         e.state = Entry::State::Pending;
     } else {
-        g_tiles.emplace(k, Entry{});
+        Entry e{};
+        e.asked_at = std::chrono::steady_clock::now();
+        g_tiles.emplace(k, std::move(e));
     }
     start_locked();
-    g_queue.push({ k, g_src });
+    g_queue.push({ k, g_src, ++g_queue_order });
     g_cv.notify_one();
     return nullptr;
 }

@@ -19,4 +19,11 @@ description: Arming, modes, takeoff and the flight tab.
 5. **SERVO** drives a servo output directly by PWM; **AUX** triggers any
    auxiliary function the connected firmware implements
 
+**Force disarm** is for when the motors must stop and a plain disarm will not do: a
+flyaway, or a person in danger. Click the **ARMED** block, or **DISARM** in the swarm
+view, then **FORCE DISARM** at the bottom of the dialog. It sends
+`MAV_CMD_COMPONENT_ARM_DISARM` with `21196` in its second parameter, which the vehicle
+obeys even in flight, so an airborne aircraft falls. It takes the mouse: Enter and Y in
+that dialog only ever mean the plain disarm. Agents have no such command.
+
   ![FLIGHT tab](../../../../../screens/flight.png)

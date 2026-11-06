@@ -104,7 +104,7 @@ void ui_frame(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 col)
 
 void ui_panel_header_at(ImDrawList* dl, ImVec2 p0, float width,
                         const char* title, const char* right_meta,
-                        float bg_alpha, float height)
+                        float bg_alpha, float height, float right_reserve)
 {
     const ImVec2 p1 = { p0.x + width, p0.y + height };
 
@@ -124,19 +124,19 @@ void ui_panel_header_at(ImDrawList* dl, ImVec2 p0, float width,
 
     if (right_meta && *right_meta) {
         const float mw = ui_tracked_width(fm, UI_SZ_MICRO, right_meta);
-        ui_tracked_text(dl, fm, UI_SZ_MICRO, { p1.x - mw - 8.0f, ty },
+        ui_tracked_text(dl, fm, UI_SZ_MICRO, { p1.x - right_reserve - mw - 8.0f, ty },
                         ui_col_label(), right_meta);
     }
     crt_box_scanlines(dl, p0, p1, g_theme.bg_child_dark);
 }
 
-void ui_panel_header(const char* title, const char* right_meta)
+void ui_panel_header(const char* title, const char* right_meta, float right_reserve)
 {
     ImDrawList*  dl    = ImGui::GetWindowDrawList();
     const ImVec2 p0    = ImGui::GetCursorScreenPos();
     const float  width = ImGui::GetContentRegionAvail().x;
 
-    ui_panel_header_at(dl, p0, width, title, right_meta);
+    ui_panel_header_at(dl, p0, width, title, right_meta, 1.0f, UI_HEADER_H, right_reserve);
 
     ImGui::Dummy({ width, UI_HEADER_H });
     ImGui::Spacing();
@@ -269,7 +269,8 @@ void ui_dialog_row(float row_w)
 }
 
 UiConfirm ui_confirm_popup(const char* id, const char* title, const char* question,
-                           const char* confirm_label, ImVec4 confirm_col, bool modal)
+                           const char* confirm_label, ImVec4 confirm_col, bool modal,
+                           const char* alt_label, const char* alt_note, ImVec4 alt_col)
 {
     UiConfirm result = UiConfirm::None;
 
@@ -293,14 +294,14 @@ UiConfirm ui_confirm_popup(const char* id, const char* title, const char* questi
         constexpr float BW_OK = 168.0f, BW_NO = 104.0f, GAP = 10.0f;
         ui_dialog_row(BW_OK + GAP + BW_NO);
 
-        ImVec4 hov = confirm_col;
-        hov.x = std::min(1.0f, hov.x * 1.45f);
-        hov.y = std::min(1.0f, hov.y * 1.45f);
-        hov.z = std::min(1.0f, hov.z * 1.45f);
+        const auto lit = [](ImVec4 c) {
+            return ImVec4{ std::min(1.0f, c.x * 1.45f), std::min(1.0f, c.y * 1.45f),
+                           std::min(1.0f, c.z * 1.45f), c.w };
+        };
         // The confirm button keeps its caller-supplied colour: these dialogs
         // guard irreversible actions and the colour is the warning.
         const bool hit_ok = ui_solid_button(confirm_label, { BW_OK, UI_DIALOG_BH },
-                                            confirm_col, hov);
+                                            confirm_col, lit(confirm_col));
 
         ImGui::SameLine(0, GAP);
 
@@ -310,7 +311,21 @@ UiConfirm ui_confirm_popup(const char* id, const char* title, const char* questi
 
         ui_dialog_text("[Y / ENTER] CONFIRM    [N / ESC] CANCEL", ui_col_label());
 
-        if (hit_ok || key_confirm) {
+        bool hit_alt = false;
+        if (alt_label) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            if (alt_note) ui_dialog_text(alt_note, ui_col(g_theme.col_error));
+            ui_dialog_row(BW_OK + GAP + BW_NO);
+            hit_alt = ui_solid_button(alt_label, { BW_OK + GAP + BW_NO, UI_DIALOG_BH },
+                                      alt_col, lit(alt_col));
+        }
+
+        if (hit_alt) {
+            result = UiConfirm::Alternate;
+            ImGui::CloseCurrentPopup();
+        } else if (hit_ok || key_confirm) {
             result = UiConfirm::Confirmed;
             ImGui::CloseCurrentPopup();
         } else if (hit_no || key_cancel) {

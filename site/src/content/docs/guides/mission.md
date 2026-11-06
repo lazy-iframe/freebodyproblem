@@ -19,7 +19,8 @@ description: Plan missions and geofences on the map.
 6. Click **UPLOAD MISSION** to send the mission to the vehicle
 7. Click **CLEAR** to empty the editor
 
-New items take the altitude of the last item that has one, or 20 m. Leaving
+New items take the altitude of the last item that has one, or 20 m. On
+`GLOBAL_RELATIVE` an altitude can be negative, for a point below home. Leaving
 the MISSION tab cancels a pending **LOC?** and turns **EDIT** off. With the map
 in [3D](../map/#3d-view), **LOC?** takes two clicks: the ground for the place,
 then the height along its vertical line.
@@ -29,8 +30,9 @@ then the height along its vertical line.
 - **Drag a waypoint's marker** to move it over the ground. It keeps its altitude, and the
   height above ground in the readout changes as the terrain does. The marker stays under
   the pointer from any camera angle.
-- **Drag its vertical pink line** up or down to change only its altitude. It cannot go
-  below the ground, and its position does not change. If you are looking straight down,
+- **Drag its vertical pink line** up or down to change only its altitude. It can go below the terrain data, which the data is not
+  accurate enough to rule out: the readout and banner warn in red, and the part inside is drawn
+  dotted. Its position does not change. If you are looking straight down,
   the banner asks you to tilt the view.
 
 The readout beside the waypoint shows its altitude above home and above the ground, and the
