@@ -17,7 +17,7 @@
 
 
 #include "backend/vehicle/firmware_profile.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 
 #include <cctype>
 #include <mavlink/ardupilotmega/mavlink.h>

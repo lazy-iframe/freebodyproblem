@@ -26,7 +26,7 @@
 #include "frontend/elements/swarm_view.hpp"
 #include "frontend/source/video_player.hpp"
 #include "frontend/source/app_log.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "plugins/plugin_api.hpp"   // gcs_camera_* are implemented here
 #include "imgui.h"

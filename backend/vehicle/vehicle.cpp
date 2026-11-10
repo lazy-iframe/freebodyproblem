@@ -17,17 +17,20 @@
 
 
 #include "backend/vehicle/vehicle.hpp"
-#include "backend/vehicle/firmware_profile.hpp"
+#include "backend/mission/watch.hpp"
+#include "backend/vehicle/connect.hpp"
+#include "backend/vehicle/identity.hpp"
+#include "backend/vehicle/param_fetch.hpp"
+#include "backend/vehicle/reports.hpp"
+#include "backend/vehicle/stream_rates.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "backend/mavlink/timesync.hpp"
 #include "frontend/source/app_log.hpp"   // gcs_log — thread-safe, see the header
-#include "frontend/source/audio.hpp"     // gcs_tone
 
 using Clock = std::chrono::steady_clock;
 
@@ -236,79 +239,20 @@ void Vehicle::loop()
     bool     rates_requested = false;
     uint32_t seen_reboots    = 0;
 
-    // AVAILABLE_MODES enumeration. The spec's "request index 0 for all modes"
-    // form is not what ArduPilot implements — it replies with index 1 alone —
-    // so the list has to be walked one index at a time. The index-0 probe is
-    // still worth sending first because its number_modes field is how we learn
-    // how far to walk. Sweeps are repeated to refill gaps left by packet loss;
-    // when they run out the UI falls back to its built-in tables.
-    auto     modes_last_req = Clock::now();
-    int      modes_cursor   = 0;      // highest index requested this sweep
-    int      modes_sweeps   = 0;
-    int      modes_probes   = 0;
-    bool     modes_logged   = false;  // one-shot completion log
-    constexpr int    MODES_MAX_SWEEPS = 3;
-    constexpr int    MODES_MAX_PROBES = 3;
-    constexpr double MODES_REQ_S      = 0.10;  // pacing between index requests
-    constexpr double MODES_PROBE_S    = 2.0;   // retry interval for the probe
-
-    // AUTOPILOT_VERSION — the firmware version the parameter reference is
-    // matched against, and the board the connection tab names. Neither stack
-    // streams it, and one request is easily lost, so it is asked for until it
-    // arrives. Through MAV_CMD_REQUEST_MESSAGE first: the common set marks
-    // REQUEST_AUTOPILOT_CAPABILITIES deprecated in its favour, and PX4 after
-    // v1.17 no longer answers the old command. The old one goes out on
-    // alternate retries for a stack that predates the new.
-    auto     version_last_req = Clock::now();
-    int      version_probes   = 0;
-    constexpr int    VERSION_MAX_PROBES = 6;
-    constexpr double VERSION_PROBE_S    = 2.0;
-
-    uint32_t last_params_gen       = 0;
-    uint32_t known_params_gen      = 0;   // thread-local; avoids shared reads
-    bool     params_complete_latch = false;
-    auto     last_param_time       = Clock::now();
-
-    // Bulk parameter fetch. `param_fetch_active` follows the PARAM_REQUEST_LIST
-    // this GCS sent, never the PARAM_VALUEs coming back — see the note on
-    // MavlinkSender::param_list_seq(). Everything below only runs inside a fetch
-    // somebody actually asked for.
-    uint32_t seen_param_list_seq = 0;
-    bool     param_fetch_active  = false;
-    int      param_stall_rounds  = 0;
-    uint16_t param_stall_mark    = 0;
-
-    size_t   last_status_count = 0;
-    bool     logged_heartbeat  = false;
-    bool     logged_fw_info    = false;
-    uint32_t seen_mission_gen  = 0;
-    int      mission_retries       = 0;
-    auto     last_mission_progress = Clock::now();
-    uint32_t seen_fence_gen        = 0;
-    int      fence_retries         = 0;
-    auto     last_fence_progress   = Clock::now();
-    constexpr int  MISSION_MAX_RETRIES  = 5;
-    constexpr auto MISSION_ITEM_TIMEOUT = std::chrono::milliseconds(1500);
-    bool     logged_timesync   = false;
-    VehicleState::UploadStatus last_upload_status = VehicleState::UploadStatus::Idle;
-    VehicleState::UploadStatus last_fence_status  = VehicleState::UploadStatus::Idle;
+    // Each conversation's state and timers, link-free: they say what is due,
+    // and this loop sends it and logs it.
+    ModeListWalk    modes      (Clock::now());   // the mode list, one index at a time
+    VersionProbe    version    (Clock::now());   // AUTOPILOT_VERSION, until it arrives
+    StreamRateWatch rates      (Clock::now());   // the telemetry rates asked for, kept
+    ParamFetch      params     (Clock::now());   // the bulk fetch, and when to publish
+    MissionWatch    plan_watch (Clock::now());   // the plan's transfers
+    MissionWatch    fence_watch(Clock::now());   // the fence's, on its own list
+    VehicleReports  reports(tsys);               // the log lines and tones
 
     // Far enough back that the first exchange goes out as soon as the thread
     // starts rather than five seconds into the vehicle's life.
     auto last_timesync_req = Clock::now() - std::chrono::hours(1);
     auto last_publish      = Clock::now() - std::chrono::hours(1);
-
-    // Rate watchdog. What arrives from the autopilot, by message id, over the
-    // current window — set against what was asked for at its end.
-    std::unordered_map<uint32_t, uint32_t> rx_counts;
-    uint32_t rx_total     = 0;
-    auto     rate_window  = Clock::now();
-    struct RateWatch { int misses = 0; Clock::time_point next_try{}; };
-    std::unordered_map<uint32_t, RateWatch> rate_watch;
-    constexpr double RATE_WINDOW_S   = 5.0;
-    constexpr double RATE_SHORT_FRAC = 0.7;    // under this share of the rate asked is short
-    constexpr int    RATE_FAST_TRIES = 3;      // then one try every RATE_SLOW_S
-    constexpr auto   RATE_SLOW_S     = std::chrono::seconds(30);
 
     std::vector<mavlink_message_t> batch;
 
@@ -333,7 +277,7 @@ void Vehicle::loop()
         for (const auto& msg : batch) {
             parser_.handle(msg);
             if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) attitude_in = true;
-            if (msg.compid == autopilot_compid_) { ++rx_counts[msg.msgid]; ++rx_total; }
+            if (msg.compid == autopilot_compid_) rates.on_message(msg.msgid);
             if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT &&
                 msg.compid == autopilot_compid_)
                 last_heartbeat_ns_.store(now_ns(), std::memory_order_relaxed);
@@ -362,190 +306,58 @@ void Vehicle::loop()
         // asks for. Costs at most one heartbeat interval.
         if (!rates_requested && parser_.state().has_heartbeat) {
             rates_requested = true;
-
-            const FirmwareProfile& prof = firmware_profile(parser_.state().autopilot);
-
-            sender_.request_message_interval(tsys, tcomp,  30, 100000); // ATTITUDE            @ 10 Hz
-            sender_.request_message_interval(tsys, tcomp,  74, 100000); // VFR_HUD             @ 10 Hz
-            sender_.request_message_interval(tsys, tcomp,  33, 100000); // GLOBAL_POSITION_INT @ 10 Hz
-            sender_.request_message_interval(tsys, tcomp,   1, 500000); // SYS_STATUS          @  2 Hz
-            sender_.request_message_interval(tsys, tcomp,  24, 500000); // GPS_RAW_INT         @  2 Hz
-            // Estimator health @ 5 Hz — EKF_STATUS_REPORT (#193) on ArduPilot,
-            // ESTIMATOR_STATUS (#230) on PX4, which has no #193 to give.
-            sender_.request_message_interval(tsys, tcomp,
-                                             prof.estimator_msgid(), 200000);
-            // HOME_POSITION at 0.5 Hz. A vehicle announces home when it sets or
-            // moves it, but home is usually already set by the time a GCS
-            // connects — and that announcement is long gone. Streaming it
-            // slowly costs nothing and means the map has home from the first
-            // couple of seconds, however late the operator joined.
-            sender_.request_message_interval(tsys, tcomp, 242, 2000000); // HOME_POSITION       @0.5 Hz
-            // RC_CHANNELS at 10 Hz. Fast enough that a calibration sweep catches
-            // a stick's true stop rather than wherever it happened to be
-            // sampled, and that the RC panel's bars track the sticks instead of
-            // stepping after them.
-            sender_.request_message_interval(tsys, tcomp,  65, 100000); // RC_CHANNELS         @ 10 Hz
-            sender_.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
-            version_last_req = Clock::now();
-            version_probes   = 1;
-            sender_.request_available_modes(tsys, tcomp);
-            modes_last_req = Clock::now();
-            ++modes_probes;
-            // The parameter-set geofence, so the map can draw its cylinder
-            // without a full parameter fetch. Later changes arrive by
-            // themselves: a vehicle echoes every parameter it is sent.
-            {
-                static const char* const AP_FENCE[]  = { "FENCE_ENABLE", "FENCE_TYPE",
-                    "FENCE_RADIUS", "FENCE_ALT_MAX", "FENCE_ALT_MIN", "FENCE_ACTION" };
-                static const char* const PX4_FENCE[] = { "GF_ACTION",
-                    "GF_MAX_HOR_DIST", "GF_MAX_VER_DIST" };
-                const uint8_t ap = parser_.state().autopilot;
-                if (ap == MAV_AUTOPILOT_ARDUPILOTMEGA)
-                    for (const char* id : AP_FENCE)  sender_.request_param_read(tsys, tcomp, id);
-                else if (ap == MAV_AUTOPILOT_PX4)
-                    for (const char* id : PX4_FENCE) sender_.request_param_read(tsys, tcomp, id);
-            }
-            gcs_log("[sys%u] telemetry rates configured (%s)", tsys, prof.name());
+            const char* stack = send_connect_burst(sender_, tsys, tcomp, parser_.state());
+            version.on_first_request(Clock::now());
+            modes.on_probe_sent(Clock::now());
+            gcs_log("[sys%u] telemetry rates configured (%s)", tsys, stack);
 
             // The watchdog's first window starts with the burst, so the rates
             // the vehicle ran at before it are not held against it.
-            rx_counts.clear();
-            rx_total    = 0;
-            rate_window = Clock::now();
-            rate_watch.clear();
+            rates.restart(Clock::now());
         }
 
         // ── Rate watchdog ─────────────────────────────────────────────────────
-        //
-        // The burst goes out once, and an interval asked for is not an interval
-        // kept: a request can be lost on the way, and anything else on the
-        // vehicle's channel can set the rates again — a REQUEST_DATA_STREAM
-        // from MAVProxy or another ground station puts every streamed message
-        // back to the stream's rate. So each window, every message this GCS
-        // asked a rate for that is arriving well short of it is asked for
-        // again. A vehicle that still does not keep it — a slow radio cannot
-        // carry every rate asked for — is asked every RATE_SLOW_S after a few
-        // tries, rather than flooding the link.
-        //
-        // A window with nothing from the autopilot at all is the link down,
-        // not the rates, and judges nothing. Messages a vehicle sends only on
-        // an event are left out: HOME_POSITION before home is set, and the
-        // compass calibration's two outside a calibration.
-        {
-            const double win = std::chrono::duration<double>(Clock::now() - rate_window).count();
-            if (rates_requested && win >= RATE_WINDOW_S) {
-                const auto now = Clock::now();
-                if (rx_total > 0)
-                    for (const auto& [id, us] : sender_.requested_intervals()) {
-                        if (us <= 0) continue;
-                        if (id == MAVLINK_MSG_ID_HOME_POSITION ||
-                            id == MAVLINK_MSG_ID_MAG_CAL_PROGRESS ||
-                            id == MAVLINK_MSG_ID_MAG_CAL_REPORT) continue;
-                        char name[24];
-                        switch (id) {
-                        case MAVLINK_MSG_ID_ATTITUDE:            snprintf(name, sizeof(name), "ATTITUDE");            break;
-                        case MAVLINK_MSG_ID_VFR_HUD:             snprintf(name, sizeof(name), "VFR_HUD");             break;
-                        case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: snprintf(name, sizeof(name), "GLOBAL_POSITION_INT"); break;
-                        case MAVLINK_MSG_ID_SYS_STATUS:          snprintf(name, sizeof(name), "SYS_STATUS");          break;
-                        case MAVLINK_MSG_ID_GPS_RAW_INT:         snprintf(name, sizeof(name), "GPS_RAW_INT");         break;
-                        case MAVLINK_MSG_ID_EKF_STATUS_REPORT:   snprintf(name, sizeof(name), "EKF_STATUS_REPORT");   break;
-                        case MAVLINK_MSG_ID_ESTIMATOR_STATUS:    snprintf(name, sizeof(name), "ESTIMATOR_STATUS");    break;
-                        case MAVLINK_MSG_ID_RC_CHANNELS:         snprintf(name, sizeof(name), "RC_CHANNELS");         break;
-                        default:                                 snprintf(name, sizeof(name), "msg %u", (unsigned)id);
-                        }
-                        const double want = 1e6 / us;
-                        const double got  = rx_counts[id] / win;
-                        RateWatch&   w    = rate_watch[id];
-                        if (got >= RATE_SHORT_FRAC * want) {
-                            if (w.misses > 0)
-                                gcs_log("[sys%u] %s back at %.1f Hz", tsys, name, got);
-                            w = {};
-                            continue;
-                        }
-                        if (now < w.next_try) continue;
-                        ++w.misses;
-                        sender_.request_message_interval(tsys, tcomp, id, us);
-                        if (w.misses == 1)
-                            gcs_log("[sys%u] %s at %.1f Hz, asked for %.0f Hz \xe2\x80\x94 asking again",
-                                    tsys, name, got, want);
-                        else if (w.misses == RATE_FAST_TRIES)
-                            gcs_log("[sys%u] %s still at %.1f Hz after %d requests \xe2\x80\x94 "
-                                    "the vehicle or the link is holding it down; asking every %d s",
-                                    tsys, name, got, RATE_FAST_TRIES,
-                                    (int)RATE_SLOW_S.count());
-                        if (w.misses >= RATE_FAST_TRIES) w.next_try = now + RATE_SLOW_S;
-                    }
-                rx_counts.clear();
-                rx_total    = 0;
-                rate_window = now;
+        for (const StreamRateWatch::Event& e :
+             rates.tick(rates_requested, sender_.requested_intervals(), Clock::now())) {
+            char name[24];
+            stream_name(e.msgid, name);
+            if (e.kind == StreamRateWatch::Event::Kind::Back) {
+                gcs_log("[sys%u] %s back at %.1f Hz", tsys, name, e.got_hz);
+                continue;
             }
+            sender_.request_message_interval(tsys, tcomp, e.msgid, e.interval);
+            if (e.note == StreamRateWatch::Event::Note::FirstMiss)
+                gcs_log("[sys%u] %s at %.1f Hz, asked for %.0f Hz \xe2\x80\x94 asking again",
+                        tsys, name, e.got_hz, e.want_hz);
+            else if (e.note == StreamRateWatch::Event::Note::GoingSlow)
+                gcs_log("[sys%u] %s still at %.1f Hz after %d requests \xe2\x80\x94 "
+                        "the vehicle or the link is holding it down; asking every %d s",
+                        tsys, name, e.got_hz, StreamRateWatch::FAST_TRIES,
+                        (int)StreamRateWatch::SLOW_RETRY.count());
         }
 
-        // Firmware version, until it is in hand. A reboot reruns the burst
-        // above, which starts the count again.
-        if (rates_requested && !parser_.state().has_fw_info &&
-            version_probes < VERSION_MAX_PROBES &&
-            std::chrono::duration<double>(Clock::now() - version_last_req).count()
-                >= VERSION_PROBE_S) {
-            if (version_probes % 2 == 0)
-                sender_.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
-            else
-                sender_.request_autopilot_capabilities(tsys, tcomp);
-            version_last_req = Clock::now();
-            ++version_probes;
+        // Firmware version, until it is in hand.
+        switch (version.tick(rates_requested, parser_.state().has_fw_info, Clock::now())) {
+        case VersionProbe::Ask::None:
+            break;
+        case VersionProbe::Ask::RequestMessage:
+            sender_.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+            break;
+        case VersionProbe::Ask::RequestCapabilities:
+            sender_.request_autopilot_capabilities(tsys, tcomp);
+            break;
         }
 
         // ── Command ACKs ──────────────────────────────────────────────────────
+        const bool tones = tones_enabled_.load(std::memory_order_relaxed);
         for (const auto& ack : parser_.pending_acks()) {
             sender_.notify_ack(ack.command, ack.result);
-            const char* cname = nullptr;
-            switch (ack.command) {
-            case 400: cname = "arm/disarm";   break;
-            case  22: cname = "takeoff";      break;
-            case  20: cname = "RTL";          break;
-            case 176: cname = "mode change";  break;
-            // DO_SET_STANDARD_MODE — the other way a mode gets set, and the
-            // only one that reaches PX4's standard modes.
-            case 262: cname = "mode change";  break;
-            case 218: cname = "aux function"; break;
-            case 192: cname = "reposition";   break;
-            default:  break;
-            }
-            // Tone only for commands with a name above, i.e. the ones a person
-            // pressed a button for. The rate and capability requests this GCS
-            // fires on connect ACK too, and a burst of beeps at every connect
-            // teaches the operator to ignore the sound. Gated on this being the
-            // vehicle on screen for the same reason, one fleet-sized step up.
-            if (cname && tones_enabled_.load(std::memory_order_relaxed))
-                gcs_tone(ack.result == 0 ? GcsTone::Success : GcsTone::Failure);
-
-            if (cname) {
-                const char* result = (ack.result == 0) ? "accepted"
-                                   : (ack.result == 1) ? "temp. rejected"
-                                   : (ack.result == 2) ? "denied"
-                                   : (ack.result == 4) ? "failed"
-                                                       : "rejected";
-                gcs_log("[sys%u] ack: %s \xe2\x86\x92 %s", tsys, cname, result);
-            }
+            reports.command_ack(ack, tones);
         }
         parser_.clear_acks();
 
-        // PARAM_EXT_ACK — the extended parameter protocol's reply. Unlike a
-        // PARAM_SET, which is answered with a PARAM_VALUE echo the table picks
-        // up on its own, this one goes nowhere unless it is logged: it names the
-        // parameter and says outright whether the write took.
-        for (const auto& pa : parser_.pending_param_ext_acks()) {
-            const char* verdict = (pa.result == PARAM_ACK_ACCEPTED)          ? "accepted"
-                                : (pa.result == PARAM_ACK_VALUE_UNSUPPORTED) ? "value unsupported"
-                                : (pa.result == PARAM_ACK_FAILED)            ? "failed"
-                                : (pa.result == PARAM_ACK_IN_PROGRESS)       ? "in progress"
-                                                                             : "rejected";
-            gcs_log("[sys%u] param_ext: %s \xe2\x86\x92 %s", tsys, pa.param_id, verdict);
-            if (pa.result != PARAM_ACK_IN_PROGRESS &&
-                tones_enabled_.load(std::memory_order_relaxed))
-                gcs_tone(pa.result == PARAM_ACK_ACCEPTED ? GcsTone::Success
-                                                         : GcsTone::Failure);
-        }
+        for (const auto& pa : parser_.pending_param_ext_acks())
+            reports.param_ext_ack(pa, tones);
         parser_.clear_param_ext_acks();
 
         // ── Mode list ─────────────────────────────────────────────────────────
@@ -556,67 +368,27 @@ void Vehicle::loop()
 
             if (ms.modes_dirty) {
                 parser_.clear_modes_dirty();
-                modes_cursor = 0;
-                modes_sweeps = 0;
-                modes_probes = 0;
-                modes_logged = false;
+                modes.restart();
                 gcs_log("[sys%u] mode list changed — re-requesting", tsys);
             }
 
-            const double since = std::chrono::duration<double>(
-                                     Clock::now() - modes_last_req).count();
+            const ModeListWalk::Action ma = modes.tick(ms, Clock::now());
+            if (ma.kind == ModeListWalk::Action::Kind::Probe)
+                sender_.request_available_modes(tsys, tcomp);
+            else if (ma.kind == ModeListWalk::Action::Kind::RequestIndex)
+                sender_.request_available_mode(tsys, tcomp, ma.index);
 
-            if (!ms.modes_complete && modes_sweeps < MODES_MAX_SWEEPS) {
-                if (ms.modes_expected == 0) {
-                    // No number_modes yet: either the probe was lost or the
-                    // firmware does not implement the protocol at all.
-                    if (since >= MODES_PROBE_S && modes_probes < MODES_MAX_PROBES) {
-                        sender_.request_available_modes(tsys, tcomp);
-                        modes_last_req = Clock::now();
-                        ++modes_probes;
-                    }
-                } else if (since >= MODES_REQ_S) {
-                    // Next index we have not received yet. Indices already in
-                    // hand are skipped, so a retry sweep only re-asks for the
-                    // genuine gaps.
-                    int next = 0;
-                    for (int i = modes_cursor + 1; i <= ms.modes_expected; ++i) {
-                        if (!ms.has_mode_index(static_cast<uint8_t>(i))) {
-                            next = i;
-                            break;
-                        }
-                    }
-                    if (next != 0) {
-                        sender_.request_available_mode(tsys, tcomp,
-                                                       static_cast<uint8_t>(next));
-                        modes_cursor   = next;
-                        modes_last_req = Clock::now();
-                    } else {
-                        // Reached the end with gaps still open — sweep again.
-                        modes_cursor = 0;
-                        ++modes_sweeps;
-                    }
-                }
-            }
-
-            if (ms.modes_complete && !modes_logged) {
-                modes_logged = true;
+            if (ma.just_completed)
                 gcs_log("[sys%u] mode list: %zu modes", tsys,
                         ms.available_modes.size());
-            }
         }
 
         // Drain per-item mission requests generated by MISSION_COUNT /
         // MISSION_ITEM_INT handlers (one request triggers the next).
         for (const auto& req : parser_.pending_mission_reqs()) {
             sender_.request_mission_item(req.tsys, req.tcomp, req.seq, req.type);
-            if (req.type == MAV_MISSION_TYPE_FENCE) {
-                last_fence_progress = Clock::now();
-                if (req.seq == 0) fence_retries = 0;
-            } else {
-                last_mission_progress = Clock::now();   // stall timer, below
-                if (req.seq == 0) mission_retries = 0;  // a new download
-            }
+            (req.type == MAV_MISSION_TYPE_FENCE ? fence_watch : plan_watch)
+                .on_item_requested(req.seq, Clock::now());
         }
         parser_.clear_mission_reqs();
 
@@ -634,147 +406,32 @@ void Vehicle::loop()
 
         const VehicleState& ps = parser_.state();
 
-        if (!logged_timesync && ps.has_timesync) {
-            logged_timesync = true;
-            const int64_t up_s = (timesync_monotonic_ns() + ps.time_offset_ns)
-                                 / 1000000000;
-            gcs_log("[sys%u] clock synced \xe2\x80\x94 up %02d:%02d:%02d", tsys,
-                    (int)(up_s / 3600), (int)((up_s / 60) % 60), (int)(up_s % 60));
+        reports.tick(ps, parser_.status_texts());
+
+        // The plan and the fence, each kept moving by its own watch: completed
+        // downloads acknowledged, stalled ones asked again, uploads reported.
+        for (const bool fence : { false, true }) {
+            const uint8_t type = fence ? MAV_MISSION_TYPE_FENCE : MAV_MISSION_TYPE_MISSION;
+            MissionWatch::Progress p;
+            p.generation = fence ? ps.fence_generation    : ps.mission_generation;
+            p.received   = fence ? ps.fence_received      : ps.mission_received;
+            p.count      = fence ? ps.fence_count         : ps.mission_count;
+            p.upload     = fence ? ps.fence_upload_status : ps.upload_status;
+            const MissionWatch::Actions a =
+                (fence ? fence_watch : plan_watch).tick(p, Clock::now());
+
+            reports.mission(fence, a, p, ps, tones);
+            if (a.loaded)
+                sender_.send_mission_ack(ps.sysid, ps.compid, type);
+            if (a.re_request)
+                sender_.request_mission_item(ps.sysid, ps.compid, a.re_request_seq, type);
+            if (a.upload != MissionWatch::Actions::Upload::None)
+                sender_.clear_upload(type);
         }
 
-        // Log new vehicle STATUSTEXT messages to the bottom bar.
-        {
-            const auto& sts = parser_.status_texts();
-            static const char* const kSev[] = {
-                "EMRG","ALRT","CRIT","ERR","WARN","NOTE","INFO","DEBUG"
-            };
-            for (size_t i = last_status_count; i < sts.size(); ++i)
-                gcs_log("[sys%u/%s] %s", tsys, kSev[sts[i].severity & 7], sts[i].text);
-            last_status_count = sts.size();
-        }
-
-        if (ps.has_heartbeat && !logged_heartbeat) {
-            logged_heartbeat = true;
-            gcs_log("[sys%u] heartbeat: sys=%d comp=%d", tsys,
-                    (int)ps.sysid, (int)ps.compid);
-        }
-
-        if (ps.has_fw_info && !logged_fw_info) {
-            logged_fw_info = true;
-            const char* ap = "unknown";
-            if (ps.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-                switch (ps.type) {
-                case MAV_TYPE_FIXED_WING:   ap = "ArduPlane";  break;
-                case MAV_TYPE_GROUND_ROVER: ap = "ArduRover";  break;
-                case MAV_TYPE_SUBMARINE:    ap = "ArduSub";    break;
-                default:                    ap = "ArduCopter"; break;
-                }
-            } else if (ps.autopilot == MAV_AUTOPILOT_PX4) {
-                ap = "PX4";
-            }
-            gcs_log("[sys%u] firmware: %s %s (%.8s)", tsys, ap,
-                    ps.fw_version, ps.fw_hash);
-        }
-
-        // Every completed download is acknowledged, not just the first: an
-        // unacknowledged one leaves the vehicle retrying the last item until
-        // its own timeout, and PX4 reports the transfer as failed.
-        if (ps.mission_generation != seen_mission_gen) {
-            seen_mission_gen = ps.mission_generation;
-            gcs_log("[sys%u] mission loaded: %u items%s", tsys,
-                    (unsigned)ps.mission.size(),
-                    ps.has_mission_home ? " (+ home)" : "");
-            sender_.send_mission_ack(ps.sysid, ps.compid);
-            mission_retries = 0;
-        }
-
-        // A download stalls for good on one lost item: each request is sent by
-        // the reply to the last. Ask again for the item still missing, a few
-        // times, before calling the transfer dead.
-        if (ps.mission_received < ps.mission_count &&
-                   mission_retries < MISSION_MAX_RETRIES &&
-                   Clock::now() - last_mission_progress > MISSION_ITEM_TIMEOUT) {
-            ++mission_retries;
-            last_mission_progress = Clock::now();
-            if (mission_retries == MISSION_MAX_RETRIES)
-                gcs_log("[sys%u] mission download stalled at item %u of %u", tsys,
-                        (unsigned)ps.mission_received, (unsigned)ps.mission_count);
-            else
-                sender_.request_mission_item(ps.sysid, ps.compid, ps.mission_received);
-        }
-
-        // The fence download, on its own list: acknowledged on completion and
-        // nudged on a stall exactly as the mission is.
-        if (ps.fence_generation != seen_fence_gen) {
-            seen_fence_gen = ps.fence_generation;
-            gcs_log("[sys%u] fence loaded: %u items", tsys, (unsigned)ps.fence.size());
-            sender_.send_mission_ack(ps.sysid, ps.compid, MAV_MISSION_TYPE_FENCE);
-            fence_retries = 0;
-        }
-        if (ps.fence_received < ps.fence_count &&
-            fence_retries < MISSION_MAX_RETRIES &&
-            Clock::now() - last_fence_progress > MISSION_ITEM_TIMEOUT) {
-            ++fence_retries;
-            last_fence_progress = Clock::now();
-            if (fence_retries == MISSION_MAX_RETRIES)
-                gcs_log("[sys%u] fence download stalled at item %u of %u", tsys,
-                        (unsigned)ps.fence_received, (unsigned)ps.fence_count);
-            else
-                sender_.request_mission_item(ps.sysid, ps.compid, ps.fence_received,
-                                             MAV_MISSION_TYPE_FENCE);
-        }
-
-        if (ps.upload_status != last_upload_status) {
-            last_upload_status = ps.upload_status;
-            const bool tone = tones_enabled_.load(std::memory_order_relaxed);
-            if (ps.upload_status == VehicleState::UploadStatus::Accepted) {
-                gcs_log("[sys%u] mission upload accepted", tsys);
-                if (tone) gcs_tone(GcsTone::Success);
-                sender_.clear_upload();
-            } else if (ps.upload_status == VehicleState::UploadStatus::Failed) {
-                gcs_log("[sys%u] mission upload failed (result=%u)", tsys,
-                        (unsigned)ps.upload_ack_result);
-                if (tone) gcs_tone(GcsTone::Failure);
-                sender_.clear_upload();
-            }
-        }
-
-        if (ps.fence_upload_status != last_fence_status) {
-            last_fence_status = ps.fence_upload_status;
-            const bool tone = tones_enabled_.load(std::memory_order_relaxed);
-            if (ps.fence_upload_status == VehicleState::UploadStatus::Accepted) {
-                gcs_log("[sys%u] fence upload accepted", tsys);
-                if (tone) gcs_tone(GcsTone::Success);
-                sender_.clear_upload(MAV_MISSION_TYPE_FENCE);
-            } else if (ps.fence_upload_status == VehicleState::UploadStatus::Failed) {
-                gcs_log("[sys%u] fence upload failed (result=%u)", tsys,
-                        (unsigned)ps.fence_upload_ack_result);
-                if (tone) gcs_tone(GcsTone::Failure);
-                sender_.clear_upload(MAV_MISSION_TYPE_FENCE);
-            }
-        }
-
-        // Track last-param-arrival time for the retransmit logic below.
-        if (ps.params_generation != last_params_gen) {
-            last_params_gen = ps.params_generation;
-            last_param_time = Clock::now();
-        }
-
-        // Completion is an edge; republishing the table is not. Both used to
-        // hang off the same test, which was wrong once a fetch had finished:
-        // params_generation ticks on every PARAM_VALUE, and after completion the
-        // ones that keep arriving — the echo of a write, or the counters a
-        // vehicle saves as it runs — all arrive with params_received still equal
-        // to param_count. Every one of them therefore read as a fresh completion
-        // and logged "parameters loaded" again.
-        const bool params_complete = ps.param_count > 0 &&
-                                     ps.params_received >= ps.param_count;
-        const bool params_changed  = ps.params_generation != known_params_gen;
-        const bool params_just_completed = params_complete && !params_complete_latch;
-        params_complete_latch = params_complete;
-
-        const bool republish_params = params_complete && params_changed;
-        if (republish_params) known_params_gen = ps.params_generation;
+        const ParamFetch::Publish pub = params.on_state(ps, Clock::now());
+        const bool republish_params      = pub.republish;
+        const bool params_just_completed = pub.just_completed;
 
         // Publish on a fixed cadence rather than on every message, but never
         // hold back a change the operator is waiting on: a completed parameter
@@ -784,7 +441,7 @@ void Vehicle::loop()
         if (since_pub >= PUBLISH_INTERVAL_S || republish_params ||
             params_just_completed)
         {
-            publish(param_fetch_active, republish_params);
+            publish(params.active(), republish_params);
             last_publish = Clock::now();
         } else if (attitude_in) {
             publish_attitude();
@@ -815,95 +472,40 @@ void Vehicle::loop()
             }
         }
 
-        // ── Bulk parameter fetch: arm, retransmit, give up ────────────────────
-        {
-            // A PARAM_REQUEST_LIST went out — from the PARAMS tab, a plugin, or
-            // our own retry below. That, and only that, opens a fetch.
-            const uint32_t list_seq = sender_.param_list_seq();
-            if (list_seq != seen_param_list_seq) {
-                seen_param_list_seq = list_seq;
-                parser_.clear_params();   // count this fetch from zero
-                param_fetch_active  = true;
-                param_stall_rounds  = 0;
-                param_stall_mark    = 0;
-                last_param_time     = Clock::now();
-            }
+        // ── Bulk parameter fetch: open, retransmit, give up ───────────────────
+        if (params.open_if_requested(sender_.param_list_seq(), Clock::now()))
+            parser_.clear_params();   // count this fetch from zero
 
-            if (param_fetch_active && ps.param_count > 0 &&
-                ps.params_received >= ps.param_count)
-                param_fetch_active = false;   // complete
-
-            // Retransmit after a stall. Individual PARAM_REQUEST_READs are for
-            // filling the handful of gaps packet loss leaves at the end of a
-            // fetch, and are the wrong tool for a fetch that never got going: a
-            // vehicle queues them in a small fixed-depth buffer — ArduPilot's is
-            // 20 — and silently drops the rest, so asking for a thousand missing
-            // indices at once gets about twenty answered and a thousand
-            // discarded, every round, forever. PARAM_REQUEST_LIST goes down the
-            // vehicle's separate streaming path instead, which is paced against
-            // its own link budget and drops nothing; it is why pressing FETCH
-            // ALL completes a fetch that the gap-filling never could.
-            constexpr double PARAM_STALL_S       = 2.0;
-            constexpr int    PARAM_READ_BURST    = 16;  // <= a vehicle's request queue depth
-            constexpr int    PARAM_GIVEUP_ROUNDS = 5;   // ~10 s with nothing arriving
-
-            if (param_fetch_active && ps.param_count > 0 &&
-                ps.params_received < ps.param_count)
-            {
-                const double stall = std::chrono::duration<double>(
-                                         Clock::now() - last_param_time).count();
-                if (stall >= PARAM_STALL_S) {
-                    // Rounds are only counted as lost when nothing at all
-                    // arrived, so a slow link retries as long as it is moving.
-                    if (ps.params_received == param_stall_mark) ++param_stall_rounds;
-                    else                                        param_stall_rounds = 0;
-                    param_stall_mark = ps.params_received;
-
-                    if (param_stall_rounds >= PARAM_GIVEUP_ROUNDS) {
-                        gcs_log("[sys%u] param fetch abandoned at %u/%u — no reply in "
-                                "%.0f s; press FETCH ALL to retry", tsys,
-                                (unsigned)ps.params_received, (unsigned)ps.param_count,
-                                PARAM_STALL_S * PARAM_GIVEUP_ROUNDS);
-                        param_fetch_active = false;
-                    } else {
-                        std::unordered_set<uint16_t> have;
-                        have.reserve(parser_.params().size());
-                        for (const auto& [key, e] : parser_.params())
-                            have.insert(e.index);
-
-                        std::vector<uint16_t> missing;
-                        for (uint16_t idx = 0; idx < ps.param_count; ++idx)
-                            if (have.find(idx) == have.end())
-                                missing.push_back(idx);
-
-                        if ((int)missing.size() > PARAM_READ_BURST) {
-                            sender_.request_param_list(ps.sysid, ps.compid);
-                            // Our own retry is the same fetch continuing, not a
-                            // new one: adopt the sequence number so the arming
-                            // branch above does not reset the give-up counter and
-                            // leave this looping until the link drops.
-                            seen_param_list_seq = sender_.param_list_seq();
-                            gcs_log("[sys%u] param fetch stalled at %u/%u — "
-                                    "re-requesting full list (%d missing)", tsys,
-                                    (unsigned)ps.params_received,
-                                    (unsigned)ps.param_count, (int)missing.size());
-                        } else {
-                            for (uint16_t idx : missing)
-                                sender_.request_param_read(ps.sysid, ps.compid,
-                                                           (int16_t)idx);
-                            gcs_log("[sys%u] param fetch stalled at %u/%u — "
-                                    "re-requesting %d missing", tsys,
-                                    (unsigned)ps.params_received,
-                                    (unsigned)ps.param_count, (int)missing.size());
-                        }
-                    }
-                    last_param_time = Clock::now(); // rate-limit to once per 2 s
-                }
-            }
+        const ParamFetch::Actions pa = params.tick(ps, parser_.params(), Clock::now());
+        switch (pa.kind) {
+        case ParamFetch::Actions::Kind::None:
+            break;
+        case ParamFetch::Actions::Kind::Abandoned:
+            gcs_log("[sys%u] param fetch abandoned at %u/%u — no reply in "
+                    "%.0f s; press FETCH ALL to retry", tsys,
+                    (unsigned)ps.params_received, (unsigned)ps.param_count,
+                    ParamFetch::STALL_S * ParamFetch::GIVEUP_ROUNDS);
+            break;
+        case ParamFetch::Actions::Kind::RequestList:
+            sender_.request_param_list(ps.sysid, ps.compid);
+            params.adopt_list_seq(sender_.param_list_seq());
+            gcs_log("[sys%u] param fetch stalled at %u/%u — "
+                    "re-requesting full list (%d missing)", tsys,
+                    (unsigned)ps.params_received,
+                    (unsigned)ps.param_count, (int)pa.missing_count);
+            break;
+        case ParamFetch::Actions::Kind::RequestReads:
+            for (uint16_t idx : pa.missing)
+                sender_.request_param_read(ps.sysid, ps.compid, (int16_t)idx);
+            gcs_log("[sys%u] param fetch stalled at %u/%u — "
+                    "re-requesting %d missing", tsys,
+                    (unsigned)ps.params_received,
+                    (unsigned)ps.param_count, (int)pa.missing_count);
+            break;
         }
     }
 
     // A last publish so the UI does not keep showing a half-updated snapshot
     // from whenever the cadence last fired.
-    publish(param_fetch_active, true);
+    publish(params.active(), true);
 }

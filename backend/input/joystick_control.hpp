@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <string>
 
-#include "backend/mavlink/parser.hpp"   // RcChannels
+#include "backend/mavlink/parser/parser.hpp"   // RcChannels
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Joystick control — turn raw joystick axes into MANUAL_CONTROL values.

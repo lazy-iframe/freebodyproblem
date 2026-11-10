@@ -1503,18 +1503,23 @@ the serial handle, drains them.
 ```
 
 ### Backend (`backend/`)
-- **mavlink/**: MAVLink wire protocol: framing, decoding, sending, signing, clock sync
+- **mavlink/**: MAVLink wire protocol: framing, decoding, sending, signing, clock sync. **Every message received is decoded by `MavlinkParser` and every message sent is packed by `MavlinkSender`**; nothing else in the GCS touches the wire
   - **framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
-  - **parser.cpp**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system
-  - **sender.cpp**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds
-- **mission/**: Mission-protocol lists other than the flight plan itself
+  - **parser/**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system. `parser.cpp` dispatches each message to a handler in the file for its family: `telemetry.cpp`, `params.cpp`, `modes.cpp`, `commands.cpp`, `mission.cpp`
+  - **sender/**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds. `sender.cpp` holds the queue, transport, signing, ACK feedback and retries; `commands.cpp`, `params.cpp` and `mission.cpp` the messages themselves
+- **mission/**: The mission protocol's logic, link-free: fed decoded messages, it says what the vehicle loop should send
+  - **types.hpp**: `MissionItem` and `FenceParams`
+  - **download.cpp**: one list's download — items taken in order, duplicates dropped, the home slot split off
+  - **watch.cpp**: keeping a list's transfers moving — stalled downloads asked again then given up, completed ones acknowledged, upload results reported
   - **geofence.cpp**: uploaded geofence zones — polygons and circles, inclusion and exclusion — to and from the fence list's mission items
 - **link/**: Transports and the fleet that demultiplexes them
   - **connection.cpp**: Serial port enumeration (Linux/Windows/macOS)
   - **link.cpp**: One transport — UDP socket, TCP connection or serial port — and the platform detail behind opening, reading and writing it
   - **fleet.cpp**: Every link and vehicle, the link read threads, and the sysid demultiplexing that decides which vehicle a message belongs to
 - **vehicle/**: One vehicle, and what is known about its flight stack and sensors
+  - **state.hpp**: `VehicleState`, everything known about one vehicle, as the parser fills it in
   - **vehicle.cpp**: One vehicle and the thread that talks to it — stream rates, the mode list, clock sync, the parameter fetch and its retransmits, and the snapshot the UI reads
+    - The protocol loop's conversations are link-free classes it drives, each saying what is due: **connect.cpp** (the connect burst), **identity.cpp** (mode-list walk, firmware-version probe), **stream_rates.cpp** (rate watchdog), **param_fetch.cpp** (bulk parameter fetch: stall retransmit, give-up, publish edges), **reports.cpp** (log lines and tones)
   - **firmware_profile.cpp**: what differs between flight stacks in one place — which message carries estimator health (ArduPilot's `EKF_STATUS_REPORT` vs the portable `ESTIMATOR_STATUS`), each stack's built-in mode table for vehicles that publish no `AVAILABLE_MODES`, and how a mode number is written on the wire. PX4 splits main and sub mode across two command parameters where ArduPilot puts one flat number in the first; sending ArduPilot's shape at PX4 is rejected
   - **sensor_inventory.cpp**: compass/accel/gyro devices decoded out of the parameter table (device-ID packing, chip names)
 - **calibration/**: Link-free calibration state machines
@@ -1566,10 +1571,12 @@ the serial handle, drains them.
 ```
 freebodyproblem/
 ├── backend/              # Links, vehicles, MAVLink parsing, command queue
-│   ├── mavlink/          # Wire protocol: framer, parser, sender, signing, timesync
-│   ├── mission/          # Geofence (and the mission protocol, to come)
+│   ├── mavlink/          # Wire protocol: framer, signing, timesync
+│   │   ├── parser/       # Every message received is decoded here
+│   │   └── sender/       # Every message sent is packed here
+│   ├── mission/          # Mission protocol logic: download, watch, geofence
 │   ├── link/             # Transports and the fleet
-│   ├── vehicle/          # Vehicle, firmware profile, sensor inventory
+│   ├── vehicle/          # Vehicle and its protocol loop's conversations; firmware profile, sensors
 │   ├── calibration/      # Accel, gyro, mag, RC calibration
 │   ├── input/            # Joystick and RC mapping
 │   └── mcp/              # Built-in MCP server

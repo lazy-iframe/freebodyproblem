@@ -37,8 +37,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/parser/parser.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 
 // Which vehicle, on which link.
 //

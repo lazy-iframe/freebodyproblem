@@ -56,8 +56,8 @@
 #include <string>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"   // VehicleState
-#include "backend/mavlink/sender.hpp"   // MavlinkSender
+#include "backend/mavlink/parser/parser.hpp"   // VehicleState
+#include "backend/mavlink/sender/sender.hpp"   // MavlinkSender
 #include "frontend/source/app_log.hpp"         // gcs_log
 
 // ── What a plugin gets to see ────────────────────────────────────────────────

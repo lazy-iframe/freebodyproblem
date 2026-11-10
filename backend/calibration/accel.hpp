@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <string>
 
-#include "backend/mavlink/parser.hpp"   // StatusText
+#include "backend/mavlink/parser/parser.hpp"   // StatusText
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Accelerometer calibration — the GCS half of ArduPilot's six-position routine.

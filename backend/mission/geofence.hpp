@@ -32,7 +32,7 @@
 //   every one of them carrying the vertex count; a circle is one item. FencePlan
 //   is the shapes, and fence_to_items / fence_from_items convert.
 
-#include "backend/mavlink/parser.hpp"   // MissionItem
+#include "backend/mission/types.hpp"   // MissionItem
 
 #include <cstdint>
 #include <vector>
@@ -77,3 +77,7 @@ FencePlan fence_from_items(const std::vector<MissionItem>& items);
 // A polygon needs three vertices and a circle a radius before it fences
 // anything; the editor does not upload one that does not.
 bool fence_shape_valid(const FenceShape& s);
+
+// One parameter as the vehicle reported it. FENCE_* (ArduPilot) and GF_* (PX4)
+// go into `f`; any other name is ignored. Fed every PARAM_VALUE by the parser.
+void apply_fence_param(FenceParams& f, const char* id, float value);

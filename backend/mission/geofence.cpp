@@ -19,6 +19,7 @@
 #include "backend/mission/geofence.hpp"
 
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -124,4 +125,30 @@ FencePlan fence_from_items(const std::vector<MissionItem>& items)
         }
     }
     return plan;
+}
+
+// ── Parameter-set fence ───────────────────────────────────────────────────────
+
+void apply_fence_param(FenceParams& f, const char* id, float v)
+{
+    if (id[0] == 'F' && std::strncmp(id, "FENCE_", 6) == 0) {
+        const char* k = id + 6;
+        f.px4 = false;
+        if      (!std::strcmp(k, "ENABLE"))  { f.has_enable  = true; f.enabled   = v != 0.0f; }
+        else if (!std::strcmp(k, "TYPE"))    { f.has_type    = true; f.type      = (uint32_t)v; }
+        else if (!std::strcmp(k, "RADIUS"))  { f.has_radius  = true; f.radius_m  = v; }
+        else if (!std::strcmp(k, "ALT_MAX")) { f.has_alt_max = true; f.alt_max_m = v; }
+        else if (!std::strcmp(k, "ALT_MIN")) { f.has_alt_min = true; f.alt_min_m = v; }
+        else if (!std::strcmp(k, "ACTION"))  { f.has_action  = true; f.action    = (int)v; }
+    } else if (id[0] == 'G' && std::strncmp(id, "GF_", 3) == 0) {
+        // PX4 has no enable of its own: no action is no fence.
+        const char* k = id + 3;
+        f.px4 = true;
+        if      (!std::strcmp(k, "MAX_HOR_DIST")) { f.has_radius  = true; f.radius_m  = v; }
+        else if (!std::strcmp(k, "MAX_VER_DIST")) { f.has_alt_max = true; f.alt_max_m = v; }
+        else if (!std::strcmp(k, "ACTION")) {
+            f.has_action = true; f.action  = (int)v;
+            f.has_enable = true; f.enabled = v != 0.0f;
+        }
+    }
 }

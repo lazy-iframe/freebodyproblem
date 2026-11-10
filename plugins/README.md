@@ -50,7 +50,7 @@ ctx.sender->command_long(ctx.tsys, ctx.tcomp, cmd, p1, p2, p3, p4, p5, p6, p7);
 ```
 
 which sends any `MAV_CMD` as a `COMMAND_LONG`. See
-`backend/mavlink/sender.hpp` for the full list.
+`backend/mavlink/sender/sender.hpp` for the full list.
 
 ## Naming the button
 

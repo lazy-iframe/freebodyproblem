@@ -19,7 +19,7 @@
 
 #include <cstdint>
 
-#include "backend/mavlink/parser.hpp"
+#include "backend/mavlink/parser/parser.hpp"
 #include "backend/vehicle/vehicle.hpp"
 
 class MavlinkSender;

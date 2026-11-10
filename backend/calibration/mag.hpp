@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <string>
 
-#include "backend/mavlink/parser.hpp"   // StatusText, VehicleState::MagCalCompass
+#include "backend/mavlink/parser/parser.hpp"   // StatusText, VehicleState::MagCalCompass
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Magnetometer calibration — the GCS half of MAV_CMD_PREFLIGHT_CALIBRATION with

@@ -17,7 +17,7 @@
 
 
 #pragma once
-#include "backend/mavlink/parser.hpp"
+#include "backend/mavlink/parser/parser.hpp"
 #include "plugins/plugin_api.hpp"
 #include "frontend/source/mission_pick.hpp"
 #include "frontend/components/map_view.hpp"

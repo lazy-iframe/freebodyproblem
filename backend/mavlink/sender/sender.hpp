@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "backend/link/connection.hpp"      // for SerialHandle
-#include "backend/mavlink/parser.hpp"  // for MissionItem
+#include "backend/mavlink/parser/parser.hpp"  // for MissionItem
 
 // Visual feedback state for a sent command
 enum class CmdFlashState { Normal, Pending, Accepted, Rejected };

@@ -18,7 +18,7 @@
 
 #pragma once
 #include "imgui.h"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -35,7 +35,7 @@
 //   Warning    : amber-orange  #E0913A
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum class CmdFlashState;   // defined in backend/mavlink/sender.hpp
+enum class CmdFlashState;   // defined in backend/mavlink/sender/sender.hpp
 
 // ── Section 1: Runtime-mutable theme variables ────────────────────────────────
 //

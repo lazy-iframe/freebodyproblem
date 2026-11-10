@@ -423,8 +423,16 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     ${GCS_MAC_RESOURCES}
     frontend/components/plugin_rail.cpp
     frontend/components/mcp_approval.cpp
-    backend/mavlink/sender.cpp
+    backend/mavlink/sender/sender.cpp
+    backend/mavlink/sender/commands.cpp
+    backend/mavlink/sender/params.cpp
+    backend/mavlink/sender/mission.cpp
     backend/vehicle/vehicle.cpp
+    backend/vehicle/param_fetch.cpp
+    backend/vehicle/identity.cpp
+    backend/vehicle/stream_rates.cpp
+    backend/vehicle/connect.cpp
+    backend/vehicle/reports.cpp
     backend/link/link.cpp
     backend/mavlink/signing.cpp
     backend/link/fleet.cpp
@@ -440,6 +448,8 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     backend/input/rc_binding.cpp
     backend/vehicle/firmware_profile.cpp
     backend/mission/geofence.cpp
+    backend/mission/download.cpp
+    backend/mission/watch.cpp
     backend/mcp/mcp_server.cpp
     frontend/main.cpp
     frontend/source/settings.cpp
@@ -480,7 +490,12 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/source/param_meta_arducopter.cpp
     frontend/source/param_meta_arduplane.cpp
     frontend/source/param_meta_px4.cpp
-    backend/mavlink/parser.cpp
+    backend/mavlink/parser/parser.cpp
+    backend/mavlink/parser/telemetry.cpp
+    backend/mavlink/parser/params.cpp
+    backend/mavlink/parser/modes.cpp
+    backend/mavlink/parser/commands.cpp
+    backend/mavlink/parser/mission.cpp
 )
 # Project includes are rooted at the repository: #include "backend/vehicle/vehicle.hpp",
 # never a ../ path, so a file can move without its includes being rewritten.

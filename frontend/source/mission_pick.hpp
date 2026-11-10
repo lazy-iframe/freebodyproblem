@@ -18,7 +18,7 @@
 
 #pragma once
 #include <vector>
-#include "backend/mavlink/parser.hpp"
+#include "backend/mavlink/parser/parser.hpp"
 #include "backend/mission/geofence.hpp"
 
 // Passed by pointer to both draw_sidebar_left and draw_map_view each frame.

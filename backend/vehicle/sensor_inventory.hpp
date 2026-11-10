@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"   // ParamEntry
+#include "backend/mavlink/parser/parser.hpp"   // ParamEntry
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What sensors the vehicle actually has, read out of its parameters.

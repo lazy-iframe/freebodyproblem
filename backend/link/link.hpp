@@ -33,7 +33,7 @@
 #include <string>
 
 #include "backend/link/connection.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 
 // Where to point a link and how to talk to it.
 struct LinkConfig {

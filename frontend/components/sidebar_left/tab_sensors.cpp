@@ -59,8 +59,8 @@ static VehicleUiState<SensorTabState> s_state;
 static SensorTabState& st() { return *s_state; }
 
 // Compass-calibration tracing, the panel's half of it: what the state machine
-// made of what arrived. The wire itself is traced in mavlink/parser.cpp and in
-// mavlink/sender.cpp; this is here to catch the case where the messages are
+// made of what arrived. The wire itself is traced in mavlink/parser/parser.cpp and in
+// mavlink/sender/sender.cpp; this is here to catch the case where the messages are
 // arriving and the machine is not moving. Set to false to quieten it.
 static constexpr bool trace_mag_cal = true;
 

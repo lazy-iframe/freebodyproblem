@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"   // MAV_AUTOPILOT, MAV_TYPE, VehicleState
+#include "backend/mavlink/parser/parser.hpp"   // MAV_AUTOPILOT, MAV_TYPE, VehicleState
 
 // ── What differs between flight stacks, in one place ─────────────────────────
 //

@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"   // RcChannels, MAV_AUTOPILOT
+#include "backend/mavlink/parser/parser.hpp"   // RcChannels, MAV_AUTOPILOT
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RC calibration — measure each channel's travel from the raw receiver stream,

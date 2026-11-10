@@ -156,18 +156,7 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
     // have never heard of is a fragment of a conversation we are not part of.
     if (msg.msgid != MAVLINK_MSG_ID_HEARTBEAT) return nullptr;
 
-    mavlink_heartbeat_t hb;
-    mavlink_msg_heartbeat_decode(&msg, &hb);
-
-    // Gimbals, cameras and companion computers heartbeat too, with
-    // MAV_AUTOPILOT_INVALID. So does another GCS on the same network, and so do
-    // our own datagrams coming back on a loopback UDP bind. None of them is a
-    // vehicle, and creating one for them would put a phantom in the switcher.
-    //
-    // By what it says it is, and never by comparing its sysid with this GCS's own: that
-    // is a setting, and a vehicle on the same number must not vanish.
-    if (hb.autopilot == MAV_AUTOPILOT_INVALID)      return nullptr;
-    if (hb.type      == MAV_TYPE_GCS)               return nullptr;
+    if (!MavlinkParser::announces_vehicle(msg)) return nullptr;
 
     std::shared_ptr<Vehicle> created;
     bool first = false;

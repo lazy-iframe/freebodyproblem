@@ -21,8 +21,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "backend/mavlink/parser.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/parser/parser.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 #include "backend/link/connection.hpp"
 #include "backend/vehicle/vehicle.hpp"
 #include "frontend/source/flight_target.hpp"

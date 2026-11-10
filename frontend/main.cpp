@@ -64,8 +64,8 @@
 #include <GLFW/glfw3.h>
 
 // Backend
-#include "backend/mavlink/parser.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/parser/parser.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 #include "backend/link/connection.hpp"
 #include "backend/mavlink/timesync.hpp"
 #include "backend/link/link.hpp"

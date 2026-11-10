@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "backend/mavlink/parser.hpp"    // RcChannels
+#include "backend/mavlink/parser/parser.hpp"    // RcChannels
 #include "backend/calibration/rc.hpp"    // RcParamDialect, RcParamWrite
 
 // ─────────────────────────────────────────────────────────────────────────────

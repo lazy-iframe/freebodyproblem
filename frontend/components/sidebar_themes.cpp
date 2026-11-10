@@ -26,7 +26,7 @@
 #include "frontend/components/map_view.hpp"
 #include "frontend/components/mcp_approval.hpp"
 #include "backend/mcp/mcp_server.hpp"
-#include "backend/mavlink/sender.hpp"
+#include "backend/mavlink/sender/sender.hpp"
 #include "backend/vehicle/vehicle.hpp"
 #include "frontend/source/app_log.hpp"
 #include "imgui.h"
