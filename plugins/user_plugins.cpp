@@ -31,7 +31,7 @@
 // they run when the operator clicks or drags a box on the feed itself. See
 // README.md in this folder.
 
-#include "plugin_api.hpp"
+#include "plugins/plugin_api.hpp"
 
 #include <cstdio>
 #include <ctime>

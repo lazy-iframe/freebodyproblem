@@ -19,7 +19,7 @@
 // freebodyproblem-mcp — the GCS's MCP server, over stdio.
 //
 // The server lives inside the GCS and speaks MCP's Streamable HTTP on
-// 127.0.0.1 (backend/mcp_server.hpp). Some MCP hosts can only launch a server
+// 127.0.0.1 (backend/mcp/mcp_server.hpp). Some MCP hosts can only launch a server
 // as a child process and talk to it on stdin/stdout. This is that child: it
 // reads one JSON-RPC message per line, POSTs it to the running GCS, and writes
 // the reply back as one line. It knows nothing about MCP beyond that — every
@@ -59,7 +59,7 @@ namespace {
 constexpr int DEFAULT_PORT = 8737;
 
 // The server gives one tools/call at most 55 s (CALL_BUDGET in
-// backend/mcp_server.cpp). A little longer here, so the reply is never cut off
+// backend/mcp/mcp_server.cpp). A little longer here, so the reply is never cut off
 // by this side giving up first.
 constexpr int READ_TIMEOUT_S = 70;
 
@@ -74,7 +74,7 @@ struct Target {
 };
 
 // Where the GCS keeps settings.json. Must match settings_path() in
-// frontend/settings.cpp, which this repeats rather than links: that file
+// frontend/source/settings.cpp, which this repeats rather than links: that file
 // brings the theme and ImGui types with it.
 std::string settings_path()
 {

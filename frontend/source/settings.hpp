@@ -1,0 +1,192 @@
+/**************************************************************************
+ * Copyright (C) 2026  Azhar Tanweer
+ * Contact: azhar.tanweer404@gmail.com
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ **************************************************************************/
+
+
+#pragma once
+#include <map>
+#include <string>
+#include <vector>
+#include "frontend/source/terrain.hpp"
+#include "frontend/source/tile_source.hpp"
+#include "frontend/source/theme.hpp"
+#include "backend/input/joystick_control.hpp"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// settings.hpp — Persistent application settings
+//
+// Saved to:  ~/.config/freebodyproblem/settings.json  (Linux / macOS)
+//            %APPDATA%/freebodyproblem/settings.json   (Windows)
+//
+// Designed to grow: theme presets live here now; connection profiles and other
+// user preferences will be added to AppSettings in future sections.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Names reserved for hard-coded built-in themes — never removed from the UI.
+static constexpr const char* THEME_BUILTIN_NAME  = "Tactical";
+static constexpr const char* THEME_GRUVBOX_NAME  = "Gruvbox Light";
+static constexpr const char* THEME_AMBER_NAME    = "Retro Amber";
+static constexpr const char* THEME_MATRIX_NAME   = "Matrix";
+
+// The built-in themes, in the order the picker shows them. This is the one
+// list: startup, the picker and REVERT all resolve a built-in through it.
+struct BuiltinTheme { const char* name; ThemeVars (*factory)(); };
+extern const BuiltinTheme k_builtin_themes[];
+extern const size_t       k_builtin_theme_count;
+
+// Saved connection profile (type: 0=Serial, 1=TCP, 2=UDP — matches conn_tab).
+struct ConnectionProfile {
+    std::string name;
+    int         type   = 2;
+    std::string host   = "0.0.0.0";
+    int         port   = 14550;
+    std::string device;
+    int         baud   = 57600;
+};
+
+// Persistent configuration for one data-grid cell.
+struct GridCellPersist {
+    uint32_t    msg_id     = UINT32_MAX;  // UINT32_MAX = empty
+    std::string field_name;
+    std::string title;
+};
+
+struct AppSettings {
+    // ── Themes ────────────────────────────────────────────────────────────────
+    std::string                    active_theme = THEME_BUILTIN_NAME;
+    std::map<std::string, ThemeVars> themes;     // user-saved presets (not the builtin)
+
+    // ── Data grid ─────────────────────────────────────────────────────────────
+    // Three across, filled row by row. A fresh install starts with the
+    // vibration axes along the top — the health number an operator checks
+    // before take-off — and the throttle bottom right.
+    GridCellPersist grid_cells[9] = {
+        { 241, "vibration_x", "vibration_x" },   // VIBRATION
+        { 241, "vibration_y", "vibration_y" },
+        { 241, "vibration_z", "vibration_z" },
+        {}, {}, {},
+        {}, {},
+        {  74, "throttle",    "throttle"    },   // VFR_HUD
+    };
+
+    // ── Connection profiles ───────────────────────────────────────────────────
+    std::vector<ConnectionProfile> connection_profiles;
+
+    // ── Audio ─────────────────────────────────────────────────────────────────
+    bool  audio_enabled = true;
+    float audio_volume  = 0.7f;   // linear 0..1
+
+    // ── HUD style ─────────────────────────────────────────────────────────────
+    // true: the full-panel HUD with speed / heading / altitude tapes.
+    // false: the classic round attitude ball.
+    bool hud_tapes_main  = true;    // right sidebar and fullscreen-map overlay
+    bool hud_tapes_swarm = false;   // swarm cards
+
+    // ── Font ──────────────────────────────────────────────────────────────────
+    int ui_font = 0;   // UiFace: 0 Geist Mono, 1 Roboto
+
+    // ── Map ───────────────────────────────────────────────────────────────────
+    int map_icon_style = 1;   // MapIconStyle: 0 legacy arrow, 1 by vehicle type, 2-4 forced
+
+    // ── CRT effects (cosmetic) ────────────────────────────────────────────────
+    bool  crt_scanlines         = true;
+    float crt_scanline_strength = 0.30f;  // 0..1
+    bool  crt_vignette          = false;
+    float crt_vignette_strength = 0.5f;   // 0..1
+
+    // ── Joystick ──────────────────────────────────────────────────────────────
+    // Calibration and bindings by device GUID, so each stick keeps its own.
+    std::map<std::string, JoystickProfile> joystick_profiles;
+
+    // ── MCP server (backend/mcp/mcp_server.hpp) ──────────────────────────────────
+    // Off unless asked for. Loopback only; the token is generated the first
+    // time the server starts and kept, so a configured client keeps working.
+    bool        mcp_enabled         = false;
+    int         mcp_port            = 8737;
+    std::string mcp_token;
+    // Off: the assistant can only read. On: it can act, and each action in
+    // mcp_auto_allow that is true runs without asking — the rest wait for the
+    // operator to ALLOW them on screen. Keyed by MCP tool name (mcp_actions()).
+    bool                        mcp_actions_enabled = false;
+    std::map<std::string, bool> mcp_auto_allow;
+    // Free text from the operator — site rules, limits, how to behave — sent
+    // to every agent when it connects and returned by get_guidelines.
+    std::string                 mcp_instructions;
+
+    // ── MAVLink ───────────────────────────────────────────────────────────────
+    // The sysid this ground station sends as, 0 to 255.
+    int gcs_sysid = 255;
+
+    // ── Terrain ───────────────────────────────────────────────────────────────
+    // The least height above the terrain data a planned path may come: a
+    // mission leg or a GO HERE line closer than this warns.
+    float terrain_clearance_m = 30.0f;
+
+    // Where terrain heights come from: a {z}/{x}/{y} URL of PNG tiles, how
+    // their pixels encode height (TerrainEncoding: 0 Terrarium, 1 Terrain-RGB),
+    // and the line the map credits it with — its accuracy included.
+    std::string terrain_url         = TERRAIN_DEFAULT_URL;
+    int         terrain_encoding    = (int)TerrainEncoding::Terrarium;
+    std::string terrain_attribution = TERRAIN_DEFAULT_ATTRIBUTION;
+
+    // ── Map tile source ───────────────────────────────────────────────────────
+    // Which provider, and the keys for those that take one. Keys sit here in plain
+    // text, like the MCP token: anyone who can read this file can use them.
+    // tile_url and tile_attribution are the Custom provider's.
+    int         tile_provider    = (int)TileProvider::Esri;
+    int         tile_kind        = (int)TileKind::Satellite;
+    int         tile_gibs_layer  = 0;
+    std::string tile_gibs_date;      // empty until one is chosen: see tile_source()
+    std::string tile_key_esri;
+    std::string tile_key_google;
+    std::string tile_key_custom;
+    std::string tile_url         = TILE_ESRI_URL;
+    std::string tile_attribution = TILE_ESRI_ATTRIBUTION;
+
+    TileSourceConfig tile_source() const
+    {
+        TileSourceConfig c;
+        c.provider           = (TileProvider)tile_provider;
+        c.kind               = (TileKind)tile_kind;
+        c.gibs_layer         = tile_gibs_layer;
+        // A week back, as the newest days are often still being processed.
+        c.gibs_date          = tile_gibs_date.empty() ? tile_date_add(tile_date_today(), -7)
+                                                      : tile_gibs_date;
+        c.esri_key           = tile_key_esri;
+        c.google_key         = tile_key_google;
+        c.custom_url         = tile_url;
+        c.custom_key         = tile_key_custom;
+        c.custom_attribution = tile_attribution;
+        return c;
+    }
+};
+
+// Returns the path to the settings JSON file for this platform.
+std::string settings_path();
+
+// Reads settings.json and fills `out`.  Silently uses defaults on any error.
+void settings_load(AppSettings& out);
+
+// Writes the full settings state to disk.  Creates parent directories as needed.
+void settings_save(const AppSettings& s);
+
+// ── Themes ───────────────────────────────────────────────────────────────────
+
+bool theme_is_builtin(const std::string& name);
+
+// The colours `name` was last saved with: the factory colours for a built-in,
+// the stored copy for a user theme. False if there is no such theme.
+bool theme_lookup(const AppSettings& s, const std::string& name, ThemeVars& out);

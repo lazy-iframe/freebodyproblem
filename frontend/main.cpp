@@ -19,10 +19,10 @@
 // frontend/main.cpp
 // Dear ImGui ground-control display for freebodyproblem.
 // Owns: link thread (UDP/TCP/Serial), shared state, GLFW/ImGui lifecycle.
-// Each telemetry panel lives in its own file under frontend/widgets/.
+// Each telemetry panel lives in its own file under frontend/elements/ and frontend/components/.
 
 // ── Platform socket abstraction ───────────────────────────────────────────────
-// Sockets and serial ports live behind backend/link.cpp now; all this file
+// Sockets and serial ports live behind backend/link/link.cpp now; all this file
 // still needs from the platform is the path to its own executable.
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -55,7 +55,7 @@
 #include <cstdarg>
 
 // App log (bottom bar)
-#include "app_log.hpp"
+#include "frontend/source/app_log.hpp"
 
 // ImGui + GLFW + OpenGL
 #include "imgui.h"
@@ -64,48 +64,48 @@
 #include <GLFW/glfw3.h>
 
 // Backend
-#include "../backend/mavlink_parser.hpp"
-#include "../backend/mavlink_sender.hpp"
-#include "../backend/connection.hpp"
-#include "../backend/timesync.hpp"
-#include "../backend/link.hpp"
-#include "../backend/vehicle.hpp"
-#include "../backend/fleet.hpp"
-#include "../backend/signing.hpp"
+#include "backend/mavlink/parser.hpp"
+#include "backend/mavlink/sender.hpp"
+#include "backend/link/connection.hpp"
+#include "backend/mavlink/timesync.hpp"
+#include "backend/link/link.hpp"
+#include "backend/vehicle/vehicle.hpp"
+#include "backend/link/fleet.hpp"
+#include "backend/mavlink/signing.hpp"
 
 #include <filesystem>
-#include "../backend/mcp_server.hpp"
+#include "backend/mcp/mcp_server.hpp"
 
 // Settings
-#include "joystick.hpp"
-#include "settings.hpp"
-#include "mission_alt.hpp"
-#include "terrain.hpp"
-#include "terrain_clearance.hpp"
+#include "frontend/source/joystick.hpp"
+#include "frontend/source/settings.hpp"
+#include "frontend/source/mission_alt.hpp"
+#include "frontend/source/terrain.hpp"
+#include "frontend/source/terrain_clearance.hpp"
 
 // Widgets
-#include "widgets/app_icon.hpp"
+#include "frontend/source/app_icon.hpp"
 #ifdef __APPLE__
-#include "platform/macos_window.hpp"
+#include "frontend/source/macos_window.hpp"
 #endif
-#include "widgets/theme.hpp"
-#include "widgets/crt_overlay.hpp"
-#include "widgets/vehicle_ui_state.hpp"
-#include "widgets/ui_kit.hpp"
-#include "widgets/topbar.hpp"
-#include "widgets/map_view_3d.hpp"
-#include "widgets/sidebar_left.hpp"
-#include "widgets/center_view.hpp"
-#include "widgets/sidebar_right.hpp"
-#include "widgets/swarm_view.hpp"
-#include "widgets/map_view.hpp"
-#include "widgets/bottombar.hpp"
-#include "widgets/video_player.hpp"
-#include "widgets/splash_screen.hpp"
-#include "widgets/mcp_approval.hpp"
-#include "mission_pick.hpp"
-#include "audio.hpp"
-#include "../plugins/plugin_api.hpp"
+#include "frontend/source/theme.hpp"
+#include "frontend/components/crt_overlay.hpp"
+#include "frontend/source/vehicle_ui_state.hpp"
+#include "frontend/components/ui_kit.hpp"
+#include "frontend/elements/topbar.hpp"
+#include "frontend/components/map_view_3d.hpp"
+#include "frontend/elements/sidebar_left.hpp"
+#include "frontend/elements/center_view.hpp"
+#include "frontend/elements/sidebar_right.hpp"
+#include "frontend/elements/swarm_view.hpp"
+#include "frontend/components/map_view.hpp"
+#include "frontend/elements/bottombar.hpp"
+#include "frontend/source/video_player.hpp"
+#include "frontend/components/splash_screen.hpp"
+#include "frontend/components/mcp_approval.hpp"
+#include "frontend/source/mission_pick.hpp"
+#include "frontend/source/audio.hpp"
+#include "plugins/plugin_api.hpp"
 
 using Clock = std::chrono::steady_clock;
 
@@ -500,7 +500,7 @@ static void render_ui()
 
     // Everything drawn from here on reads the vehicle on screen. Panels that
     // keep per-vehicle state look this up rather than holding a static of their
-    // own — see widgets/vehicle_ui_state.hpp.
+    // own — see source/vehicle_ui_state.hpp.
     ui_bind_vehicle(veh ? veh->id() : VehicleId{});
 
     // The callsign chip doubles as the vehicle switcher, so the topbar needs the

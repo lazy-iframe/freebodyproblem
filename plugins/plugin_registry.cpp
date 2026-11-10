@@ -16,9 +16,9 @@
  **************************************************************************/
 
 
-#include "plugin_api.hpp"
+#include "plugins/plugin_api.hpp"
 
-#include "../frontend/app_log.hpp"
+#include "frontend/source/app_log.hpp"
 
 #include <exception>
 

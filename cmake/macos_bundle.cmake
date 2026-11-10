@@ -189,7 +189,7 @@ endforeach()
 #
 # The framework is the whole of GStreamer — every plugin set, every codec
 # library behind them — and almost none of it is used: the video panel builds
-# two pipelines (frontend/widgets/video_player.cpp). Only the plugins named in
+# two pipelines (frontend/source/video_player.cpp). Only the plugins named in
 # GCS_GST_PLUGINS are kept, then only the libraries something kept still links
 # to, found by following references out from the executable, those plugins
 # and the plugin scanner. Everything else in lib/ goes.

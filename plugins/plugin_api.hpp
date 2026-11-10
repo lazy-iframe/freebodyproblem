@@ -25,7 +25,7 @@
 // GCS_PLUGIN(...) around a function body, rebuild — the button appears.
 // Nothing else to register.
 //
-//   #include "plugin_api.hpp"
+//   #include "plugins/plugin_api.hpp"
 //
 //   GCS_PLUGIN(shutter, "SHT", "SHUTTER", "Trigger the camera shutter once")
 //   {
@@ -56,9 +56,9 @@
 #include <string>
 #include <vector>
 
-#include "../backend/mavlink_parser.hpp"   // VehicleState
-#include "../backend/mavlink_sender.hpp"   // MavlinkSender
-#include "../frontend/app_log.hpp"         // gcs_log
+#include "backend/mavlink/parser.hpp"   // VehicleState
+#include "backend/mavlink/sender.hpp"   // MavlinkSender
+#include "frontend/source/app_log.hpp"         // gcs_log
 
 // ── What a plugin gets to see ────────────────────────────────────────────────
 

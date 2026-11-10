@@ -362,7 +362,7 @@ def emit(records, versions, out_path, *, script, source, summary, symbol,
              f"{len({p['name'] for p, _ in records})} parameter names, "
              f"{len(records)} distinct records.",
              "",
-             '#include "param_meta.hpp"',
+             '#include "frontend/source/param_meta.hpp"',
              "",
              "#include <iterator>",
              "",

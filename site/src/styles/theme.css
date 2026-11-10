@@ -1,5 +1,5 @@
 /* The app's own palette: the Tactical theme's olive surfaces and amber accent
- * (frontend/widgets/theme.hpp), so the site reads as the same product. Dark
+ * (frontend/source/theme.hpp), so the site reads as the same product. Dark
  * only — see src/components/ThemeProvider.astro.
  */
 

@@ -45,9 +45,9 @@ new release comes out:
 
 | Firmware | Releases | Source | Script → table |
 |---|---|---|---|
-| ArduPilot Copter | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/copter/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py copter` → `frontend/widgets/param_meta_arducopter.cpp` |
-| ArduPilot Plane | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/plane/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py plane` → `frontend/widgets/param_meta_arduplane.cpp` |
-| PX4 | every release from v1.12 (`main` left out) | [parameter_reference](https://docs.px4.io/main/en/advanced_config/parameter_reference) and its version dropdown | `scripts/gen_param_meta_px4.py` → `frontend/widgets/param_meta_px4.cpp` |
+| ArduPilot Copter | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/copter/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py copter` → `frontend/source/param_meta_arducopter.cpp` |
+| ArduPilot Plane | every stable release from 4.0.0 | [parameters.html](https://ardupilot.org/plane/docs/parameters.html) and its version picker | `scripts/gen_param_meta_ardupilot.py plane` → `frontend/source/param_meta_arduplane.cpp` |
+| PX4 | every release from v1.12 (`main` left out) | [parameter_reference](https://docs.px4.io/main/en/advanced_config/parameter_reference) and its version dropdown | `scripts/gen_param_meta_px4.py` → `frontend/source/param_meta_px4.cpp` |
 
 The ArduPilot script takes `<copter|plane> <out_cpp> [<cache_dir>]`, the PX4
 one `<out_cpp> [<cache_dir>]`; pages already in the cache are not fetched again.

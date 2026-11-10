@@ -175,7 +175,7 @@ FetchContent_MakeAvailable(json)
 # Header-only, and it dlopens its backends (ALSA / PulseAudio / JACK on Linux,
 # WASAPI on Windows) at runtime — so it adds no link-time dependency and nothing
 # to the package's Depends. A machine with no sound server simply fails to open
-# a device, which frontend/audio.cpp treats as "no tones" rather than an error.
+# a device, which frontend/source/audio.cpp treats as "no tones" rather than an error.
 
 FetchContent_Declare(miniaudio
     GIT_REPOSITORY https://github.com/mackron/miniaudio.git
@@ -235,10 +235,10 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(MAVLINK_XML_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mavlink/message_definitions/v1.0")
 set(MAVLINK_GEN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_mavlink_display.py")
-set(MAVLINK_DISP_CPP   "${CMAKE_CURRENT_SOURCE_DIR}/frontend/widgets/sidebar_left/mavlink_display_generated.cpp")
-set(MAVLINK_DISP_HPP   "${CMAKE_CURRENT_SOURCE_DIR}/frontend/widgets/sidebar_left/mavlink_display_generated.hpp")
-set(MAVLINK_CAT_CPP    "${CMAKE_CURRENT_SOURCE_DIR}/frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp")
-set(MAVLINK_CAT_HPP    "${CMAKE_CURRENT_SOURCE_DIR}/frontend/widgets/sidebar_left/mavlink_field_catalog_generated.hpp")
+set(MAVLINK_DISP_CPP   "${CMAKE_CURRENT_SOURCE_DIR}/frontend/components/sidebar_left/mavlink_display_generated.cpp")
+set(MAVLINK_DISP_HPP   "${CMAKE_CURRENT_SOURCE_DIR}/frontend/components/sidebar_left/mavlink_display_generated.hpp")
+set(MAVLINK_CAT_CPP    "${CMAKE_CURRENT_SOURCE_DIR}/frontend/components/sidebar_left/mavlink_field_catalog_generated.cpp")
+set(MAVLINK_CAT_HPP    "${CMAKE_CURRENT_SOURCE_DIR}/frontend/components/sidebar_left/mavlink_field_catalog_generated.hpp")
 
 add_custom_command(
     OUTPUT  "${MAVLINK_DISP_CPP}" "${MAVLINK_DISP_HPP}"
@@ -421,68 +421,71 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     ${GCS_PLUGIN_SOURCES}
     ${GCS_WIN_RESOURCES}
     ${GCS_MAC_RESOURCES}
-    frontend/widgets/plugin_rail.cpp
-    frontend/widgets/mcp_approval.cpp
-    backend/mavlink_sender.cpp
-    backend/vehicle.cpp
-    backend/link.cpp
-    backend/signing.cpp
-    backend/fleet.cpp
-    backend/connection.cpp
-    backend/rc_calibration.cpp
-    backend/joystick_control.cpp
-    backend/accel_calibration.cpp
-    backend/gyro_calibration.cpp
-    backend/mag_calibration.cpp
-    backend/sensor_inventory.cpp
-    backend/geodesic_grid.cpp
-    backend/timesync.cpp
-    backend/rc_binding.cpp
-    backend/firmware_profile.cpp
-    backend/geofence.cpp
-    backend/mcp_server.cpp
+    frontend/components/plugin_rail.cpp
+    frontend/components/mcp_approval.cpp
+    backend/mavlink/sender.cpp
+    backend/vehicle/vehicle.cpp
+    backend/link/link.cpp
+    backend/mavlink/signing.cpp
+    backend/link/fleet.cpp
+    backend/link/connection.cpp
+    backend/calibration/rc.cpp
+    backend/input/joystick_control.cpp
+    backend/calibration/accel.cpp
+    backend/calibration/gyro.cpp
+    backend/calibration/mag.cpp
+    backend/vehicle/sensor_inventory.cpp
+    backend/calibration/geodesic_grid.cpp
+    backend/mavlink/timesync.cpp
+    backend/input/rc_binding.cpp
+    backend/vehicle/firmware_profile.cpp
+    backend/mission/geofence.cpp
+    backend/mcp/mcp_server.cpp
     frontend/main.cpp
-    frontend/settings.cpp
-    frontend/param_file.cpp
-    frontend/cache_dir.cpp
-    frontend/terrain.cpp
-    frontend/terrain_clearance.cpp
-    frontend/audio.cpp
-    frontend/joystick.cpp
-    frontend/tile_source.cpp
-    frontend/widgets/topbar.cpp
-    frontend/widgets/swarm_view.cpp
-    frontend/widgets/sidebar_left.cpp
-    frontend/widgets/sidebar_left/tab_connection.cpp
-    frontend/widgets/sidebar_left/tab_flight.cpp
-    frontend/widgets/sidebar_left/tab_params.cpp
-    frontend/widgets/sidebar_left/tab_themes.cpp
-    frontend/widgets/sidebar_left/tab_mission.cpp
-    frontend/widgets/sidebar_left/tab_mavlink.cpp
-    frontend/widgets/sidebar_left/tab_rc.cpp
-    frontend/widgets/sidebar_left/tab_sensors.cpp
-    frontend/widgets/sidebar_left/mavlink_display_generated.cpp
-    frontend/widgets/sidebar_left/mavlink_field_catalog_generated.cpp
-    frontend/widgets/sidebar_themes.cpp
-    frontend/widgets/crt_overlay.cpp
-    frontend/widgets/center_view.cpp
-    frontend/widgets/splash_screen.cpp
-    frontend/widgets/video_player.cpp
-    frontend/widgets/map_view.cpp
-    frontend/widgets/map_view_3d.cpp
-    frontend/widgets/gl3.cpp
-    frontend/widgets/stb_impl.cpp
-    frontend/widgets/app_icon.cpp
-    frontend/widgets/sidebar_right.cpp
-    frontend/widgets/ui_kit.cpp
-    frontend/widgets/vehicle_ui_state.cpp
-    frontend/widgets/param_meta.cpp
-    frontend/widgets/param_meta_arducopter.cpp
-    frontend/widgets/param_meta_arduplane.cpp
-    frontend/widgets/param_meta_px4.cpp
-    backend/mavlink_parser.cpp
+    frontend/source/settings.cpp
+    frontend/source/param_file.cpp
+    frontend/source/cache_dir.cpp
+    frontend/source/terrain.cpp
+    frontend/source/terrain_clearance.cpp
+    frontend/source/audio.cpp
+    frontend/source/joystick.cpp
+    frontend/source/tile_source.cpp
+    frontend/elements/topbar.cpp
+    frontend/elements/swarm_view.cpp
+    frontend/elements/sidebar_left.cpp
+    frontend/components/sidebar_left/tab_connection.cpp
+    frontend/components/sidebar_left/tab_flight.cpp
+    frontend/components/sidebar_left/tab_params.cpp
+    frontend/components/sidebar_left/tab_themes.cpp
+    frontend/components/sidebar_left/tab_mission.cpp
+    frontend/components/sidebar_left/tab_mavlink.cpp
+    frontend/components/sidebar_left/tab_rc.cpp
+    frontend/components/sidebar_left/tab_sensors.cpp
+    frontend/components/sidebar_left/mavlink_display_generated.cpp
+    frontend/components/sidebar_left/mavlink_field_catalog_generated.cpp
+    frontend/components/sidebar_themes.cpp
+    frontend/components/crt_overlay.cpp
+    frontend/elements/center_view.cpp
+    frontend/components/splash_screen.cpp
+    frontend/source/video_player.cpp
+    frontend/components/map_view.cpp
+    frontend/components/map_view_3d.cpp
+    frontend/source/gl3.cpp
+    frontend/source/stb_impl.cpp
+    frontend/source/app_icon.cpp
+    frontend/elements/sidebar_right.cpp
+    frontend/components/ui_kit.cpp
+    frontend/source/vehicle_ui_state.cpp
+    frontend/source/param_meta.cpp
+    frontend/source/param_meta_arducopter.cpp
+    frontend/source/param_meta_arduplane.cpp
+    frontend/source/param_meta_px4.cpp
+    backend/mavlink/parser.cpp
 )
+# Project includes are rooted at the repository: #include "backend/vehicle/vehicle.hpp",
+# never a ../ path, so a file can move without its includes being rewritten.
 target_include_directories(freebodyproblem PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${stb_SOURCE_DIR}
     ${miniaudio_SOURCE_DIR}
     ${GST_INCLUDE_DIRS}
@@ -514,7 +517,7 @@ target_compile_definitions(freebodyproblem PRIVATE
     GCS_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
 )
 if(WIN32)
-    # setupapi: serial port enumeration in backend/connection.cpp
+    # setupapi: serial port enumeration in backend/link/connection.cpp
     target_link_libraries(freebodyproblem PRIVATE ws2_32 setupapi)
     target_compile_definitions(freebodyproblem PRIVATE
         # <windows.h> defines min/max as macros, which breaks every std::min /
@@ -530,12 +533,12 @@ if(WIN32)
 endif()
 
 if(APPLE)
-    # The title bar's colour (frontend/platform/macos_window.mm). Objective-C++
+    # The title bar's colour (frontend/source/macos_window.mm). Objective-C++
     # by flag rather than enable_language(OBJCXX), which needs CMake 3.16.
-    target_sources(freebodyproblem PRIVATE frontend/platform/macos_window.mm)
-    set_source_files_properties(frontend/platform/macos_window.mm PROPERTIES
+    target_sources(freebodyproblem PRIVATE frontend/source/macos_window.mm)
+    set_source_files_properties(frontend/source/macos_window.mm PROPERTIES
         COMPILE_FLAGS "-x objective-c++ -fobjc-arc")
-    # IOKit and CoreFoundation: serial port enumeration in backend/connection.cpp.
+    # IOKit and CoreFoundation: serial port enumeration in backend/link/connection.cpp.
     # Cocoa: the title bar.
     target_link_libraries(freebodyproblem PRIVATE
         "-framework IOKit" "-framework CoreFoundation" "-framework Cocoa")
@@ -559,7 +562,7 @@ endif()
 # the httplib::httplib target, which would drag OpenSSL in for a loopback-only
 # HTTP client.
 add_executable(freebodyproblem-mcp adapter/freebodyproblem_mcp.cpp)
-target_include_directories(freebodyproblem-mcp PRIVATE ${httplib_SOURCE_DIR})
+target_include_directories(freebodyproblem-mcp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${httplib_SOURCE_DIR})
 target_link_libraries(freebodyproblem-mcp PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
 if(WIN32)
     target_link_libraries(freebodyproblem-mcp PRIVATE ws2_32)
@@ -634,7 +637,7 @@ if(APPLE)
 
     # The GStreamer plugins the bundle keeps; the rest of the framework's are
     # left out, with every library only they needed. Enough for the two
-    # pipelines in frontend/widgets/video_player.cpp and what decodebin picks
+    # pipelines in frontend/source/video_player.cpp and what decodebin picks
     # for an RTSP camera's H.264, H.265 or MJPEG. A pipeline that gains an
     # element needs its plugin here, or it plays in a build-tree run and fails
     # in the installed app. ("gst-inspect-1.0 <element>" names the plugin.)

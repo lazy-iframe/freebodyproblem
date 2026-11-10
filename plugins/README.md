@@ -4,7 +4,7 @@ Every square button on the rail down the right of the centre column is one C++
 function in this folder. Write the function, rebuild, press the button.
 
 ```cpp
-#include "plugin_api.hpp"
+#include "plugins/plugin_api.hpp"
 
 GCS_PLUGIN(shutter, "SHT", "SHUTTER", "Trigger the camera shutter once")
 {
@@ -50,7 +50,7 @@ ctx.sender->command_long(ctx.tsys, ctx.tcomp, cmd, p1, p2, p3, p4, p5, p6, p7);
 ```
 
 which sends any `MAV_CMD` as a `COMMAND_LONG`. See
-`backend/mavlink_sender.hpp` for the full list.
+`backend/mavlink/sender.hpp` for the full list.
 
 ## Naming the button
 

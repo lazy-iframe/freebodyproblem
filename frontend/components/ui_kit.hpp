@@ -1,0 +1,248 @@
+/**************************************************************************
+ * Copyright (C) 2026  Azhar Tanweer
+ * Contact: azhar.tanweer404@gmail.com
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ **************************************************************************/
+
+
+#pragma once
+#include "imgui.h"
+#include "frontend/source/theme.hpp"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ui_kit — tactical-display chrome primitives shared by every panel.
+//
+// The house style, in one place:
+//   • every panel opens with a header strip: tracked uppercase title on the
+//     left, dim right-aligned metadata, hairline underneath
+//   • readouts are label-over-value: tiny tracked olive label, bright value
+//   • everything is boxed with 1 px seams — no rounding, no gradients
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Fonts (loaded in main.cpp; never null after font_kit_init) ───────────────
+extern ImFont* g_font_ui;      // 16 px mono — body text / controls
+extern ImFont* g_font_micro;   // 13 px mono — cell labels, log timestamps
+extern ImFont* g_font_mono_bold; // 13 px bold mono — HUD lettering; null if missing
+extern ImFont* g_font_value;   // 26 px mono — big readouts / annunciators
+
+// The face the UI is set in, chosen in Settings. main.cpp loads every face it
+// finds and registers it; choosing one repoints the fonts above (and the
+// default font) at it, from the next frame. The HUD's bold lettering stays
+// Geist Mono Bold in either: its tapes are laid out for fixed-width digits.
+enum class UiFace { GeistMono = 0, Roboto = 1, Count };
+struct UiFontSet { ImFont* ui = nullptr; ImFont* micro = nullptr; ImFont* value = nullptr; ImFont* title = nullptr; };
+const char* ui_face_name(UiFace face);
+void        ui_face_register(UiFace face, const UiFontSet& set);
+bool        ui_face_available(UiFace face);
+// Falls back to any face loaded when `face` is not. The set now in use.
+const UiFontSet& ui_face_select(UiFace face);
+
+// Font sizes used across panels.
+constexpr float UI_SZ_MICRO = 13.0f;
+constexpr float UI_SZ_BODY  = 16.0f;
+constexpr float UI_SZ_VALUE = 25.0f;
+constexpr float UI_SZ_BIG   = 29.0f;
+
+// Letter-spacing applied to uppercase labels (px, at UI_SZ_MICRO).
+constexpr float UI_TRACK = 1.1f;
+
+// Standard chrome metrics.
+constexpr float UI_HEADER_H = 25.0f;   // panel header strip
+constexpr float UI_CELL_PAD = 8.0f;
+
+// ── Colors derived from the active theme ─────────────────────────────────────
+
+inline ImU32 ui_col(ImVec4 c, float alpha = 1.0f)
+{
+    c.w *= alpha;
+    return ImGui::ColorConvertFloat4ToU32(c);
+}
+
+inline ImU32 ui_col_label()   { return ui_col(g_theme.col_log); }        // dim olive
+inline ImU32 ui_col_value()   { return ui_col(g_theme.col_data); }       // pale green
+inline ImU32 ui_col_accent()  { return ui_col(g_theme.accent); }         // amber
+inline ImU32 ui_col_seam()    { return ui_col(g_theme.separator, 0.9f); }
+inline ImU32 ui_col_strip()   { return ui_col(g_theme.bg_child_dark); }
+inline ImU32 ui_col_well()    { return ui_col(g_theme.bg_child_darker); }
+inline ImU32 ui_col_text()    { return ImGui::GetColorU32(ImGuiCol_Text); }
+
+// ── Tracked (letter-spaced) text ─────────────────────────────────────────────
+
+// Width of `text` drawn with per-glyph tracking.
+float ui_tracked_width(ImFont* font, float size, const char* text, float track = UI_TRACK);
+
+// Draw `text` glyph-by-glyph with extra advance between characters.
+void ui_tracked_text(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
+                     ImU32 col, const char* text, float track = UI_TRACK);
+
+// ── Panel chrome ─────────────────────────────────────────────────────────────
+
+// Header strip across the full content width at the current cursor: tracked
+// title on the left, optional dim metadata right-aligned, hairline below.
+// Advances the ImGui cursor past the strip. `right_reserve` keeps that much of
+// its right end clear of the metadata, for a control the caller puts there.
+void ui_panel_header(const char* title, const char* right_meta = nullptr,
+                     float right_reserve = 0.0f);
+
+// Same, but drawn at an explicit screen rectangle (for overlays on the map /
+// video feed, where there is no ImGui layout cursor to advance).
+void ui_panel_header_at(ImDrawList* dl, ImVec2 p0, float width,
+                        const char* title, const char* right_meta,
+                        float bg_alpha = 1.0f, float height = UI_HEADER_H,
+                        float right_reserve = 0.0f);
+
+// 1 px seam rectangle.
+void ui_frame(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 col);
+
+// ── Readouts ─────────────────────────────────────────────────────────────────
+
+// Label-over-value cell drawn into an arbitrary rect: tiny tracked label at the
+// top-left, value below it in `value_size`.
+void ui_readout(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
+                const char* label, const char* value,
+                ImU32 value_col, float value_size = UI_SZ_VALUE);
+
+// Boxed variant: well background + seam, optionally hover-lit.
+void ui_readout_tile(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
+                     const char* label, const char* value,
+                     ImU32 value_col, bool hovered,
+                     float value_size = UI_SZ_VALUE);
+
+// Status block — solid slab of colour with dark tracked text (topbar state
+// annunciators: ARMED / DISARMED / NO LINK).
+void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
+                     const char* text, ImVec4 fill, bool outline_only = false,
+                     float text_size = UI_SZ_BIG);
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+
+// Flat tactical button: dark plate, 1 px seam, tracked uppercase caption.
+// `active` fills it with amber and inverts the caption.
+// The chrome idiom shared by the 3x3 telemetry tiles and every button in the
+// app: a dark well that lifts to the header strip on hover, with the seam
+// brightening to accent and the caption picking it up too.
+//
+// `size` follows ImGui::Button's conventions — 0 fits the label / one frame
+// tall, negative means available space minus that much.
+//
+//   active — persistent "current selection" (tab open, flight mode engaged);
+//            paints the bright amber plate and pins the seam to accent
+//   flash  — transient command-ACK feedback; overrides the fill only, so the
+//            hover response stays identical in every state
+bool ui_grid_button(const char* label, ImVec2 size, bool active = false,
+                    CmdFlashState flash = CmdFlashState::Normal);
+
+// Same chrome and the same hover response, but keeping a semantic fill instead
+// of the neutral well — for buttons whose colour carries meaning on its own
+// (arm/disarm, disconnect, stop, destructive actions).
+bool ui_solid_button(const char* label, ImVec2 size, ImVec4 fill, ImVec4 fill_hov,
+                     CmdFlashState flash = CmdFlashState::Normal,
+                     float caption_size = UI_SZ_BODY);
+
+// ui_grid_button's chrome — same dark well, same hover lift — with the theme's
+// amber swapped for another accent on the seam and the caption. `tint` is the
+// lit colour (hover), `tint_dim` the resting one. The plugin rail uses it to
+// read as blue without owning a single background of its own.
+// `caption_size` above body size switches to the big readout font, for plates
+// large enough to carry it — the rail's squares do.
+bool ui_tinted_button(const char* label, ImVec2 size, ImVec4 tint, ImVec4 tint_dim,
+                      float caption_size = UI_SZ_BODY);
+
+bool ui_tab_button(const char* label, ImVec2 size, bool active);
+
+// ── Progress ─────────────────────────────────────────────────────────────────
+//
+// A slim transfer bar with its count on its own line above it, percentage left
+// and `text` right, both across the full panel width.
+//
+// ImGui::ProgressBar's own overlay cannot be used for this. It draws the string
+// *inside* the bar's rectangle and clips it to that rectangle, so a 16 px body
+// font in the 10-12 px bar this UI wants loses the top and bottom of every
+// digit — and horizontally the string is pushed along ahead of the fill and
+// clamped against the right edge, so it has least room exactly when the numbers
+// are longest. Splitting the label out gives it the whole width and lets the
+// bar stay as slim as the rest of the chrome.
+//
+// `height` is the bar alone; the caption line is added above it.
+void ui_progress_bar(const char* text, float frac, float height);
+
+// ── Dialogs ──────────────────────────────────────────────────────────────────
+//
+// Every popup shares one shape: generous padding, an amber tracked title over a
+// hairline, centred body text, and a centred button row. Push the style around
+// the Begin/End pair — ImGui reads padding when the window is created, and the
+// pop must run even when the popup is closed.
+
+constexpr float UI_DIALOG_W  = 330.0f;   // default dialog content width
+constexpr float UI_DIALOG_BH =  30.0f;   // dialog button height
+
+void ui_push_dialog_style();
+void ui_pop_dialog_style();
+
+// Centred tracked amber title + hairline. `width` pins the dialog's minimum
+// content width so auto-resized popups don't come out ragged.
+void ui_dialog_title(const char* title, float width = UI_DIALOG_W);
+
+// Single line of centred dialog text.
+void ui_dialog_text(const char* text, ImU32 col);
+
+// Centre the cursor for a row of total width `row_w`.
+void ui_dialog_row(float row_w);
+
+// Confirm / cancel dialog, driven by an OpenPopup elsewhere. Draws the title,
+// question, a centred [confirm][cancel] row and the key hints, and closes
+// itself on either answer.  Returns what the operator chose this frame.
+//
+// With `alt_label`, a second, graver way to answer on a row of its own under the
+// hints, `alt_note` saying what it does: Alternate when pressed. By the mouse only,
+// so that no key meant for the first answer can land on it.
+enum class UiConfirm { None, Confirmed, Cancelled, Alternate };
+
+UiConfirm ui_confirm_popup(const char* id, const char* title, const char* question,
+                           const char* confirm_label, ImVec4 confirm_col,
+                           bool modal = false,
+                           const char* alt_label = nullptr, const char* alt_note = nullptr,
+                           ImVec4 alt_col = {});
+
+// ── Vehicle rows ─────────────────────────────────────────────────────────────
+//
+// One vehicle as the fleet lists show it: "(2) SYS1·1" with its state on the
+// right, and the link it came in on underneath. Drawn into [rmin, rmax], which
+// the caller has already claimed with an item of its own — a Selectable in the
+// callsign chip's switcher, a plain block in the CONNECTION tab's list — so
+// both lists read the same whatever each one does on a click.
+struct VehicleChip;
+
+// Height of the two lines, for sizing the item the row is drawn over.
+float ui_vehicle_row_height();
+
+// `show_state` = false leaves the state off the first line, for a caller that
+// shows it as a ui_vehicle_state_box beside the row instead.
+void ui_vehicle_row(const VehicleChip& v, bool is_active, ImVec2 rmin, ImVec2 rmax,
+                    bool show_state = true);
+
+// A short state caption in a framed box, the same chrome as a button but not a
+// control. `loud` draws the frame in `col` too, for a state worth catching the
+// eye; otherwise only the caption is coloured. `tooltip` may be null.
+void ui_state_box(const char* caption, const char* tooltip, ImVec4 col, bool loud,
+                  ImVec2 size);
+
+// The vehicle's state as a framed box — IDLE, ARMED, LOST, WAIT — in the same
+// chrome and size as the buttons beside it, so a row of state and actions reads
+// as one strip. Not a control: hovering it spells the state out in full.
+void ui_vehicle_state_box(const VehicleChip& v, ImVec2 size);
+
+// A width every state box caption fits in, and the given button caption too, so
+// the box and its neighbouring button can be made exactly the same size.
+float ui_vehicle_box_width(const char* button_caption);
