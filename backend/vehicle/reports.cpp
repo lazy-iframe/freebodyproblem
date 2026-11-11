@@ -48,21 +48,22 @@ void VehicleReports::tick(const VehicleState& ps, const std::deque<StatusText>& 
                 (int)ps.sysid, (int)ps.compid);
     }
 
+    // The name comes from the banner when there is one (vehicle/kind.hpp),
+    // which the connect burst asks for alongside the version and which lands a
+    // moment after it. A firmware too old to answer that request gets its name
+    // from the HEARTBEAT type, after the wait.
     if (ps.has_fw_info && !logged_fw_info_) {
-        logged_fw_info_ = true;
-        const char* ap = "unknown";
-        if (ps.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            switch (ps.type) {
-            case MAV_TYPE_FIXED_WING:   ap = "ArduPlane";  break;
-            case MAV_TYPE_GROUND_ROVER: ap = "ArduRover";  break;
-            case MAV_TYPE_SUBMARINE:    ap = "ArduSub";    break;
-            default:                    ap = "ArduCopter"; break;
-            }
-        } else if (ps.autopilot == MAV_AUTOPILOT_PX4) {
-            ap = "PX4";
+        constexpr auto BANNER_WAIT = std::chrono::seconds(3);
+        const auto now = std::chrono::steady_clock::now();
+        if (fw_info_at_ == std::chrono::steady_clock::time_point{}) fw_info_at_ = now;
+        const bool named = ps.banner_kind != VehicleKind::Unknown ||
+                           ps.autopilot != MAV_AUTOPILOT_ARDUPILOTMEGA ||
+                           now - fw_info_at_ >= BANNER_WAIT;
+        if (named) {
+            logged_fw_info_ = true;
+            gcs_log("[sys%u] firmware: %s %s (%.8s)", tsys, vehicle_firmware_name(ps),
+                    ps.fw_version, ps.fw_hash);
         }
-        gcs_log("[sys%u] firmware: %s %s (%.8s)", tsys, ap,
-                ps.fw_version, ps.fw_hash);
     }
 }
 

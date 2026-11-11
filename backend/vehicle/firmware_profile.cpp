@@ -117,19 +117,16 @@ public:
             return n == "guided" ? ok() : refused();
         }
 
-        switch (vs.type) {
-        case MAV_TYPE_FIXED_WING:
-        case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
-        case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
-        case MAV_TYPE_VTOL_TILTROTOR:
-        case MAV_TYPE_VTOL_FIXEDROTOR:
-        case MAV_TYPE_VTOL_TAILSITTER:
-        case MAV_TYPE_VTOL_TILTWING:
-        case MAV_TYPE_GROUND_ROVER:
-        case MAV_TYPE_SURFACE_BOAT:
-            return vs.custom_mode == 15 ? ok() : refused();   // Plane / Rover GUIDED
-        default:
-            return vs.custom_mode == 4 ? ok() : refused();    // Copter / Sub GUIDED
+        // GUIDED's number in each firmware's Mode::Number.
+        switch (vehicle_kind(vs)) {
+        case VehicleKind::Plane:
+        case VehicleKind::Rover:
+            return vs.custom_mode == 15 ? ok() : refused();
+        case VehicleKind::Blimp:     // no GUIDED to be in
+        case VehicleKind::Tracker:
+            return refused();
+        default:                     // Copter, Sub
+            return vs.custom_mode == 4 ? ok() : refused();
         }
     }
 

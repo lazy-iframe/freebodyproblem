@@ -33,6 +33,7 @@
 #include <mavlink/ardupilotmega/mavlink.h>
 
 #include "backend/mission/types.hpp"
+#include "backend/vehicle/kind.hpp"
 
 // One entry from AVAILABLE_MODES (#435). Flight stacks enumerate their own mode
 // list, which is the only portable way to know what a given vehicle supports —
@@ -151,6 +152,10 @@ struct VehicleState {
     uint8_t       compid        = 0;
     MAV_TYPE      type          = MAV_TYPE_GENERIC;
     MAV_AUTOPILOT autopilot     = MAV_AUTOPILOT_GENERIC;
+    // The firmware its STATUSTEXT banner named, once one has been heard;
+    // read it through vehicle_kind() (vehicle/kind.hpp), which falls back on
+    // the type until then.
+    VehicleKind   banner_kind   = VehicleKind::Unknown;
     MAV_STATE     mav_state     = MAV_STATE_UNINIT;
     uint32_t      custom_mode   = 0;
     bool          armed         = false;

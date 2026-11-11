@@ -624,7 +624,7 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
         // editor and this pad cannot drift apart: one triggers a function live,
         // the other binds it to a switch, but they must agree on what exists.
         const RcFirmware fw = rc_firmware_for(
-            (vs && vs->has_heartbeat) ? vs->type : MAV_TYPE_QUADROTOR);
+            (vs && vs->has_heartbeat) ? vehicle_kind(*vs) : VehicleKind::Copter);
         const auto& aux_options = rc_aux_options();
 
         // The whole pad is ArduPilot's RCn_OPTION table fired through

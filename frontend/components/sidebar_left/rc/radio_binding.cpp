@@ -154,7 +154,7 @@ void draw_binding(MavlinkSender* sender, const VehicleState* vs,
     if (dialect != RcParamDialect::ArduPilot) return;
 
     const RcFirmware fw = rc_firmware_for(vs && vs->has_heartbeat
-                                          ? vs->type : MAV_TYPE_QUADROTOR);
+                                          ? vehicle_kind(*vs) : VehicleKind::Copter);
 
     // ── Flight-mode switch slots ─────────────────────────────────────────────
     //

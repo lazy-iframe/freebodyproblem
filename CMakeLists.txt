@@ -430,6 +430,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     backend/vehicle/vehicle.cpp
     backend/vehicle/param_fetch.cpp
     backend/vehicle/identity.cpp
+    backend/vehicle/kind.cpp
     backend/vehicle/stream_rates.cpp
     backend/vehicle/connect.cpp
     backend/vehicle/reports.cpp

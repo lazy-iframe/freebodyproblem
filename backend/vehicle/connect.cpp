@@ -45,6 +45,9 @@ const char* send_connect_burst(MavlinkSender& sender, uint8_t tsys, uint8_t tcom
     // What the vehicle is; VersionProbe and ModeListWalk take it from here.
     sender.request_message(tsys, tcomp, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
     sender.request_available_modes(tsys, tcomp);
+    // Which ArduPilot firmware, which the HEARTBEAT type cannot always say.
+    if (vs.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA)
+        sender.request_banner(tsys, tcomp);
 
     // The parameter-set geofence, so the map can draw its cylinder without a
     // full parameter fetch. Later changes arrive by themselves: a vehicle echoes

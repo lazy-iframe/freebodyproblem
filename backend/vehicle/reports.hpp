@@ -19,6 +19,7 @@
 // What one vehicle's protocol loop tells the operator: the log lines and tones
 // for what the vehicle said or did. Reporting only — nothing here sends.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -53,5 +54,8 @@ private:
     size_t  last_status_count_ = 0;
     bool    logged_heartbeat_  = false;
     bool    logged_fw_info_    = false;
+    // When AUTOPILOT_VERSION came in; the firmware line waits on the banner
+    // from then, a little, since only the banner names the firmware for sure.
+    std::chrono::steady_clock::time_point fw_info_at_{};
     bool    logged_timesync_   = false;
 };

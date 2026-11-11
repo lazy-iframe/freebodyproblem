@@ -128,7 +128,7 @@ static bool joy_edit_mode(JoyButtonBinding& b, const VehicleState* vs, bool conn
 static bool joy_edit_aux(JoyButtonBinding& b, const VehicleState* vs, bool connected,
                          bool switch_position)
 {
-    const RcFirmware fw = rc_firmware_for(connected ? vs->type : MAV_TYPE_QUADROTOR);
+    const RcFirmware fw = rc_firmware_for(connected ? vehicle_kind(*vs) : VehicleKind::Copter);
     const Capability cap = firmware_profile(connected ? vs->autopilot
                                                       : MAV_AUTOPILOT_GENERIC).aux_functions();
     if (connected && !cap.supported && cap.reason)

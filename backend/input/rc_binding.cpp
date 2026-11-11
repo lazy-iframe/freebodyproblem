@@ -53,17 +53,13 @@ int rc_stick_throttle_index()
 
 // ── Auxiliary functions ──────────────────────────────────────────────────────
 
-RcFirmware rc_firmware_for(MAV_TYPE type)
+RcFirmware rc_firmware_for(VehicleKind kind)
 {
-    switch (type) {
-    case MAV_TYPE_FIXED_WING:
-    case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
-    case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
-    case MAV_TYPE_VTOL_TILTROTOR:        return RcFirmware::Plane;
-    case MAV_TYPE_GROUND_ROVER:
-    case MAV_TYPE_SURFACE_BOAT:          return RcFirmware::Rover;
-    case MAV_TYPE_SUBMARINE:             return RcFirmware::Sub;
-    default:                             return RcFirmware::Copter;
+    switch (kind) {
+    case VehicleKind::Plane: return RcFirmware::Plane;
+    case VehicleKind::Rover: return RcFirmware::Rover;
+    case VehicleKind::Sub:   return RcFirmware::Sub;
+    default:                 return RcFirmware::Copter;
     }
 }
 

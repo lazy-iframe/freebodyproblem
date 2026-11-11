@@ -301,6 +301,10 @@ void MavlinkParser::on_statustext(const mavlink_message_t& msg)
         status_texts_.pop_front();
     status_texts_.push_back(entry);
     ++state_.statustext_total;
+    // ArduPilot's banner names the firmware, which the HEARTBEAT type cannot
+    // always do; see vehicle/kind.hpp.
+    const VehicleKind banner = vehicle_kind_from_banner(entry.text);
+    if (banner != VehicleKind::Unknown) state_.banner_kind = banner;
     printf("\033[33m[STATUS] %s\033[0m\n", entry.text);
     fflush(stdout);
 }

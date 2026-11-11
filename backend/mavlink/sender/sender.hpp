@@ -214,6 +214,12 @@ public:
     // answers this one. Kept as the fallback for stacks that predate 512.
     void request_autopilot_capabilities(uint8_t target_sysid, uint8_t target_compid);
 
+    // MAV_CMD_DO_SEND_BANNER (42428, ardupilotmega) — ArduPilot answers with its
+    // banner STATUSTEXTs, the first of which names the firmware ("ArduCopter
+    // V4.7.1 (…)"). The one way to tell Copter from Plane that does not depend
+    // on the HEARTBEAT type; see vehicle/kind.hpp.
+    void request_banner(uint8_t target_sysid, uint8_t target_compid);
+
     // Ask for AVAILABLE_MODES (#435) at mode_index 0. The spec calls this the
     // "all modes" form, but ArduPilot answers it with index 1 alone — its value
     // is the number_modes field, which tells the caller how far to enumerate.

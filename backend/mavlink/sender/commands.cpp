@@ -313,6 +313,11 @@ void MavlinkSender::request_autopilot_capabilities(uint8_t tsys, uint8_t tcomp)
     enqueue_command_long(tsys, tcomp, 520, 1.f);
 }
 
+void MavlinkSender::request_banner(uint8_t tsys, uint8_t tcomp)
+{
+    enqueue_command_long(tsys, tcomp, MAV_CMD_DO_SEND_BANNER);
+}
+
 void MavlinkSender::request_available_modes(uint8_t tsys, uint8_t tcomp)
 {
     request_available_mode(tsys, tcomp, 0);

@@ -50,8 +50,10 @@ static void info_row(const char* key, const char* fmt, ...)
 // ArduPilot documents each vehicle separately, Copter and Plane covered here:
 // their tables differ in exactly the vehicle-specific entries an operator is
 // likeliest to open, so neither stands in for the other, and Rover and Sub
-// get none rather than the wrong one. A QuadPlane reports a fixed-wing or VTOL
-// type and reads Plane's, which documents its Q_ parameters. PX4 publishes
+// get none rather than the wrong one. Which ArduPilot vehicle is
+// vehicle_kind()'s to say: a QuadPlane reads Plane's, which documents its Q_
+// parameters, and a Copter BiCopter, whose HEARTBEAT type is a tailsitter's,
+// reads Copter's once its banner has been heard. PX4 publishes
 // one table for every airframe. A parameter one stack shares by name with the
 // other is a different parameter, so neither stands in for the other.
 const ParamDocSource* param_docs_for(const VehicleState* vs)
@@ -59,10 +61,10 @@ const ParamDocSource* param_docs_for(const VehicleState* vs)
     if (!vs) return nullptr;
     if (vs->autopilot == MAV_AUTOPILOT_PX4) return &param_docs_px4;
     if (vs->autopilot != MAV_AUTOPILOT_ARDUPILOTMEGA) return nullptr;
-    switch (rc_firmware_for((MAV_TYPE)vs->type)) {
-    case RcFirmware::Copter: return &param_docs_arducopter;
-    case RcFirmware::Plane:  return &param_docs_arduplane;
-    default:                 return nullptr;
+    switch (vehicle_kind(*vs)) {
+    case VehicleKind::Copter: return &param_docs_arducopter;
+    case VehicleKind::Plane:  return &param_docs_arduplane;
+    default:                  return nullptr;
     }
 }
 

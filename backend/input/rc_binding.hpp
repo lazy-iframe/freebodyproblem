@@ -74,9 +74,10 @@ int rc_stick_throttle_index();
 // a Rover has no ALTHOLD to switch into.
 enum class RcFirmware { Copter, Plane, Rover, Sub };
 
-// From the vehicle's HEARTBEAT type. Anything unrecognised is treated as a
-// Copter, which is both the largest table and this GCS's common case.
-RcFirmware  rc_firmware_for(MAV_TYPE type);
+// From vehicle_kind() (vehicle/kind.hpp). Anything without a table of its own
+// is treated as a Copter, which is both the largest table and this GCS's
+// common case.
+RcFirmware  rc_firmware_for(VehicleKind kind);
 const char* rc_firmware_label(RcFirmware fw);
 
 // One RCn_OPTION value: what it does, and which firmwares implement it.

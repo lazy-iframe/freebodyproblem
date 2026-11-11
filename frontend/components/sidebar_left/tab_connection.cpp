@@ -830,20 +830,9 @@ void draw_tab_connection(MavlinkSender* sender,
         ImGui::Spacing();
         themed_sep();
         ImGui::Spacing();
-        const char* ap_name = "Unknown";
-        if (vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            switch (vs->type) {
-            case MAV_TYPE_FIXED_WING:   ap_name = "ArduPlane";  break;
-            case MAV_TYPE_GROUND_ROVER: ap_name = "ArduRover";  break;
-            case MAV_TYPE_SUBMARINE:    ap_name = "ArduSub";    break;
-            default:                    ap_name = "ArduCopter"; break;
-            }
-        } else if (vs->autopilot == MAV_AUTOPILOT_PX4) {
-            ap_name = "PX4";
-        }
         ImGui::TextColored(accent_col(), "FIRMWARE");
         ImGui::SameLine(0, 4);
-        ImGui::Text("%s %s", ap_name, vs->fw_version);
+        ImGui::Text("%s %s", vehicle_firmware_name(*vs), vs->fw_version);
         ImGui::TextDisabled("%.8s", vs->fw_hash);
     }
 
