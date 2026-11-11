@@ -16,7 +16,7 @@
  **************************************************************************/
 
 
-// frontend/components/map_view_3d.hpp
+// frontend/components/map/map_view_3d.hpp
 //
 // The map in 3D: the same imagery tiles draped over the terrain heights of
 // frontend/source/terrain.hpp, seen from a camera that orbits a point on the ground.
@@ -29,7 +29,7 @@
 // edited on the flat map, which the map returns to when either starts.
 
 #pragma once
-#include "frontend/components/map_view.hpp"
+#include "frontend/components/map/map_view.hpp"
 #include "imgui.h"
 #include <vector>
 

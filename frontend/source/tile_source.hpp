@@ -24,7 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Where the map's imagery comes from, and how a request to it is written.
 //
-// Holds no connection: the fetchers in components/map_view.cpp do the talking. Each
+// Holds no connection: the fetchers in components/map/ do the talking. Each
 // provider has its own terms and asks for different things, and these differences
 // are the reason this is more than a URL field:
 //

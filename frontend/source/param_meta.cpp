@@ -174,3 +174,56 @@ const char* param_mav_type_name(uint8_t t)
     default:                    return "unknown";
     }
 }
+
+bool param_out_of_range(const ParamMeta* meta, ParamKind kind, float v)
+{
+    return meta && (kind == ParamKind::Int || kind == ParamKind::Float) &&
+           meta->has(PARAM_FLAG_HAS_RANGE) &&
+           (v < meta->min_val || v > meta->max_val);
+}
+
+void param_format_range(const ParamMeta* meta, char* out, size_t n)
+{
+    const bool lo = meta->min_val > -PARAM_RANGE_OPEN;
+    const bool hi = meta->max_val <  PARAM_RANGE_OPEN;
+    if (lo && hi)
+        snprintf(out, n, "%.7g \xe2\x80\x93 %.7g", (double)meta->min_val, (double)meta->max_val);
+    else if (lo)
+        snprintf(out, n, "\xe2\x89\xa5 %.7g", (double)meta->min_val);
+    else
+        snprintf(out, n, "\xe2\x89\xa4 %.7g", (double)meta->max_val);
+}
+
+// ── Bitmasks ──────────────────────────────────────────────────────────────────
+
+int param_bitmask_width(uint8_t mav_type)
+{
+    switch (mav_type) {
+    case MAV_PARAM_TYPE_UINT8:  case MAV_PARAM_TYPE_INT8:  return 8;
+    case MAV_PARAM_TYPE_UINT16: case MAV_PARAM_TYPE_INT16: return 16;
+    default:                                               return 32;
+    }
+}
+
+uint32_t param_bitmask_from_value(float v, uint8_t mav_type)
+{
+    const uint32_t u = (uint32_t)(int64_t)v;
+    const int      w = param_bitmask_width(mav_type);
+    return w < 32 ? u & ((1u << w) - 1u) : u;
+}
+
+float param_bitmask_to_value(uint32_t bits, uint8_t mav_type)
+{
+    const int  w      = param_bitmask_width(mav_type);
+    const bool is_sig = mav_type == MAV_PARAM_TYPE_INT8  ||
+                        mav_type == MAV_PARAM_TYPE_INT16 ||
+                        mav_type == MAV_PARAM_TYPE_INT32;
+    if (is_sig && ((bits >> (w - 1)) & 1u))
+        return (float)((int64_t)bits - ((int64_t)1 << w));
+    return (float)bits;
+}
+
+void param_bitmask_hex(char* out, size_t n, uint32_t bits, uint8_t mav_type)
+{
+    snprintf(out, n, "0x%0*X", param_bitmask_width(mav_type) / 4, bits);
+}

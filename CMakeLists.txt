@@ -457,6 +457,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/source/cache_dir.cpp
     frontend/source/terrain.cpp
     frontend/source/terrain_clearance.cpp
+    frontend/source/mission_cmds.cpp
     frontend/source/audio.cpp
     frontend/source/joystick.cpp
     frontend/source/tile_source.cpp
@@ -466,11 +467,30 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/components/sidebar_left/tab_connection.cpp
     frontend/components/sidebar_left/tab_flight.cpp
     frontend/components/sidebar_left/tab_params.cpp
+    frontend/components/sidebar_left/params/info.cpp
+    frontend/components/sidebar_left/params/editors.cpp
+    frontend/components/sidebar_left/params/file.cpp
     frontend/components/sidebar_left/tab_themes.cpp
     frontend/components/sidebar_left/tab_mission.cpp
+    frontend/components/sidebar_left/mission/fields.cpp
+    frontend/components/sidebar_left/mission/add.cpp
+    frontend/components/sidebar_left/mission/fence.cpp
+    frontend/components/sidebar_left/mission/list.cpp
     frontend/components/sidebar_left/tab_mavlink.cpp
     frontend/components/sidebar_left/tab_rc.cpp
+    frontend/components/sidebar_left/rc/helpers.cpp
+    frontend/components/sidebar_left/rc/radio.cpp
+    frontend/components/sidebar_left/rc/radio_binding.cpp
+    frontend/components/sidebar_left/rc/joystick.cpp
+    frontend/components/sidebar_left/rc/joystick_buttons.cpp
+    frontend/components/sidebar_left/rc/joystick_virtuals.cpp
+    frontend/components/sidebar_left/rc/joystick_output.cpp
     frontend/components/sidebar_left/tab_sensors.cpp
+    frontend/components/sidebar_left/sensors/common.cpp
+    frontend/components/sidebar_left/sensors/accel.cpp
+    frontend/components/sidebar_left/sensors/gyro.cpp
+    frontend/components/sidebar_left/sensors/mag.cpp
+    frontend/components/sidebar_left/sensors/coverage_sphere.cpp
     frontend/components/sidebar_left/mavlink_display_generated.cpp
     frontend/components/sidebar_left/mavlink_field_catalog_generated.cpp
     frontend/components/sidebar_themes.cpp
@@ -478,13 +498,38 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/elements/center_view.cpp
     frontend/components/splash_screen.cpp
     frontend/source/video_player.cpp
-    frontend/components/map_view.cpp
-    frontend/components/map_view_3d.cpp
+    frontend/components/map/map_view.cpp
+    frontend/components/map/map2d/input.cpp
+    frontend/components/map/map2d/menus.cpp
+    frontend/components/map/map2d/chrome.cpp
+    frontend/components/map/map2d/fences.cpp
+    frontend/components/map/map2d/layers.cpp
+    frontend/components/map/tiles.cpp
+    frontend/components/map/tracks.cpp
+    frontend/components/map/symbols.cpp
+    frontend/components/map/overlay.cpp
+    frontend/components/map/map_view_3d.cpp
+    frontend/components/map/map3d/gl.cpp
+    frontend/components/map/map3d/airframes.cpp
+    frontend/components/map/map3d/heights.cpp
+    frontend/components/map/map3d/craft.cpp
+    frontend/components/map/map3d/scene.cpp
+    frontend/components/map/map3d/overlays.cpp
+    frontend/components/map/map3d/pick.cpp
+    frontend/components/map/map3d/bands.cpp
+    frontend/components/map/map3d/edit.cpp
     frontend/source/gl3.cpp
     frontend/source/stb_impl.cpp
     frontend/source/app_icon.cpp
     frontend/elements/sidebar_right.cpp
+    frontend/components/sidebar_right/attitude_ball.cpp
+    frontend/components/sidebar_right/hud_parts.cpp
+    frontend/components/sidebar_right/hud.cpp
+    frontend/components/sidebar_right/event_log.cpp
+    frontend/components/sidebar_right/event_log_view.cpp
+    frontend/components/sidebar_right/telemetry_grid.cpp
     frontend/components/ui_kit.cpp
+    frontend/components/file_dialog.cpp
     frontend/source/vehicle_ui_state.cpp
     frontend/source/param_meta.cpp
     frontend/source/param_meta_arducopter.cpp

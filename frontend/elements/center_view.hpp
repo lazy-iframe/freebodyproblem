@@ -20,7 +20,7 @@
 #include "backend/mavlink/parser/parser.hpp"
 #include "plugins/plugin_api.hpp"
 #include "frontend/source/mission_pick.hpp"
-#include "frontend/components/map_view.hpp"
+#include "frontend/components/map/map_view.hpp"
 
 #include <vector>
 

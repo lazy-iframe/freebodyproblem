@@ -156,3 +156,29 @@ ParamKind param_effective_kind(const ParamMeta* meta, uint8_t mav_param_type);
 // Display name for a kind, "Bitmask", and for a MAV_PARAM_TYPE, "int16".
 const char* param_kind_name(ParamKind k);
 const char* param_mav_type_name(uint8_t mav_param_type);
+
+// True when a plain number sits outside the range its reference documents.
+// A warning, never a block: the range is the documentation's, not the
+// firmware's, and a developer may mean to go past it. Enums and bitmasks have
+// their own editors and no range to speak of.
+bool param_out_of_range(const ParamMeta* meta, ParamKind kind, float v);
+
+// "0 – 1", or "≥ 0" / "≤ 20" where the page leaves one end open.
+void param_format_range(const ParamMeta* meta, char* out, size_t n);
+
+// ── Bitmasks ──────────────────────────────────────────────────────────────────
+//
+// PARAM_VALUE carries every parameter as a float holding the number, whatever
+// the vehicle stores it as. A bitmask in an int8 with bit 7 set therefore
+// arrives as -128, and read straight into 32 bits it would claim bits 7–31.
+// Masked to the storage width on the way in and sign-folded back on the way
+// out, so the checkboxes show exactly the bits the vehicle holds.
+
+// Bits the vehicle stores a MAV_PARAM_TYPE in: 8, 16 or 32.
+int      param_bitmask_width(uint8_t mav_param_type);
+uint32_t param_bitmask_from_value(float v, uint8_t mav_param_type);
+float    param_bitmask_to_value(uint32_t bits, uint8_t mav_param_type);
+
+// "0x00FF" — as many hex digits as the storage holds, so a byte-wide mask does
+// not read as eight digits of mostly zeros.
+void param_bitmask_hex(char* out, size_t n, uint32_t bits, uint8_t mav_param_type);

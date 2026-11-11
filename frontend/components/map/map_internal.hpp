@@ -15,17 +15,20 @@
  * limitations under the License.
  **************************************************************************/
 
-
-// frontend/components/map_view_internal.hpp
+// frontend/components/map/map_internal.hpp
 //
 // What the 2D map shares with the 3D view drawn in its place
 // (map_view_3d.cpp): the imagery tile cache, the trails, and the symbols.
 // Not for anything else — the public face of the map is map_view.hpp.
 
 #pragma once
-#include "frontend/components/map_view.hpp"
+#include "frontend/components/map/map_view.hpp"
 #include "frontend/components/ui_kit.hpp"
+#include "frontend/source/vehicle_ui_state.hpp"
+#include <cmath>
+#include <cstddef>
 #include <deque>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -51,7 +54,6 @@ inline ImVec4 map_amber()
     return g_theme.accent;
 }
 inline ImU32 map_amber_u32(float alpha = 1.0f) { return ui_col(map_amber(), alpha); }
-
 
 // The imagery tile (z, x, y) as a GL texture, or 0 while it is not loaded —
 // in which case `queue` asks for it. Main (GL) thread only.
@@ -116,3 +118,93 @@ void map_draw_vehicle_tags(ImDrawList* dl, ImVec2 centre, float above, const Map
 
 // The imagery source's attribution line, as the 2D map shows it.
 std::string map_tile_attribution();
+
+// ── Shared internals ──────────────────────────────────────────────────────────
+//
+// What the map's files share beyond the functions above: the tile key and its
+// maths, the texture cache, the trail registry and two symbols.
+
+#ifndef M_PI
+#  define M_PI 3.14159265358979323846
+#endif
+
+namespace map_detail {
+
+// ── Tile key ──────────────────────────────────────────────────────────────────
+
+struct TileKey {
+    int x, y, z;
+    bool operator==(const TileKey& o) const { return x==o.x && y==o.y && z==o.z; }
+};
+
+struct TileKeyHash {
+    size_t operator()(const TileKey& k) const noexcept {
+        size_t h = (size_t)(unsigned)k.z;
+        h = h * 2654435761u ^ (size_t)(unsigned)k.x;
+        h = h * 2654435761u ^ (size_t)(unsigned)k.y;
+        return h;
+    }
+};
+
+// ── Web Mercator tile math ─────────────────────────────────────────────────────
+
+inline void lat_lon_to_tile_frac(double lat, double lon, int z,
+                                  double& tx, double& ty)
+{
+    double n = (double)(1 << z);
+    tx = (lon + 180.0) / 360.0 * n;
+    double r = lat * M_PI / 180.0;
+    ty = (1.0 - std::log(std::tan(r) + 1.0 / std::cos(r)) / M_PI) / 2.0 * n;
+}
+
+inline void tile_frac_to_lat_lon(double tx, double ty, int z,
+                                   double& lat, double& lon)
+{
+    double n = (double)(1 << z);
+    lon = tx / n * 360.0 - 180.0;
+    lat = std::atan(std::sinh(M_PI * (1.0 - 2.0 * ty / n))) * 180.0 / M_PI;
+}
+
+// tiles.cpp  (GLuint is unsigned; this header stays free of OpenGL)
+extern std::unordered_map<TileKey, unsigned, TileKeyHash> g_textures;
+void drain_upload_queue();
+void queue_tile(const TileKey& wanted);
+void flush_stale_requests(int keep_zoom);
+void ensure_started();
+bool draw_fallback_tile(ImDrawList* dl,
+                         int tx, int ty, int z,
+                         float sx, float sy);
+
+// tracks.cpp
+struct VehicleTrack {
+    std::deque<TrackPoint> pts;
+};
+
+// Every vehicle's trail, not just the bound one's — the map draws the whole
+// fleet, so it has to be able to reach a track it is not currently bound to.
+// VehicleUiState would give only the bound vehicle, so this keeps its own map
+// and registers the same forgetter it would have; the registry it registers
+// into is function-local, so this file-scope constructor is safe.
+struct TrackRegistry {
+    std::unordered_map<VehicleId, VehicleTrack, VehicleIdHash> by_vehicle;
+
+    TrackRegistry()
+    {
+        detail::ui_register_forgetter(
+            [this](VehicleId id) { by_vehicle.erase(id); });
+    }
+};
+extern TrackRegistry g_tracks;
+
+// symbols.cpp
+// The aircraft's heading line and its line of sight home, so the two read as a pair.
+inline constexpr float INDICATOR_LINE_W = 2.5f;
+void draw_home(ImDrawList* dl, ImVec2 c, bool active);
+void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
+                   ImVec2 wp, float win_w, float win_h);
+
+// overlay.cpp
+constexpr float OVL_M   = 8.0f;    // from the map's edges
+extern float s_ac_right;
+
+} // namespace map_detail

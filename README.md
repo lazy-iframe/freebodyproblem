@@ -1540,13 +1540,34 @@ the serial handle, drains them.
   - **audio.cpp**: synthesised cue tones and accelerating progress ticks — lock-free voice pool mixed on the miniaudio callback
   - **layout_rules.hpp**: The screen layout as plain arithmetic, free of ImGui — sidebar widths in glyphs, the narrow cutoff, and the stacked or side-by-side split of MAP + VIDEO and of the SWARM map. **layout.hpp** feeds it the live window and the measured width of a glyph
   - **goto_target.hpp** / **mission_pick.hpp**: The two-way state the map is driven through — a clicked position target and a waypoint being picked. The map never holds a sender; it reports what the operator asked for and the panel that owns the vehicle sends it
+  - **mission_cmds.cpp**: The mission commands the editor knows by name — what each is called, what its parameters mean, and whether it has a position and a height
   - **vehicle_ui_state.hpp**: Panel state that belongs to a vehicle rather than a panel — a calibration in progress, staged parameter edits, the mission being planned — keyed by vehicle instead of held in a file-scope static, and dropped when that vehicle goes
   - **video_player.cpp**: GStreamer pipeline wrapper with RGB frame extraction
 - **components/**: Widgets drawn inside a screen division
-  - **map_view.cpp**: Multi-threaded tile fetcher with OpenGL texture upload, and everything drawn over it — the fleet's aircraft symbols and labels, per-vehicle trails, home pads, the mission overlay and the GO HERE menu
+  - **map/**: The map, flat and 3D, and what the two views share
+    - **tiles.cpp**: multi-threaded tile fetcher, disk cache and OpenGL texture cache — the imagery both views draw
+    - **tracks.cpp** / **symbols.cpp** / **overlay.cpp**: per-vehicle trails; home, vehicle and aircraft symbols; the tags and lines drawn over either view
+    - **map_view.cpp**: the map window — `draw_map_view()` in outline, one call per step, and the switch to 3D
+    - **map2d/**: the flat map's steps, sharing map2d_internal.hpp and a per-frame `MapFrame`
+      - **input.cpp**: pan and zoom, a pick's click, EDIT and FENCE EDIT drags, the GO HERE and CLEAR clicks — called in a fixed order, which decides who gets a press
+      - **layers.cpp** / **fences.cpp**: what is drawn over the tiles, bottom to top; the geofences
+      - **menus.cpp** / **chrome.cpp**: the GO HERE and CLEAR menus; the control column, A/C block, scale bar, north pointer and attribution
+    - **map_view_3d.cpp**: the 3D view's entry points: the camera, its input, and the frame put together from the parts in map3d/
+    - **map3d/**: the 3D view's parts, sharing map3d_internal.hpp
+      - **gl.cpp** / **airframes.cpp**: shaders, GL objects and the offscreen target; the airframe meshes and their texture
+      - **heights.cpp** / **scene.cpp**: terrain height textures; the tile quadtree, imagery and drawing the frame
+      - **craft.cpp** / **overlays.cpp**: aircraft poses and models; trails, mission, drop lines and gizmos drawn over the frame
+      - **bands.cpp**: the mission path and geofence walls cast onto the terrain
+      - **pick.cpp** / **edit.cpp**: placing mission items and GO HERE points in 3D; moving waypoints in EDIT
   - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
   - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
+  - **file_dialog.cpp**: The app's file browser (over ImGuiFileDialog), for any panel that reads or writes a file
   - **sidebar_left/**: The left panel's tabs (connection, flight, params, themes, mission, MAVLink, radio, sensors)
+    - **rc/**: the RADIO tab's sections — the radio's monitor, calibration and bindings, and the joystick's axes, buttons, virtual channels and output; `tab_rc.cpp` lays them out
+    - **params/**: the PARAMS tab's parts — the value editors (enum list, bitmask checkboxes, number field), the parameter info popup, and loading and saving .params files; `tab_params.cpp` keeps the list, staging and WRITE ALL
+    - **sensors/**: the SENSORS tab's calibration sections — accelerometer (six positions), gyroscope and compass (with its coverage sphere) — and the sensor inventory they share; `tab_sensors.cpp` keeps the pump that feeds the calibrations and lays the sections out
+    - **mission/**: the MISSION tab's parts — the waypoint list, an opened item's fields, the add grid, and the whole GEOFENCE view; `tab_mission.cpp` keeps the editor's sync with the vehicle, map-pick handling, EDIT, the terrain summary and upload
+  - **sidebar_right/**: The right panel's sections — the HUD (`hud.cpp`, `hud_parts.cpp`), the classic attitude ball, the fleet event log (`event_log.cpp` takes lines in, `event_log_view.cpp` draws them) and the telemetry grid; the SWARM view and the fullscreen map's overlay draw them too. `elements/sidebar_right.cpp` lays them out
     - **mavlink_display_generated.cpp**: Auto-generated message field decoders (from MAVLink XML)
 - **elements/**: The major screen divisions — topbar, left sidebar, right sidebar, centre view, SWARM view
 
@@ -1583,7 +1604,8 @@ freebodyproblem/
 ├── frontend/             # ImGui UI, rendering; main.cpp is the entry point
 │   ├── source/           # Non-drawing support: settings, terrain, tiles, theme, layout
 │   ├── components/       # Reusable widgets: map, plugin rail, UI kit, dialogs
-│   │   └── sidebar_left/ # Per-tab left sidebar modules
+│   │   ├── sidebar_left/ # Per-tab left sidebar modules
+│   │   └── sidebar_right/ # HUD, event log, telemetry grid
 │   └── elements/         # Major screen divisions: topbar, sidebars, centre view
 ├── plugins/              # User C++ functions bound to the button rail
 ├── adapter/              # freebodyproblem-mcp: stdio bridge for MCP hosts

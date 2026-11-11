@@ -23,7 +23,7 @@
 #include "frontend/source/terrain.hpp"
 #include "frontend/source/terrain_clearance.hpp"
 #include "frontend/source/audio.hpp"
-#include "frontend/components/map_view.hpp"
+#include "frontend/components/map/map_view.hpp"
 #include "frontend/components/mcp_approval.hpp"
 #include "backend/mcp/mcp_server.hpp"
 #include "backend/mavlink/sender/sender.hpp"
