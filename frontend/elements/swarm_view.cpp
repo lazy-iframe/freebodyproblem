@@ -17,7 +17,7 @@
 
 #include "frontend/elements/swarm_view.hpp"
 #include "frontend/source/layout.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/elements/sidebar_left.hpp"    // FlightTarget, draw_flight_section, draw_ekf_bars
 #include "frontend/elements/sidebar_right.hpp"   // attitude ball, telemetry grid, event log
 #include "frontend/elements/topbar.hpp"          // mode_display_name, interlock_latched

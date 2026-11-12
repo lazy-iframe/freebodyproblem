@@ -307,37 +307,62 @@ const char* mav_component_name(uint8_t compid)
 const char* mav_autopilot_name(uint8_t autopilot)
 {
     switch (autopilot) {
-    case 0:  return "generic";
-    case 3:  return "ArduPilot";
-    case 8:  return "invalid";      // MAV_AUTOPILOT_INVALID — not an autopilot
-    case 12: return "PX4";
-    default: return nullptr;
+    case MAV_AUTOPILOT_GENERIC:        return "generic";
+    case MAV_AUTOPILOT_ARDUPILOTMEGA:  return "ArduPilot";
+    case MAV_AUTOPILOT_INVALID:        return "invalid";   // not an autopilot
+    case MAV_AUTOPILOT_PX4:            return "PX4";
+    default:                           return nullptr;
     }
 }
 
+// By the enum's own names, never raw numbers: the numbering is dense and a
+// table written by hand drifts by one without anyone noticing.
 const char* mav_vehicle_type_name(uint8_t type)
 {
     switch (type) {
-    case 1:  return "fixed wing";
-    case 2:  return "quadrotor";
-    case 3:  return "coaxial";
-    case 4:  return "helicopter";
-    case 5:  return "antenna tracker";
-    case 6:  return "GCS";
-    case 10: return "ground rover";
-    case 11: return "surface boat";
-    case 12: return "submarine";
-    case 13: return "hexarotor";
-    case 14: return "octorotor";
-    case 15: return "tricopter";
-    case 18: return "VTOL (duorotor)";
-    case 19: return "VTOL (quadrotor)";
-    case 20: return "VTOL (tiltrotor)";
-    case 26: return "gimbal";
-    case 27: return "ADS-B";
-    case 29: return "camera";
-    case 30: return "charging station";
-    case 31: return "onboard controller";
-    default: return nullptr;
+    case MAV_TYPE_FIXED_WING:                 return "fixed wing";
+    case MAV_TYPE_QUADROTOR:                  return "quadrotor";
+    case MAV_TYPE_COAXIAL:                    return "coaxial";
+    case MAV_TYPE_HELICOPTER:                 return "helicopter";
+    case MAV_TYPE_ANTENNA_TRACKER:            return "antenna tracker";
+    case MAV_TYPE_GCS:                        return "GCS";
+    case MAV_TYPE_AIRSHIP:                    return "airship";
+    case MAV_TYPE_FREE_BALLOON:               return "free balloon";
+    case MAV_TYPE_ROCKET:                     return "rocket";
+    case MAV_TYPE_GROUND_ROVER:               return "ground rover";
+    case MAV_TYPE_SURFACE_BOAT:               return "surface boat";
+    case MAV_TYPE_SUBMARINE:                  return "submarine";
+    case MAV_TYPE_HEXAROTOR:                  return "hexarotor";
+    case MAV_TYPE_OCTOROTOR:                  return "octorotor";
+    case MAV_TYPE_TRICOPTER:                  return "tricopter";
+    case MAV_TYPE_FLAPPING_WING:              return "flapping wing";
+    case MAV_TYPE_KITE:                       return "kite";
+    case MAV_TYPE_ONBOARD_CONTROLLER:         return "onboard controller";
+    case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:   return "VTOL (tailsitter, duorotor)";
+    case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:  return "VTOL (tailsitter, quadrotor)";
+    case MAV_TYPE_VTOL_TILTROTOR:             return "VTOL (tiltrotor)";
+    case MAV_TYPE_VTOL_FIXEDROTOR:            return "VTOL (fixed rotor)";
+    case MAV_TYPE_VTOL_TAILSITTER:            return "VTOL (tailsitter)";
+    case MAV_TYPE_VTOL_TILTWING:              return "VTOL (tiltwing)";
+    case MAV_TYPE_GIMBAL:                     return "gimbal";
+    case MAV_TYPE_ADSB:                       return "ADS-B";
+    case MAV_TYPE_PARAFOIL:                   return "parafoil";
+    case MAV_TYPE_DODECAROTOR:                return "dodecarotor";
+    case MAV_TYPE_CAMERA:                     return "camera";
+    case MAV_TYPE_CHARGING_STATION:           return "charging station";
+    case MAV_TYPE_FLARM:                      return "FLARM";
+    case MAV_TYPE_SERVO:                      return "servo";
+    case MAV_TYPE_ODID:                       return "Open Drone ID";
+    case MAV_TYPE_DECAROTOR:                  return "decarotor";
+    case MAV_TYPE_BATTERY:                    return "battery";
+    case MAV_TYPE_PARACHUTE:                  return "parachute";
+    case MAV_TYPE_LOG:                        return "logger";
+    case MAV_TYPE_OSD:                        return "OSD";
+    case MAV_TYPE_IMU:                        return "IMU";
+    case MAV_TYPE_GPS:                        return "GPS";
+    case MAV_TYPE_WINCH:                      return "winch";
+    case MAV_TYPE_GENERIC_MULTIROTOR:         return "multirotor";
+    case MAV_TYPE_ILLUMINATOR:                return "illuminator";
+    default:                                  return nullptr;
     }
 }

@@ -15,10 +15,10 @@
  * limitations under the License.
  **************************************************************************/
 
-// frontend/components/file_dialog.cpp
+// frontend/components/others/file_dialog.cpp
 
-#include "frontend/components/file_dialog.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/file_dialog.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/theme.hpp"
 #include "imgui.h"
 #include "ImGuiFileDialog.h"
@@ -41,32 +41,16 @@ void file_dialog_open(const FileDialogSpec& spec, const std::string& last_path)
     ImGuiFileDialog::Instance()->OpenDialog(spec.key, spec.title, spec.filters, cfg);
 }
 
-// Same border-and-background treatment ui_push_dialog_style() gives the app's
-// own popups, without its padding/spacing — those are tuned for a centered
-// title and a button row, and would just leave the file browser's table
-// looking sparse. Colors alone are enough for the dialog to read as this
-// app's rather than a bolted-on default-ImGui one; apply_global_theme()
-// already zeroed every corner radius globally, so the squared-off look is
-// free.
-static void push_file_dialog_style()
-{
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, g_theme.bg_panel);
-    ImGui::PushStyleColor(ImGuiCol_Border,  ui_col(g_theme.accent, 0.55f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-}
-
-static void pop_file_dialog_style()
-{
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(2);
-}
-
 // Display() returns at once for a key that is not the open dialog, so polling
 // every frame costs nothing for the ones that are shut.
 bool file_dialog_poll(const char* key, std::string& path_out)
 {
     bool ok = false;
-    push_file_dialog_style();
+    // The app's popup frame, without the dialog style's padding and spacing —
+    // those are tuned for a centred title and a button row, and would leave the
+    // browser's table looking sparse. apply_global_theme() already squared off
+    // every corner.
+    ui_push_popup_frame();
     if (ImGuiFileDialog::Instance()->Display(key, ImGuiWindowFlags_NoCollapse,
                                              { 640.0f, 420.0f })) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
@@ -75,6 +59,6 @@ bool file_dialog_poll(const char* key, std::string& path_out)
         }
         ImGuiFileDialog::Instance()->Close();
     }
-    pop_file_dialog_style();
+    ui_pop_popup_frame();
     return ok;
 }

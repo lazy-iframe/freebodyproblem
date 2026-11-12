@@ -35,13 +35,8 @@
 #include <unordered_map>
 #include <vector>
 
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
-
 namespace map3d_detail {
 
-constexpr double EARTH_C   = 40075016.686;   // Web Mercator world width, metres
 constexpr double EARTH_R   = 6371000.0;      // for the curve; the terrain shader has its own copy
 constexpr double DEG       = M_PI / 180.0;
 constexpr int    GRID      = 32;             // cells per tile edge
@@ -135,24 +130,6 @@ inline V4 xform(const M4& m, V3 p)
              m.m[1] * p.x + m.m[5] * p.y + m.m[9]  * p.z + m.m[13],
              m.m[2] * p.x + m.m[6] * p.y + m.m[10] * p.z + m.m[14],
              m.m[3] * p.x + m.m[7] * p.y + m.m[11] * p.z + m.m[15] };
-}
-
-// ── Web Mercator ──────────────────────────────────────────────────────────────
-
-// A point as a fraction of the world, 0..1 east from the antimeridian and
-// south from the top.
-inline void merc(double lat, double lon, double& u, double& v)
-{
-    lat = std::clamp(lat, -85.0511, 85.0511);
-    const double r = lat * DEG;
-    u = (lon + 180.0) / 360.0;
-    v = (1.0 - std::log(std::tan(r) + 1.0 / std::cos(r)) / M_PI) / 2.0;
-}
-
-inline void unmerc(double u, double v, double& lat, double& lon)
-{
-    lon = u * 360.0 - 180.0;
-    lat = std::atan(std::sinh(M_PI * (1.0 - 2.0 * v))) / DEG;
 }
 
 // ── map_view_3d.cpp ──────────────────────────────────────────────────────────
@@ -278,7 +255,7 @@ struct Frame {
     V3 world(double lat, double lon, double amsl) const
     {
         double u, v;
-        merc(lat, lon, u, v);
+        geo_mercator(lat, lon, u, v);
         const double x = (u - u0) * m, y = -(v - v0) * m;
         return { x, y, (amsl - href) * exag - drop(x, y) };
     }
@@ -355,7 +332,6 @@ ImU32 under_col(float alpha = 1.0f);
 void draw_path(ImDrawList* dl, const Frame& f, V3 a, V3 b, ImU32 col, float w, ImU32 under);
 void drop_line(ImDrawList* dl, const Frame& f, V3 eye, V3 top, double ground_amsl, float alpha = 1.0f);
 void draw_trails(ImDrawList* dl, const Frame& f, const std::vector<MapVehicle>& fleet);
-std::optional<float> plan_home_amsl(const MapVehicle* active, const std::vector<MissionItem>* mission);
 void draw_clearance(ImDrawList* dl, const Frame& f, V3 a, V3 b, const Clearance& c);
 void draw_mission(ImDrawList* dl, const Frame& f, V3 eye, const std::vector<MissionItem>& mission,
                   const MapVehicle* active);
@@ -406,6 +382,10 @@ void place_bands(const Frame& f, V3 eye, const BandSet& set, Projection& out);
 const BandSet& mission_bands(const std::vector<MissionItem>& mission, const MapVehicle* active);
 const BandSet& fence_bands(const FencePlan* zones, const MapVehicle* active,
                            const std::vector<MissionItem>* mission);
+// The fence's outlines traced on the ground, dotted, while the active vehicle
+// has it off — what fence_bands() raises as walls while it is on.
+void draw_fence_off(ImDrawList* dl, const Frame& f, const FencePlan* zones,
+                    const MapVehicle* active);
 
 // ── edit.cpp ─────────────────────────────────────────────────────────────────
 

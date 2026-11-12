@@ -78,6 +78,4 @@ void gcs_progress(const char* channel, float fraction);
 
 // Master switches, persisted in settings.json. Volume is linear 0..1.
 void  audio_set_enabled(bool on);
-bool  audio_enabled();
 void  audio_set_volume(float v);
-float audio_volume();

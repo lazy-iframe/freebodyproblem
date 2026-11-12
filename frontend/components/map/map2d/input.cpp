@@ -41,10 +41,10 @@ static void pan_by_pixels(float dx, float dy)
 {
     constexpr double TILE_PX = 256.0;
     double tx, ty;
-    lat_lon_to_tile_frac(g_map.center_lat, g_map.center_lon, g_map.zoom, tx, ty);
+    geo_to_tile(g_map.center_lat, g_map.center_lon, g_map.zoom, tx, ty);
     tx -= (double)dx / TILE_PX;
     ty -= (double)dy / TILE_PX;
-    tile_frac_to_lat_lon(tx, ty, g_map.zoom, g_map.center_lat, g_map.center_lon);
+    geo_from_tile(tx, ty, g_map.zoom, g_map.center_lat, g_map.center_lon);
     g_map.center_lat = std::max(-85.0, std::min(85.0, g_map.center_lat));
     while (g_map.center_lon >  180.0) g_map.center_lon -= 360.0;
     while (g_map.center_lon < -180.0) g_map.center_lon += 360.0;

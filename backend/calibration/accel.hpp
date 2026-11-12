@@ -68,7 +68,6 @@ const char* accel_cal_pos_label(AccelCalPos pos);
 // readout that can show what is still to come.
 int         accel_cal_pos_count();
 AccelCalPos accel_cal_pos_at(int index);          // 0-based; None if out of range
-int         accel_cal_pos_index(AccelCalPos pos); // 0-based; -1 if not one of the six
 
 class AccelCalibration {
 public:

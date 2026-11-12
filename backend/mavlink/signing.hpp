@@ -109,12 +109,6 @@ void set_require_signed(LinkKey* link, bool on);
 uint64_t next_timestamp();
 void     observe_timestamp(uint64_t ts);
 
-// What a connection signs with. Stable across reconnects and restarts: a vehicle holds a
-// fixed number of streams until it reboots (16 on ArduPilot), and each new link id takes
-// another. Differs between installs, so two ground stations on one vehicle do not share
-// a stream, whose timestamps would collide.
-uint8_t link_id(const LinkKey* link);
-
 // `frame` as it goes on the wire, signed, in `out`. False if it is to go as it is: no
 // link, no key, or not a MAVLink 2 frame.
 bool sign_frame(LinkKey* link, const std::vector<uint8_t>& frame, std::vector<uint8_t>& out);

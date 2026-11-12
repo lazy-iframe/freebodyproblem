@@ -56,7 +56,8 @@ struct FenceParams {
     static constexpr uint32_t TYPE_POLYGON = 1u << 2;
     static constexpr uint32_t TYPE_ALT_MIN = 1u << 3;
 
-    // Known to be switched off. The map draws nothing of a fence that is.
+    // Known to be switched off. The map draws such a fence dotted and unfilled,
+    // and the 3D view puts up no walls for it.
     bool disabled() const { return has_enable && !enabled; }
 
     // A horizontal cylinder is configured: a radius, and on ArduPilot the

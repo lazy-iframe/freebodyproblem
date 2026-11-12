@@ -81,9 +81,13 @@ the serial handle, drains them.
       - **craft.cpp** / **overlays.cpp**: aircraft poses and models; trails, mission, drop lines and gizmos drawn over the frame
       - **bands.cpp**: the mission path and geofence walls cast onto the terrain
       - **pick.cpp** / **edit.cpp**: placing mission items and GO HERE points in 3D; moving waypoints in EDIT
-  - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
-  - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
-  - **file_dialog.cpp**: The app's file browser (over ImGuiFileDialog), for any panel that reads or writes a file
+  - **others/**: Widgets that belong to no one screen area
+    - **ui_kit.cpp**: The shared drawing kit — buttons, readout tiles, panel headers, tab headings, the popup frame and dialog style every panel draws with
+    - **sidebar_themes.cpp**: The SETTINGS tab's panel — themes and colours, and the app's settings
+    - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
+    - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
+    - **file_dialog.cpp**: The app's file browser (over ImGuiFileDialog), for any panel that reads or writes a file
+    - **splash_screen.cpp** / **crt_overlay.cpp**: The start-up splash; the optional CRT treatment (scanlines in the plates, darkened edges)
   - **sidebar_left/**: The left panel's tabs (connection, flight, params, themes, mission, MAVLink, radio, sensors)
     - **rc/**: the RADIO tab's sections — the radio's monitor, calibration and bindings, and the joystick's axes, buttons, virtual channels and output; `tab_rc.cpp` lays them out
     - **params/**: the PARAMS tab's parts — the value editors (enum list, bitmask checkboxes, number field), the parameter info popup, and loading and saving .params files; `tab_params.cpp` keeps the list, staging and WRITE ALL
@@ -97,6 +101,13 @@ the serial handle, drains them.
 - **plugin_api.hpp**: What a plugin sees and how it registers — buttons, startup hooks, video-gesture handlers
 - **plugin_registry.cpp**: Registration lists, startup pass, and dispatch
 - **user_plugins.cpp**: Example slots, yours to edit — see [plugins/README.md](https://github.com/lazy-iframe/freebodyproblem/blob/main/plugins/README.md)
+
+## Shared code (`lib/`)
+Code that more than one part of the app needs and that belongs to none of them. It depends on nothing in `backend/` or `frontend/`, so either may include it; a helper used in only one place stays where it is used.
+- **geo.cpp**: Positions on the earth — exact WGS84 distance (Vincenty), flat-earth distance and north/east offset for the short spans the map and the mission editor work over, and Web Mercator in world fractions and in tiles
+- **mav_result.cpp**: `MAV_RESULT` as its enum name for protocol traces, and as plain words for the log and the calibration panels
+- **text.cpp**: Case changes, comparing and searching without regard to case, and a duration as `hh:mm:ss`
+- **tile_fetch.cpp**: What the map imagery and the terrain heights share in fetching z/x/y tiles: splitting and filling the URL template, the on-disk cache layout, reading and saving cached tiles, and the HTTP client setup
 
 ## Code Generation
 - **scripts/gen_mavlink_display.py**: Parses MAVLink XML definitions to generate C++ field decoders for all message types
@@ -125,10 +136,13 @@ freebodyproblem/
 │   └── mcp/              # Built-in MCP server
 ├── frontend/             # ImGui UI, rendering; main.cpp is the entry point
 │   ├── source/           # Non-drawing support: settings, terrain, tiles, theme, layout
-│   ├── components/       # Reusable widgets: map, plugin rail, UI kit, dialogs
+│   ├── components/       # Widgets drawn inside a screen division
+│   │   ├── map/          # The map, flat and 3D
 │   │   ├── sidebar_left/ # Per-tab left sidebar modules
-│   │   └── sidebar_right/ # HUD, event log, telemetry grid
+│   │   ├── sidebar_right/ # HUD, event log, telemetry grid
+│   │   └── others/       # UI kit, theme editor, plugin rail, dialogs, splash
 │   └── elements/         # Major screen divisions: topbar, sidebars, centre view
+├── lib/                  # Shared code used across backend and frontend: geo, MAV_RESULT, text, tile fetching
 ├── plugins/              # User C++ functions bound to the button rail
 ├── adapter/              # freebodyproblem-mcp: stdio bridge for MCP hosts
 ├── scripts/              # Python code generators

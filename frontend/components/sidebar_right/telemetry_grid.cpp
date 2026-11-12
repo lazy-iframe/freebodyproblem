@@ -25,10 +25,11 @@
 #include "frontend/source/vehicle_ui_state.hpp"
 #include "frontend/source/layout.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "imgui.h"
 #include "frontend/components/sidebar_left/mavlink_field_catalog_generated.hpp"
 #include "frontend/source/settings.hpp"
+#include "lib/text.hpp"
 #include <vector>
 #include <cstdio>
 #include <cstring>
@@ -103,29 +104,6 @@ static uint32_t s_picker_sel_msg         = UINT32_MAX;
 static char     s_picker_sel_field[64]   = {};
 static char     s_picker_sel_label[48]   = {};
 
-// ── Case-insensitive substring helper ────────────────────────────────────────
-
-static bool ci_contains(const char* haystack, const char* needle_lower)
-{
-    if (!needle_lower[0]) return true;
-    char h[128]; h[0] = '\0';
-    size_t hl = strlen(haystack);
-    for (size_t k = 0; k < hl && k < 127; ++k)
-        h[k] = (char)tolower((unsigned char)haystack[k]);
-    h[hl < 127 ? hl : 127] = '\0';
-    return strstr(h, needle_lower) != nullptr;
-}
-
-// Build lowercase filter once per call ────────────────────────────────────────
-static void make_lower(const char* src, char* dst, size_t dstsz)
-{
-    size_t n = strlen(src);
-    if (n >= dstsz) n = dstsz - 1;
-    for (size_t k = 0; k < n; ++k)
-        dst[k] = (char)tolower((unsigned char)src[k]);
-    dst[n] = '\0';
-}
-
 // ── Picker helpers ────────────────────────────────────────────────────────────
 
 // Returns unique message IDs whose fields match the filter.
@@ -133,8 +111,6 @@ static void make_lower(const char* src, char* dst, size_t dstsz)
 // When filter is set, searches field labels (not message names).
 static std::vector<uint32_t> picker_unique_msgs(const char* filter)
 {
-    char flt[128] = {};
-    make_lower(filter, flt, sizeof(flt));
 
     std::vector<uint32_t> result;
     uint32_t prev_id = UINT32_MAX;
@@ -150,15 +126,15 @@ static std::vector<uint32_t> picker_unique_msgs(const char* filter)
         }
 
         bool match;
-        if (!flt[0]) {
+        if (!filter[0]) {
             match = true;
         } else {
             // Scan all fields of this message for a label match
             match = false;
             for (size_t j = i; j < kMavlinkFieldCatalogCount; ++j) {
                 if (kMavlinkFieldCatalog[j].msg_id != fd.msg_id) break;
-                if (ci_contains(kMavlinkFieldCatalog[j].field_name, flt) ||
-                    ci_contains(kMavlinkFieldCatalog[j].label,      flt)) {
+                if (text_icontains(kMavlinkFieldCatalog[j].field_name, filter) ||
+                    text_icontains(kMavlinkFieldCatalog[j].label,      filter)) {
                     match = true;
                     break;
                 }
@@ -177,15 +153,13 @@ static std::vector<uint32_t> picker_unique_msgs(const char* filter)
 static std::vector<const MavlinkFieldDesc*> picker_fields_for_msg(uint32_t msg_id,
                                                                     const char* filter)
 {
-    char flt[128] = {};
-    make_lower(filter, flt, sizeof(flt));
 
     std::vector<const MavlinkFieldDesc*> result;
     for (size_t i = 0; i < kMavlinkFieldCatalogCount; ++i) {
         const MavlinkFieldDesc& fd = kMavlinkFieldCatalog[i];
         if (fd.msg_id != msg_id) continue;
-        if (flt[0]) {
-            if (!ci_contains(fd.field_name, flt) && !ci_contains(fd.label, flt))
+        if (filter[0]) {
+            if (!text_icontains(fd.field_name, filter) && !text_icontains(fd.label, filter))
                 continue;
         }
         result.push_back(&fd);
@@ -452,13 +426,9 @@ void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
 
             // Field labels are lowercase in the catalog — uppercase them so the
             // tile matches the rest of the chrome.
-            char lbl_buf[32];
-            size_t li = 0;
-            for (const char* c = cell.title; *c && li < sizeof(lbl_buf) - 1; ++c)
-                lbl_buf[li++] = (char)toupper((unsigned char)*c);
-            lbl_buf[li] = '\0';
+            const std::string lbl = text_upper(cell.title);
 
-            ui_readout_tile(dl, p0, p1, lbl_buf, val_buf,
+            ui_readout_tile(dl, p0, p1, lbl.c_str(), val_buf,
                             has_data ? col_val : col_no_data, hovered);
 
             // If this message is configured but not yet received, request it
@@ -512,11 +482,6 @@ void draw_data_grid(const VehicleState* vs, MavlinkSender* sender,
 } // namespace right_sidebar
 
 using namespace right_sidebar;
-
-float telemetry_panel_height()
-{
-    return 3.0f * GRID_CELL_H + UI_HEADER_H + 14.0f;
-}
 
 void draw_telemetry_panel(const VehicleState& vs, MavlinkSender* sender,
                           AppSettings* settings, const char* meta)

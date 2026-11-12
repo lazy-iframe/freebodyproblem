@@ -33,6 +33,8 @@
 #  define CPPHTTPLIB_OPENSSL_SUPPORT
 #endif
 #include "httplib.h"
+#include "lib/geo.hpp"
+#include "lib/tile_fetch.hpp"
 
 #include "stb_image.h"
 
@@ -42,17 +44,11 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
-#include <cstring>
-#include <fstream>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <thread>
 #include <unordered_map>
-
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
 
 namespace {
 
@@ -140,23 +136,7 @@ std::string cache_dir_for(const std::string& url, TerrainEncoding enc)
 
 std::string cache_path(const Source& s, const Key& k)
 {
-    return s.cache_dir + "/" + std::to_string(k.z) + "/" + std::to_string(k.x)
-         + "/" + std::to_string(k.y) + ".png";
-}
-
-std::vector<uint8_t> disk_load(const Source& s, const Key& k)
-{
-    std::ifstream f(cache_path(s, k), std::ios::binary);
-    if (!f) return {};
-    return {std::istreambuf_iterator<char>(f), {}};
-}
-
-void disk_save(const Source& s, const Key& k, const std::string& body)
-{
-    const std::string path = cache_path(s, k);
-    mkdirs_for_file(path);
-    std::ofstream f(path, std::ios::binary);
-    if (f) f.write(body.data(), (std::streamsize)body.size());
+    return tile_cache_file(s.cache_dir, k.z, k.x, k.y, "png");
 }
 
 float decode_px(const uint8_t* p, TerrainEncoding enc)
@@ -191,26 +171,6 @@ std::shared_ptr<TerrainTile> decode(const Key& k, TerrainEncoding enc, const uin
     }
     stbi_image_free(px);
     return t;
-}
-
-// Split "https://host/path/{z}/..." into host and path template.
-void split_url(const std::string& url, std::string& host, std::string& path)
-{
-    const size_t scheme = url.find("://");
-    const size_t slash  = url.find('/', scheme == std::string::npos ? 0 : scheme + 3);
-    if (slash == std::string::npos) { host = url; path = "/"; return; }
-    host = url.substr(0, slash);
-    path = url.substr(slash);
-}
-
-std::string tile_path(std::string tmpl, const Key& k)
-{
-    const auto sub = [&](const char* tok, int v) {
-        for (size_t p; (p = tmpl.find(tok)) != std::string::npos;)
-            tmpl.replace(p, strlen(tok), std::to_string(v));
-    };
-    sub("{z}", k.z); sub("{x}", k.x); sub("{y}", k.y);
-    return tmpl;
 }
 
 void finish(const Key& k, uint64_t gen, std::shared_ptr<const TerrainTile> tile)
@@ -254,27 +214,22 @@ void worker()
         const Key&    k   = job.k;
         const Source& src = job.src;
 
-        const std::vector<uint8_t> cached = disk_load(src, k);
+        const std::vector<uint8_t> cached = tile_disk_load(cache_path(src, k));
         if (!cached.empty()) {
             if (auto t = decode(k, src.enc, cached.data(), cached.size())) { finish(k, src.gen, std::move(t)); continue; }
             // A corrupt cache entry: fetch it again.
         }
 
-        std::string host, path;
-        split_url(src.url, host, path);
-        if (host != cur_host || !cli) {
-            cur_host = host;
-            cli = std::make_unique<httplib::Client>(host);
-            cli->set_connection_timeout(8);
-            cli->set_read_timeout(10);
-            cli->set_follow_location(true);
-            cli->set_default_headers({{"User-Agent", GCS_USER_AGENT}});
+        const TileUrl url = tile_url_split(src.url);
+        if (url.host != cur_host || !cli) {
+            cur_host = url.host;
+            cli = tile_http_client(url.host, GCS_USER_AGENT);
         }
-        auto res = cli->Get(tile_path(path, k));
+        auto res = cli->Get(tile_url_fill(url.path, k.z, k.x, k.y));
         if (!res || res->status != 200) { finish(k, src.gen, nullptr); continue; }
 
         auto t = decode(k, src.enc, reinterpret_cast<const uint8_t*>(res->body.data()), res->body.size());
-        if (t) disk_save(src, k, res->body);   // only what decoded is worth keeping
+        if (t) tile_disk_save(cache_path(src, k), res->body.data(), res->body.size());   // only what decoded is worth keeping
         finish(k, src.gen, std::move(t));
     }
 }
@@ -345,15 +300,13 @@ uint64_t terrain_generation() { return g_gen.load(); }
 std::optional<float> terrain_amsl(double lat, double lon)
 {
     if (!std::isfinite(lat) || !std::isfinite(lon)) return std::nullopt;
-    lat = std::clamp(lat, -85.0511, 85.0511);
     lon = std::clamp(lon, -180.0, 180.0);
 
-    // Web Mercator: the point's position in tiles at the lookup zoom.
+    // The point's position in tiles at the lookup zoom.
     const int    z  = TERRAIN_LOOKUP_ZOOM;
     const double n  = (double)(1 << z);
-    const double r  = lat * M_PI / 180.0;
-    const double tx = (lon + 180.0) / 360.0 * n;
-    const double ty = (1.0 - std::log(std::tan(r) + 1.0 / std::cos(r)) / M_PI) / 2.0 * n;
+    double tx, ty;
+    geo_to_tile(lat, lon, z, tx, ty);
 
     const int x = std::clamp((int)std::floor(tx), 0, (int)n - 1);
     const int y = std::clamp((int)std::floor(ty), 0, (int)n - 1);

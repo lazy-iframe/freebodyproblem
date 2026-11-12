@@ -41,12 +41,12 @@
 #  define CPPHTTPLIB_OPENSSL_SUPPORT
 #endif
 #include "httplib.h"
+#include "lib/tile_fetch.hpp"
 
 #include "stb_image.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <fstream>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -73,10 +73,6 @@
 #  define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
-
 namespace map_detail {
 
 // ── Disk cache ────────────────────────────────────────────────────────────────
@@ -88,30 +84,12 @@ static void init_cache_dir()
     g_cache_dir = app_cache_dir("tiles");
 }
 
-// `subdir` is the provider's own folder under the cache.
+// `subdir` is the provider's own folder under the cache. Every tile is filed
+// as .jpg whatever it holds; the decoder goes by the bytes, not the name.
 static std::string tile_cache_path(const std::string& subdir, const TileKey& k)
 {
-    return g_cache_dir + (subdir.empty() ? "" : "/" + subdir)
-         + "/" + std::to_string(k.z)
-         + "/" + std::to_string(k.x)
-         + "/" + std::to_string(k.y) + ".jpg";
-}
-
-// Returns empty vector on cache miss.
-static std::vector<uint8_t> disk_load(const std::string& subdir, const TileKey& k)
-{
-    std::ifstream f(tile_cache_path(subdir, k), std::ios::binary);
-    if (!f) return {};
-    return {std::istreambuf_iterator<char>(f), {}};
-}
-
-// Best-effort write; silently ignores errors.
-static void disk_save(const std::string& subdir, const TileKey& k, const void* data, size_t sz)
-{
-    std::string path = tile_cache_path(subdir, k);
-    mkdirs_for_file(path);
-    std::ofstream f(path, std::ios::binary);
-    if (f) f.write(static_cast<const char*>(data), sz);
+    return tile_cache_file(g_cache_dir + (subdir.empty() ? "" : "/" + subdir),
+                           k.z, k.x, k.y, "jpg");
 }
 
 // ── Tile cache (main thread only) ─────────────────────────────────────────────
@@ -172,30 +150,6 @@ static void set_tile_status(const std::string& s)
 {
     std::lock_guard<std::mutex> lk(g_tile_cfg_mtx);
     g_tile_status = s;
-}
-
-// Split a full URL template into host (with scheme) and path template.
-// e.g. "https://host/path/{z}/{y}/{x}" → host="https://host", path="/path/{z}/{y}/{x}"
-static void parse_tile_url(const std::string& url, std::string& out_host, std::string& out_path)
-{
-    size_t scheme_end = url.find("://");
-    if (scheme_end == std::string::npos) { out_host = ""; out_path = url; return; }
-    size_t slash = url.find('/', scheme_end + 3);
-    if (slash == std::string::npos) { out_host = url; out_path = "/"; return; }
-    out_host = url.substr(0, slash);
-    out_path = url.substr(slash);
-}
-
-static std::string make_tile_path(const std::string& tmpl, int x, int y, int z)
-{
-    std::string r = tmpl;
-    auto sub = [&](const std::string& tok, int v) {
-        size_t p;
-        while ((p = r.find(tok)) != std::string::npos)
-            r.replace(p, tok.size(), std::to_string(v));
-    };
-    sub("{z}", z); sub("{x}", x); sub("{y}", y);
-    return r;
 }
 
 // Number of parallel fetch threads (each holds one persistent connection).
@@ -302,8 +256,8 @@ static void refresh_google_credit(httplib::Client& c, const std::string& session
     }
     constexpr int SPAN = 3;   // tiles either side
     double north, south, east, west;
-    tile_frac_to_lat_lon(t.x - SPAN,     t.y - SPAN,     t.z, north, west);
-    tile_frac_to_lat_lon(t.x + SPAN + 1, t.y + SPAN + 1, t.z, south, east);
+    geo_from_tile(t.x - SPAN,     t.y - SPAN,     t.z, north, west);
+    geo_from_tile(t.x + SPAN + 1, t.y + SPAN + 1, t.z, south, east);
 
     const auto res = c.Get(tile_google_viewport_path(session, key, t.z, north, south, east, west));
     if (!res || res->status != 200) return;
@@ -332,12 +286,7 @@ static void fetch_worker()
     std::unique_ptr<httplib::Client> cli, overlay_cli;
 
     auto make_cli = [](const std::string& host) {
-        auto c = std::make_unique<httplib::Client>(host);
-        c->set_connection_timeout(8);
-        c->set_read_timeout(10);
-        c->set_follow_location(true);
-        c->set_default_headers({{"User-Agent", tile_user_agent(host)}});
-        return c;
+        return tile_http_client(host, tile_user_agent(host));
     };
 
     while (true) {
@@ -389,25 +338,27 @@ static void fetch_worker()
             if (overlay_tmpl.empty()) return;
             const std::string dir = tile_source_overlay_cache_dir(source);
             DecodedTile over;
-            auto bytes = disk_load(dir, key);
+            auto bytes = tile_disk_load(tile_cache_path(dir, key));
             if (!bytes.empty() && decode_png(bytes.data(), (int)bytes.size(), over)) {
                 blend_overlay(dt, over);
                 return;
             }
-            std::string h, path_t;
-            parse_tile_url(overlay_tmpl, h, path_t);
-            if (h != overlay_host || !overlay_cli) { overlay_host = h; overlay_cli = make_cli(h); }
-            auto res = overlay_cli->Get(make_tile_path(path_t, key.x, key.y, key.z));
+            const TileUrl u = tile_url_split(overlay_tmpl);
+            if (u.host != overlay_host || !overlay_cli) {
+                overlay_host = u.host;
+                overlay_cli  = make_cli(u.host);
+            }
+            auto res = overlay_cli->Get(tile_url_fill(u.path, key.z, key.x, key.y));
             if (!res || res->status != 200) return;
             const auto* b = reinterpret_cast<const uint8_t*>(res->body.data());
             if (!decode_png(b, (int)res->body.size(), over)) return;
-            disk_save(dir, key, res->body.data(), res->body.size());
+            tile_disk_save(tile_cache_path(dir, key), res->body.data(), res->body.size());
             blend_overlay(dt, over);
         };
 
         // ── Disk cache ────────────────────────────────────────────────────────
         if (use_disk) {
-            auto cached = disk_load(cache_subdir, key);
+            auto cached = tile_disk_load(tile_cache_path(cache_subdir, key));
             if (!cached.empty()) {
                 DecodedTile dt;
                 dt.key        = key;
@@ -429,16 +380,15 @@ static void fetch_worker()
             if (session.empty()) { give_back(); continue; }
         }
 
-        std::string host, path_tmpl;
-        parse_tile_url(with_server_number(tile_source_template(source, session), server),
-                       host, path_tmpl);
+        const TileUrl url =
+            tile_url_split(with_server_number(tile_source_template(source, session), server));
 
-        if (host != cur_host || !cli) {
-            cur_host = host;
+        if (url.host != cur_host || !cli) {
+            cur_host = url.host;
             cli = make_cli(cur_host);
         }
 
-        std::string path = make_tile_path(path_tmpl, key.x, key.y, key.z);
+        std::string path = tile_url_fill(url.path, key.z, key.x, key.y);
 
         auto res = cli->Get(path);
 
@@ -498,7 +448,8 @@ static void fetch_worker()
         // must not be kept as a tile, and nor must a blank that may yet have imagery.
         const bool blank = gibs && tile_is_blank(dt);
         if (blank) ++g_tile_blanks;
-        if (use_disk && !blank) disk_save(cache_subdir, key, res->body.data(), res->body.size());
+        if (use_disk && !blank)
+            tile_disk_save(tile_cache_path(cache_subdir, key), res->body.data(), res->body.size());
 
         add_overlay(dt);
 

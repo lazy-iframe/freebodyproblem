@@ -21,6 +21,7 @@
 // cylinder, and the shape being drawn.
 
 #include "frontend/components/map/map2d/map2d_internal.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -43,41 +44,64 @@ template <class Project>
 static float metres_to_px(const Project& project, double lat, double lon, float m)
 {
     const ImVec2 a = project(lat, lon);
-    const ImVec2 b = project(lat + (double)m / 111320.0, lon);
+    const ImVec2 b = project(lat + (double)m / GEO_M_PER_DEG, lon);
     return std::fabs(a.y - b.y);
 }
 
-// One uploaded fence zone: a translucent fill so overlapping zones still read,
-// an outline in the zone's colour, and its number at the middle. Inclusion
-// zones are green, exclusion zones red.
+// A circle on the screen as a ring of points, close enough that the dots and
+// the outline lie on it at any size.
+static void screen_ring(ImVec2 c, float r, std::vector<ImVec2>& out)
+{
+    const int n = std::clamp((int)(r * 0.5f), 24, 256);
+    out.clear();
+    for (int i = 0; i < n; ++i) {
+        const float a = 2.0f * (float)GEO_PI * (float)i / (float)n;
+        out.push_back({ c.x + r * std::cos(a), c.y + r * std::sin(a) });
+    }
+}
+
+// One uploaded fence zone, with its number at the middle. Inclusion zones are
+// green, exclusion zones red. While the vehicle has the fence on (`off`
+// false): a translucent fill, so overlapping zones still read, and a solid
+// outline. Off: the outline dotted and nothing filled — still there to be
+// planned against, plainly not enforced.
 template <class Project>
 static void draw_fence_shape(ImDrawList* dl, const Project& project,
-                             const FenceShape& s, int number, bool dragging_this)
+                             const FenceShape& s, int number, bool dragging_this, bool off)
 {
-    const ImU32 fill = fence_col(s.inclusion, 0.16f);
-    const ImU32 line = fence_col(s.inclusion, 0.95f);
+    const ImU32 fill  = fence_col(s.inclusion, 0.16f);
+    const ImU32 line  = fence_col(s.inclusion, 0.95f);
+    const float width = dragging_this ? 3.0f : 2.0f;
+    static std::vector<ImVec2> scr;   // UI thread only
     ImVec2 label_at;
 
     if (s.kind == FenceShape::Kind::Polygon) {
         if (s.pts.size() < 2) return;
-        static std::vector<ImVec2> scr;   // UI thread only
         scr.clear();
         float cx = 0.0f, cy = 0.0f;
         for (const FenceVertex& v : s.pts) {
             scr.push_back(project(v.lat, v.lon));
             cx += scr.back().x; cy += scr.back().y;
         }
-        if (scr.size() >= 3)
-            dl->AddConcavePolyFilled(scr.data(), (int)scr.size(), fill);
-        dl->AddPolyline(scr.data(), (int)scr.size(), line,
-                        ImDrawFlags_Closed, dragging_this ? 3.0f : 2.0f);
+        if (off) {
+            map_dotted_polyline(dl, scr.data(), (int)scr.size(), true, line, width);
+        } else {
+            if (scr.size() >= 3)
+                dl->AddConcavePolyFilled(scr.data(), (int)scr.size(), fill);
+            dl->AddPolyline(scr.data(), (int)scr.size(), line, ImDrawFlags_Closed, width);
+        }
         for (const ImVec2& p : scr) dl->AddCircleFilled(p, 3.5f, line);
         label_at = { cx / scr.size(), cy / scr.size() };
     } else {
         const ImVec2 c = project(s.center.lat, s.center.lon);
         const float  r = metres_to_px(project, s.center.lat, s.center.lon, s.radius_m);
-        dl->AddCircleFilled(c, r, fill, 64);
-        dl->AddCircle(c, r, line, 64, dragging_this ? 3.0f : 2.0f);
+        if (off) {
+            screen_ring(c, r, scr);
+            map_dotted_polyline(dl, scr.data(), (int)scr.size(), true, line, width);
+        } else {
+            dl->AddCircleFilled(c, r, fill, 64);
+            dl->AddCircle(c, r, line, 64, width);
+        }
         dl->AddCircleFilled(c, 3.5f, line);
         label_at = c;
     }
@@ -93,21 +117,28 @@ static void draw_fence_shape(ImDrawList* dl, const Project& project,
 }
 
 // The parameter-set fence: a ring around home of FENCE_RADIUS (PX4:
-// GF_MAX_HOR_DIST), amber, labelled with its radius and ceiling. Not drawn
-// when the fence is off.
+// GF_MAX_HOR_DIST), amber, labelled with its radius and ceiling. As the zones
+// are: filled and solid while the fence is on, dotted and unfilled while off.
 template <class Project>
 static void draw_fence_cylinder(ImDrawList* dl, const Project& project,
                                 const MapVehicle& mv)
 {
     const FenceParams& f = mv.fence;
-    if (!mv.has_home || !f.circle_configured() || f.disabled()) return;
+    if (!mv.has_home || !f.circle_configured()) return;
 
     const float  alpha = mv.active ? 1.0f : 0.5f;
     const ImU32  col   = ui_col(g_theme.col_warning, 0.9f * alpha);
     const ImVec2 c     = project(mv.home_lat, mv.home_lon);
     const float  r     = metres_to_px(project, mv.home_lat, mv.home_lon, f.radius_m);
 
-    dl->AddCircle(c, r, col, 96, 2.5f);
+    if (f.disabled()) {
+        static std::vector<ImVec2> ring;   // UI thread only
+        screen_ring(c, r, ring);
+        map_dotted_polyline(dl, ring.data(), (int)ring.size(), true, col, 2.5f);
+    } else {
+        dl->AddCircleFilled(c, r, ui_col(g_theme.col_warning, 0.08f * alpha), 96);
+        dl->AddCircle(c, r, col, 96, 2.5f);
+    }
 
     char lbl[64];
     if (f.ceiling_configured())
@@ -129,22 +160,20 @@ static void draw_fence_cylinder(ImDrawList* dl, const Project& project,
 void draw_fences(const MapFrame& f)
 {
     ImDrawList* dl = f.dl;
-    const MissionPickState* pick = f.pick;
     const auto project = [&f](double plat, double plon) { return f.to_screen(plat, plon); };
 
-    // Uploaded zones: the fence editor's plan while it has one, else the
-    // active vehicle's fence as last downloaded, unless the fence is off.
+    // Uploaded zones (MapFrame::shown_fence()), as the active vehicle has its
+    // fence: on, or known to be off. Unknown — no vehicle, or its parameters not
+    // read yet — is drawn as on.
     {
         FencePlan downloaded;
-        const FencePlan* zones = (pick && pick->edit_fence) ? pick->edit_fence : nullptr;
-        if (!zones && f.fence && !f.fence->empty()) {
-            downloaded = fence_from_items(*f.fence);
-            zones      = &downloaded;
-        }
+        const FencePlan*  zones  = f.shown_fence(downloaded);
+        const MapVehicle* active = active_vehicle(f.fleet);
+        const bool        off    = active && active->fence.disabled();
         if (zones)
             for (int si = 0; si < (int)zones->shapes.size(); ++si)
                 draw_fence_shape(dl, project, zones->shapes[si], si + 1,
-                                 f.drag_fence && si == s_drag_fence.shape);
+                                 f.drag_fence && si == s_drag_fence.shape, off);
     }
     // The parameter-set cylinder, every vehicle's around its own home.
     in_draw_order(f, [&](const MapVehicle& mv) { draw_fence_cylinder(dl, project, mv); });

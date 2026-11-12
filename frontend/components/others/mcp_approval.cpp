@@ -16,13 +16,13 @@
  **************************************************************************/
 
 
-#include "frontend/components/mcp_approval.hpp"
+#include "frontend/components/others/mcp_approval.hpp"
 
 #include <cstdint>
 
 #include "imgui.h"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "backend/mcp/mcp_server.hpp"
 
 static constexpr const char* POPUP_ID = "##mcp_approval";

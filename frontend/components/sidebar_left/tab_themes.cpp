@@ -17,7 +17,7 @@
 
 
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "imgui.h"
 
 void draw_tab_themes(AppSettings* settings, const std::vector<VehicleChip>& vehicles)

@@ -171,10 +171,6 @@ public:
     // which teaches the operator to stop listening.
     void set_tones_enabled(bool on);
 
-    // Messages dropped because the protocol thread fell behind. Should stay
-    // zero; a non-zero value means the inbox bound was reached.
-    uint64_t inbox_dropped() const;
-
 private:
     void loop();
     void publish(bool param_fetch_active, bool republish_params);

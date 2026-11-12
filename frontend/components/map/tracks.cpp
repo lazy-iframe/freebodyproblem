@@ -18,12 +18,9 @@
 // The map's position trails, per vehicle: kept here, drawn by both views.
 
 #include "frontend/components/map/map_internal.hpp"
+#include "lib/geo.hpp"
 #include <cmath>
 #include <deque>
-
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
 
 namespace map_detail {
 
@@ -51,18 +48,6 @@ constexpr double TRACK_MIN_STEP_M = 3.0;
 // than about the memory.
 constexpr size_t TRACK_MAX_POINTS = 6000;
 
-// Metres between two nearby positions. Equirectangular rather than haversine:
-// over the tens of metres this is asked about the two agree to well under the
-// thinning distance, and this is run once per vehicle per frame.
-double rough_metres(double lat_a, double lon_a, double lat_b, double lon_b)
-{
-    constexpr double M_PER_DEG = 111320.0;
-    const double dlat = (lat_b - lat_a) * M_PER_DEG;
-    const double dlon = (lon_b - lon_a) * M_PER_DEG *
-                        std::cos(lat_a * M_PI / 180.0);
-    return std::sqrt(dlat * dlat + dlon * dlon);
-}
-
 } // namespace
 
 void map_track_pump(const VehicleState& vs)
@@ -76,7 +61,7 @@ void map_track_pump(const VehicleState& vs)
     // Height counts as movement too: the 3D view draws the climb out of a
     // vertical takeoff, which never moves the aircraft across the ground.
     if (!pts.empty() &&
-        rough_metres(pts.back().lat, pts.back().lon, vs.lat, vs.lon)
+        geo_rough_distance_m(pts.back().lat, pts.back().lon, vs.lat, vs.lon)
             < TRACK_MIN_STEP_M &&
         std::fabs(pts.back().alt_amsl - vs.alt_asl) < TRACK_MIN_STEP_M)
         return;

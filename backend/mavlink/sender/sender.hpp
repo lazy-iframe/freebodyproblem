@@ -450,8 +450,6 @@ public:
     // Drain all queued frames to an open serial port.
     void flush_serial(SerialHandle h);
 
-    bool has_pending() const;
-
     // ── Retries for batch commands ────────────────────────────────────────────
     //
     // A command goes out once: this ground station sends nothing the operator

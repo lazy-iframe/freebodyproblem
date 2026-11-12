@@ -28,8 +28,6 @@
 //   Windows   %LOCALAPPDATA%\freebodyproblem\<name>
 //   elsewhere $XDG_CACHE_HOME/freebodyproblem/<name>, else ~/.cache/freebodyproblem/<name>
 // Falls back to a folder in the working directory when none of those is known.
-// Nothing is created here; see mkdirs_for_file().
+// Nothing is created here: tile_disk_save() (lib/tile_fetch.hpp) makes the
+// folders a tile goes in as it saves it.
 std::string app_cache_dir(const char* name);
-
-// Create every directory leading to `filepath` (best-effort, errors ignored).
-void mkdirs_for_file(const std::string& filepath);

@@ -15,7 +15,7 @@
  * limitations under the License.
  **************************************************************************/
 
-// frontend/components/file_dialog.hpp
+// frontend/components/others/file_dialog.hpp
 //
 // The app's file browser: a modal for naming a file to read or write, in the
 // app's own colours. A wrapper over ImGuiFileDialog, which nothing else

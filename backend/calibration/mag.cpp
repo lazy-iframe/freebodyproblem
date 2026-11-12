@@ -17,25 +17,13 @@
 
 
 #include "backend/calibration/mag.hpp"
+#include "lib/text.hpp"
+#include "lib/mav_result.hpp"
 
 #include <cctype>
 #include <cstring>
 
 namespace {
-
-bool contains(const std::string& haystack_lower, const char* needle_lower)
-{
-    return haystack_lower.find(needle_lower) != std::string::npos;
-}
-
-std::string lowered(const char* text)
-{
-    std::string out;
-    if (!text) return out;
-    for (const char* p = text; *p; ++p)
-        out += (char)std::tolower((unsigned char)*p);
-    return out;
-}
 
 // First run of digits after `key`, or -1. PX4 writes its percentage as
 // "[cal] progress <30>", and the brackets have moved between releases while the
@@ -182,20 +170,20 @@ void MagCalibration::on_statustext(const StatusText& st, double now)
 {
     if (!running()) return;
 
-    const std::string t = lowered(st.text);
+    const std::string t = text_lower(st.text);   // lower case, for number_after()
     if (t.empty()) return;
 
     // Only lines that are about this. PX4 prefixes its calibration chatter with
     // "[cal]"; ArduPilot names the sensor. Everything else a busy vehicle says
     // would otherwise land in the panel as though it were an instruction.
-    const bool ours = contains(t, "[cal]") || contains(t, "compass") ||
-                      contains(t, "mag");
+    const bool ours = text_icontains(t, "[cal]") || text_icontains(t, "compass") ||
+                      text_icontains(t, "mag");
     if (!ours) return;
 
     last_word_ = now;
     message_   = st.text;
 
-    if (contains(t, "progress")) {
+    if (text_icontains(t, "progress")) {
         const int pct = number_after(t, "progress");
         if (pct >= 0 && pct <= 100) percent_ = pct;
     }
@@ -267,15 +255,9 @@ const char* MagCalibration::failure_text() const
     default: break;
     }
 
-    switch (ack_result_) {
-    case 1:  return "temporarily rejected";
-    case 2:  return "denied";
-    case 3:  return "unsupported";
-    case 4:  return "failed";
-    case 6:  return "cancelled";
-    case 255: break;
-    default: return "rejected";
-    }
+    // 255 is no ACK at all; ACCEPTED means the run began and the report, not
+    // the ACK, is what failed it.
+    if (ack_result_ != 255 && ack_result_ != 0) return mav_result_text(ack_result_);
 
     return "the vehicle would not finish";
 }

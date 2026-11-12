@@ -173,14 +173,7 @@ void draw_tab_sensors(MavlinkSender* sender, const VehicleState* vs,
     const uint8_t tsys      = connected ? vs->sysid  : 1;
     const uint8_t tcomp     = connected ? vs->compid : 1;
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "SENSORS");
-    if (!connected) {
-        ImGui::SameLine(0, 6);
-        ImGui::TextColored(col_no_link_muted(), "(no link)");
-    }
-    themed_sep();
-    ImGui::Spacing();
+    ui_tab_heading("SENSORS", connected ? nullptr : "(no link)");
 
     // An inventory, three calibration panels and a six-step checklist do not
     // fit a sidebar at any sensible font size, and the sidebar window itself is

@@ -15,19 +15,17 @@
  * limitations under the License.
  **************************************************************************/
 
+// lib/geo.cpp
 
-#pragma once
+#include "lib/geo.hpp"
 
+#include <algorithm>
 #include <cmath>
 
-// The shortest distance over the WGS84 ellipsoid between two points in degrees, in
-// metres, at sea level. Vincenty's inverse formula. It fails to settle only for points
-// all but opposite on the earth, where this falls back on a sphere, off by under a
-// percent at a range no vehicle flies.
-inline double geodesic_distance_m(double lat1, double lon1, double lat2, double lon2)
+double geo_distance_m(double lat1, double lon1, double lat2, double lon2)
 {
     constexpr double A = 6378137.0, F = 1.0 / 298.257223563, B = A * (1.0 - F);
-    constexpr double D2R = 3.14159265358979323846 / 180.0;
+    constexpr double D2R = GEO_DEG_TO_RAD;
 
     const double L  = (lon2 - lon1) * D2R;
     const double U1 = std::atan((1.0 - F) * std::tan(lat1 * D2R));
@@ -63,4 +61,55 @@ inline double geodesic_distance_m(double lat1, double lon1, double lat2, double 
     const double h = std::sin(dlat / 2) * std::sin(dlat / 2) +
                      std::cos(lat1 * D2R) * std::cos(lat2 * D2R) * std::sin(dlon / 2) * std::sin(dlon / 2);
     return 2.0 * 6371008.8 * std::asin(std::sqrt(h < 1.0 ? h : 1.0));
+}
+
+double geo_rough_distance_m(double lat1, double lon1, double lat2, double lon2)
+{
+    const double dn = (lat2 - lat1) * GEO_M_PER_DEG;
+    const double de = (lon2 - lon1) * GEO_M_PER_DEG *
+                      std::cos(0.5 * (lat1 + lat2) * GEO_DEG_TO_RAD);
+    return std::sqrt(dn * dn + de * de);
+}
+
+void geo_offset(double lat, double lon, double north_m, double east_m,
+                double& out_lat, double& out_lon)
+{
+    out_lat = lat + north_m / GEO_M_PER_DEG;
+    out_lon = lon + east_m / (GEO_M_PER_DEG * std::cos(lat * GEO_DEG_TO_RAD));
+    if (out_lon >  180.0) out_lon -= 360.0;
+    if (out_lon < -180.0) out_lon += 360.0;
+}
+
+void geo_mercator(double lat, double lon, double& u, double& v)
+{
+    lat = std::clamp(lat, -GEO_MERCATOR_MAX_LAT, GEO_MERCATOR_MAX_LAT);
+    const double r = lat * GEO_DEG_TO_RAD;
+    u = (lon + 180.0) / 360.0;
+    v = (1.0 - std::log(std::tan(r) + 1.0 / std::cos(r)) / GEO_PI) / 2.0;
+}
+
+void geo_unmercator(double u, double v, double& lat, double& lon)
+{
+    lon = u * 360.0 - 180.0;
+    lat = std::atan(std::sinh(GEO_PI * (1.0 - 2.0 * v))) / GEO_DEG_TO_RAD;
+}
+
+double geo_mercator_world_m(double lat)
+{
+    constexpr double EQUATOR_M = 40075016.686;   // 2π × WGS84's equatorial radius
+    return EQUATOR_M * std::cos(lat * GEO_DEG_TO_RAD);
+}
+
+void geo_to_tile(double lat, double lon, int z, double& tx, double& ty)
+{
+    const double n = (double)(1 << z);
+    geo_mercator(lat, lon, tx, ty);
+    tx *= n;
+    ty *= n;
+}
+
+void geo_from_tile(double tx, double ty, int z, double& lat, double& lon)
+{
+    const double n = (double)(1 << z);
+    geo_unmercator(tx / n, ty / n, lat, lon);
 }

@@ -22,22 +22,13 @@
 
 #include "frontend/components/sidebar_left/mission/mission_internal.hpp"
 #include "frontend/source/app_log.hpp"
+#include "lib/geo.hpp"
 #include <cmath>
 #include <cstdio>
 
 namespace mission_tab {
 
 // ── FENCE view ────────────────────────────────────────────────────────────────
-
-// Ground distance in metres, near enough for a fence radius: the two points
-// are a click apart on the map.
-static float ground_dist_m(const FenceVertex& a, const FenceVertex& b)
-{
-    const double k  = 111320.0;
-    const double dy = (b.lat - a.lat) * k;
-    const double dx = (b.lon - a.lon) * k * std::cos(a.lat * 3.14159265358979 / 180.0);
-    return (float)std::sqrt(dx * dx + dy * dy);
-}
 
 // A finished shape joins the plan, opened in the list; the drawing ends.
 static void add_fence_shape(MissionPickState* pick, FenceShape shape)
@@ -75,7 +66,7 @@ void consume_fence_pick(MissionPickState* pick)
         s.kind      = FenceShape::Kind::Circle;
         s.inclusion = pick->fence_inclusion;
         s.center    = pick->fence_pts[0];
-        s.radius_m  = std::max(1.0f, std::round(ground_dist_m(s.center, at)));
+        s.radius_m  = std::max(1.0f, std::round((float)geo_rough_distance_m(s.center.lat, s.center.lon, at.lat, at.lon)));
         gcs_log("fence: added %s circle, radius %.0f m",
                 s.inclusion ? "inclusion" : "exclusion", (double)s.radius_m);
         add_fence_shape(pick, std::move(s));

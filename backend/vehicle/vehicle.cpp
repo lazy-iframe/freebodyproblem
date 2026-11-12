@@ -173,11 +173,6 @@ void Vehicle::set_tones_enabled(bool on)
     tones_enabled_.store(on, std::memory_order_relaxed);
 }
 
-uint64_t Vehicle::inbox_dropped() const
-{
-    return inbox_dropped_.load(std::memory_order_relaxed);
-}
-
 void Vehicle::publish(bool param_fetch_active, bool republish_params)
 {
     const VehicleState& ps = parser_.state();

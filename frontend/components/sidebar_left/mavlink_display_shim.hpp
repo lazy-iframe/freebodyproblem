@@ -21,7 +21,7 @@
 // Not part of the public API.
 
 #include "imgui.h"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include <cstdarg>
 #include <cstdio>
 

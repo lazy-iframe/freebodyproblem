@@ -132,14 +132,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
         (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))
         finish_fence_polygon(pick);
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "MISSION");
-    if (!connected) {
-        ImGui::SameLine(0, 6);
-        ImGui::TextColored(col_no_link_muted(), "(no link)");
-    }
-    themed_sep();
-    ImGui::Spacing();
+    ui_tab_heading("MISSION", connected ? nullptr : "(no link)");
 
     // ── MISSION / FENCE ───────────────────────────────────────────────────────
     // Two lists the vehicle keeps apart, edited apart. Switching drops whatever
@@ -240,10 +233,7 @@ void draw_tab_mission(MavlinkSender* sender, const VehicleState* vs,
     // ── Terrain clearance ─────────────────────────────────────────────────────
     // Every leg against the ground, the worst named here; the items they
     // arrive at are marked in the list below.
-    const std::optional<float> plan_home =
-        plan_home_amsl(home_amsl(vs),
-                       vs && vs->has_home ? &vs->home_lat : nullptr,
-                       vs && vs->has_home ? &vs->home_lon : nullptr, &st().edit);
+    const std::optional<float> plan_home = plan_home_amsl(vs, &st().edit);
     const std::vector<MissionLeg> legs = mission_legs(st().edit, plan_home);
     std::vector<const MissionLeg*> leg_to(st().edit.size(), nullptr);
     const MissionLeg* worst = nullptr;

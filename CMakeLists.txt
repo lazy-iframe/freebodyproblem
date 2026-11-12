@@ -421,8 +421,12 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     ${GCS_PLUGIN_SOURCES}
     ${GCS_WIN_RESOURCES}
     ${GCS_MAC_RESOURCES}
-    frontend/components/plugin_rail.cpp
-    frontend/components/mcp_approval.cpp
+    frontend/components/others/plugin_rail.cpp
+    frontend/components/others/mcp_approval.cpp
+    lib/geo.cpp
+    lib/mav_result.cpp
+    lib/text.cpp
+    lib/tile_fetch.cpp
     backend/mavlink/sender/sender.cpp
     backend/mavlink/sender/commands.cpp
     backend/mavlink/sender/params.cpp
@@ -494,10 +498,10 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/components/sidebar_left/sensors/coverage_sphere.cpp
     frontend/components/sidebar_left/mavlink_display_generated.cpp
     frontend/components/sidebar_left/mavlink_field_catalog_generated.cpp
-    frontend/components/sidebar_themes.cpp
-    frontend/components/crt_overlay.cpp
+    frontend/components/others/sidebar_themes.cpp
+    frontend/components/others/crt_overlay.cpp
     frontend/elements/center_view.cpp
-    frontend/components/splash_screen.cpp
+    frontend/components/others/splash_screen.cpp
     frontend/source/video_player.cpp
     frontend/components/map/map_view.cpp
     frontend/components/map/map2d/input.cpp
@@ -529,8 +533,8 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     frontend/components/sidebar_right/event_log.cpp
     frontend/components/sidebar_right/event_log_view.cpp
     frontend/components/sidebar_right/telemetry_grid.cpp
-    frontend/components/ui_kit.cpp
-    frontend/components/file_dialog.cpp
+    frontend/components/others/ui_kit.cpp
+    frontend/components/others/file_dialog.cpp
     frontend/source/vehicle_ui_state.cpp
     frontend/source/param_meta.cpp
     frontend/source/param_meta_arducopter.cpp
@@ -590,6 +594,9 @@ if(WIN32)
         # Silences C4996 on strncpy/getenv. The POSIX spellings are correct and
         # portable; the _s variants are MSVC-only.
         _CRT_SECURE_NO_WARNINGS
+        # M_PI and friends: <cmath> leaves them out on MSVC without this, and
+        # the drawing code uses them everywhere.
+        _USE_MATH_DEFINES
     )
 endif()
 

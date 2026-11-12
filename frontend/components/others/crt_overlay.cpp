@@ -16,7 +16,7 @@
  **************************************************************************/
 
 
-#include "frontend/components/crt_overlay.hpp"
+#include "frontend/components/others/crt_overlay.hpp"
 #include "frontend/source/settings.hpp"
 #include "frontend/source/theme.hpp"
 #include "imgui.h"

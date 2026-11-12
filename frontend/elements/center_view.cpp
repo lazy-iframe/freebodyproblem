@@ -18,11 +18,11 @@
 
 #include "frontend/elements/center_view.hpp"
 #include "frontend/source/layout.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/components/map/map_view.hpp"
 #include "frontend/components/map/map_view_3d.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
-#include "frontend/components/plugin_rail.hpp"
+#include "frontend/components/others/plugin_rail.hpp"
 #include "frontend/elements/swarm_view.hpp"
 #include "frontend/source/video_player.hpp"
 #include "frontend/source/app_log.hpp"

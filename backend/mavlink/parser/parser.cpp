@@ -27,14 +27,6 @@
 #include "backend/mavlink/signing.hpp"
 #include "frontend/source/app_log.hpp"   // gcs_log — thread-safe, see the header
 
-// ── MavlinkParser::parse ──────────────────────────────────────────────────────
-
-int MavlinkParser::parse(const uint8_t* buf, size_t len)
-{
-    return framer_.feed(buf, len,
-                        [this](const mavlink_message_t& msg) { handle(msg); });
-}
-
 // ── MavlinkParser::handle ─────────────────────────────────────────────────────
 
 void MavlinkParser::handle(const mavlink_message_t& msg)
@@ -238,7 +230,6 @@ void MavlinkParser::on_heartbeat(const mavlink_message_t& msg)
     state_.compid        = msg.compid;
     state_.type          = static_cast<MAV_TYPE>(hb.type);
     state_.autopilot     = static_cast<MAV_AUTOPILOT>(hb.autopilot);
-    state_.mav_state     = static_cast<MAV_STATE>(hb.system_status);
     state_.custom_mode   = hb.custom_mode;
     state_.armed         = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
     {
@@ -262,7 +253,6 @@ void MavlinkParser::on_sys_status(const mavlink_message_t& msg)
     state_.voltage_V         = ss.voltage_battery / 1000.0f;
     state_.current_A         = ss.current_battery / 100.0f;
     state_.battery_remaining = static_cast<int8_t>(ss.battery_remaining);
-    state_.load_pct          = ss.load / 10;
     state_.has_sys_status    = true;
 }
 
@@ -335,55 +325,4 @@ void MavlinkParser::note_boot_ms(uint32_t boot_ms, int64_t now_ns)
     }
     last_boot_ms_ = boot_ms;
     have_boot_ms_ = true;
-}
-
-// ── MavlinkParser::print_stats ────────────────────────────────────────────────
-
-void MavlinkParser::print_stats()
-{
-    // Clear screen and move cursor to top-left
-    printf("\033[2J\033[H");
-
-    printf("=== MAVLink Stats  (msgs: %llu  bytes: %llu  errors: %llu) ===\n",
-           (unsigned long long)total_messages_,
-           (unsigned long long)framer_.total_bytes(),
-           (unsigned long long)framer_.parse_errors());
-
-    const VehicleState& s = state_;
-
-    if (s.has_heartbeat) {
-        printf("\nVehicle  sys=%u comp=%u  type=%u autopilot=%u  state=%u  %s\n",
-               s.sysid, s.compid, s.type, s.autopilot, s.mav_state,
-               s.armed ? "ARMED" : "disarmed");
-    }
-    if (s.has_attitude) {
-        printf("Attitude  roll=%+7.2f°  pitch=%+7.2f°  yaw=%+7.2f°\n",
-               s.roll, s.pitch, s.yaw);
-    }
-    if (s.has_global_pos) {
-        printf("Position  lat=%.6f  lon=%.6f  alt_asl=%.1f m  alt_rel=%.1f m\n",
-               s.lat, s.lon, s.alt_asl, s.alt_rel);
-    }
-    if (s.has_gps_raw) {
-        printf("GPS       fix=%u  sats=%u\n", s.gps_fix_type, s.satellites_vis);
-    }
-    if (s.has_vfr) {
-        printf("VFR HUD   airspeed=%.1f m/s  groundspeed=%.1f m/s  "
-               "heading=%d°  throttle=%u%%  climb=%.1f m/s\n",
-               s.airspeed, s.groundspeed, s.heading, s.throttle, s.climb);
-    }
-    if (s.has_sys_status) {
-        printf("Battery   %.2f V  %.1f A  %d%%  load=%u%%\n",
-               s.voltage_V, s.current_A, s.battery_remaining, s.load_pct);
-    }
-
-    printf("\nMessage rates:\n");
-    for (const auto& [id, stat] : msg_stats_) {
-        printf("  msgid=%-5u  count=%-8llu  rate=%.1f Hz\n",
-               id,
-               (unsigned long long)stat.count,
-               stat.effective_rate_hz());
-    }
-
-    fflush(stdout);
 }

@@ -19,6 +19,7 @@
 #pragma once
 #include "imgui.h"
 #include "frontend/source/theme.hpp"
+#include "backend/mavlink/sender/sender.hpp"   // CmdFlashState
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ui_kit — tactical-display chrome primitives shared by every panel.
@@ -177,6 +178,14 @@ bool ui_tab_button(const char* label, ImVec2 size, bool active);
 // `height` is the bar alone; the caption line is added above it.
 void ui_progress_bar(const char* text, float frac, float height);
 
+// ── Tab heading ──────────────────────────────────────────────────────────────
+
+// A left-sidebar tab's heading: its title in the accent colour, an optional
+// note beside it — "(no link)" when there is no vehicle to talk to — and the
+// separator under both.
+void ui_tab_heading(const char* title, const char* note = nullptr);
+void ui_tab_heading(const char* title, const char* note, ImVec4 note_col);
+
 // ── Dialogs ──────────────────────────────────────────────────────────────────
 //
 // Every popup shares one shape: generous padding, an amber tracked title over a
@@ -189,6 +198,13 @@ constexpr float UI_DIALOG_BH =  30.0f;   // dialog button height
 
 void ui_push_dialog_style();
 void ui_pop_dialog_style();
+
+// The frame every popup of this app wears, dialog or not: the panel colour
+// behind it and a hairline of the accent round it. The dialog style above, the
+// map's context menus and the file browser each add their own spacing to it.
+// Pops 2 colours and 1 var.
+void ui_push_popup_frame();
+void ui_pop_popup_frame();
 
 // Centred tracked amber title + hairline. `width` pins the dialog's minimum
 // content width so auto-resized popups don't come out ragged.

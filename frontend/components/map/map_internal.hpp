@@ -23,11 +23,13 @@
 
 #pragma once
 #include "frontend/components/map/map_view.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
+#include "lib/geo.hpp"
 #include <cmath>
 #include <cstddef>
 #include <deque>
+#include <optional>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -76,8 +78,24 @@ void map_draw_home_symbol(ImDrawList* dl, ImVec2 c, bool active);
 // geodesic. Empty with no vehicle, or none that has told us its home.
 std::string map_home_distance(const MapVehicle* mv, double lat, double lon);
 
+// The vehicle every other panel is showing, from the map's fleet list; nullptr
+// for none.
+const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet);
+
+// plan_home_amsl() (terrain_clearance.hpp) for a map vehicle: the AMSL that
+// relative altitudes on the map are above. One rule for both views, so the 3D
+// markers and the GO HERE menu's terrain check agree.
+std::optional<float> plan_home_amsl(const MapVehicle* active,
+                                    const std::vector<MissionItem>* mission);
+
 // A thin dotted line, by the same dots everywhere on the maps.
 void map_dotted_line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float w);
+
+// The same dots along a polyline, spaced along its whole length rather than
+// starting over at each vertex, so a ring or a line following the ground reads
+// as one dotted outline. `closed` joins the last point back to the first.
+void map_dotted_polyline(ImDrawList* dl, const ImVec2* pts, int n, bool closed,
+                         ImU32 col, float w);
 
 // From home to the vehicle, at the screen points given: dotted cyan and "LOS", or red
 // and "NO LOS" with the terrain data in the way, "LOS ?" while that is still loading.
@@ -87,10 +105,6 @@ void map_draw_los(ImDrawList* dl, ImVec2 home, ImVec2 vehicle, const MapVehicle&
 // The airframe a vehicle is drawn as, under the icon style the settings chose.
 enum class SymbolKind { Arrow, Plane, Multicopter, Helicopter };
 SymbolKind map_symbol_kind(uint8_t mav_type);
-
-// The right edge of the A/C block as last drawn, screen x — for the 3D view's
-// banner to keep clear of it.
-float map_ac_block_right();
 
 // An instruction for the operator across the top of the map — "click the
 // ground…", "EDIT — drag…" — as wide as its text, but at most half the map
@@ -124,10 +138,6 @@ std::string map_tile_attribution();
 // What the map's files share beyond the functions above: the tile key and its
 // maths, the texture cache, the trail registry and two symbols.
 
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
-
 namespace map_detail {
 
 // ── Tile key ──────────────────────────────────────────────────────────────────
@@ -145,25 +155,6 @@ struct TileKeyHash {
         return h;
     }
 };
-
-// ── Web Mercator tile math ─────────────────────────────────────────────────────
-
-inline void lat_lon_to_tile_frac(double lat, double lon, int z,
-                                  double& tx, double& ty)
-{
-    double n = (double)(1 << z);
-    tx = (lon + 180.0) / 360.0 * n;
-    double r = lat * M_PI / 180.0;
-    ty = (1.0 - std::log(std::tan(r) + 1.0 / std::cos(r)) / M_PI) / 2.0 * n;
-}
-
-inline void tile_frac_to_lat_lon(double tx, double ty, int z,
-                                   double& lat, double& lon)
-{
-    double n = (double)(1 << z);
-    lon = tx / n * 360.0 - 180.0;
-    lat = std::atan(std::sinh(M_PI * (1.0 - 2.0 * ty / n))) * 180.0 / M_PI;
-}
 
 // tiles.cpp  (GLuint is unsigned; this header stays free of OpenGL)
 extern std::unordered_map<TileKey, unsigned, TileKeyHash> g_textures;
@@ -205,6 +196,6 @@ void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
 
 // overlay.cpp
 constexpr float OVL_M   = 8.0f;    // from the map's edges
-extern float s_ac_right;
+extern float s_ac_right;   // the A/C block's right edge as last drawn, screen x
 
 } // namespace map_detail

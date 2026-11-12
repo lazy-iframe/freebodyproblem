@@ -193,12 +193,6 @@ void MavlinkSender::flush(int fd, const sockaddr_in& dest)
     });
 }
 
-bool MavlinkSender::has_pending() const
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    return !queue_.empty() || !manual_frame_.empty() || !rc_frame_.empty();
-}
-
 // ── ACK feedback ─────────────────────────────────────────────────────────────
 
 void MavlinkSender::notify_ack(uint16_t command, uint8_t result)

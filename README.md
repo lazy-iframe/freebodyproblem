@@ -136,7 +136,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Mission upload/download**: create, edit, and upload waypoints with visual feedback
 - **Point-and-click mission building**: a grid of mission commands (WAYPOINT, TAKEOFF, LAND, RTL, LOITER, ...) — press one, its button reads **LOC?**, click the map and the item is added there; commands with no position are added straight away
 - **Drag to edit**: with **EDIT** on, drag any waypoint on the map to move it. In 3D, drag its marker to move it over the ground, or its vertical line to change its height
-- **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling. Nothing of the fence — ring, ceiling or uploaded zones — is drawn while it is not enabled. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
+- **Geofence**: both kinds ArduPilot and PX4 offer. The parameter-set fence — `FENCE_RADIUS` and `FENCE_ALT_MAX` (PX4: `GF_MAX_HOR_DIST`, `GF_MAX_VER_DIST`) — is read on connect and drawn as an amber ring around home, labelled with its radius and ceiling. While the fence is on, the ring and the uploaded zones are drawn solid and filled; while the vehicle reports it off, dotted and unfilled, so they can still be planned against. Uploaded fences are drawn and edited in the mission tab's **GEOFENCE** view: inclusion zones in green and exclusion zones in red, each a polygon or a circle drawn straight on the map, sent as the vehicle's fence list (`MAV_MISSION_TYPE_FENCE`)
 - **GO HERE**: click anywhere on the map for a guided position target (in 3D, the click starts a pick of the point's place, then its height) — the altitude defaults to the height the vehicle is already holding, and the point goes out as `SET_POSITION_TARGET_GLOBAL_INT`. Offered only while the vehicle is in GUIDED, since that is the only mode that acts on one; the target stays drawn on the map, tied to the aircraft by a line, until it is cleared from the map's right-click menu
 - **Real-time vehicle tracking**: aircraft position and heading overlay on map, the heading line run out to the edge of the panel. The map follows the selected aircraft until you drag it; **CENTER**, top-left, puts it back on the aircraft and following again
 - **The whole fleet on one map**: every connected vehicle is drawn, not just the one the panels are bound to, each labelled `(2) SYS 1` — the number is the GCS's own, handed out lowest-free-first on discovery, because a sysid is not a name and two airframes off the bench both answer to 1. The active aircraft keeps full colour and its edge-to-edge heading line; the rest are dimmed with a short heading stub
@@ -1059,7 +1059,8 @@ OpenGL 3.3; where the driver lacks it, the button says so and stays off.
   terrain are marked as in the mission tab.
 - **The geofence** stands as walls: green for inclusion zones and the
   parameter cylinder, red for exclusion zones, up to `FENCE_ALT_MAX` above home
-  where a ceiling is set. A fence that is not enabled is not drawn.
+  where a ceiling is set. A fence the vehicle reports off has no walls: its
+  outlines are traced dotted on the ground instead.
 - **Placing a point** takes two clicks: the first on the ground fixes where,
   then the point rides its vertical line with the pointer and the second click
   sets its height, which can be below the terrain data: it warns in red and draws what is
@@ -1560,9 +1561,13 @@ the serial handle, drains them.
       - **craft.cpp** / **overlays.cpp**: aircraft poses and models; trails, mission, drop lines and gizmos drawn over the frame
       - **bands.cpp**: the mission path and geofence walls cast onto the terrain
       - **pick.cpp** / **edit.cpp**: placing mission items and GO HERE points in 3D; moving waypoints in EDIT
-  - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
-  - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
-  - **file_dialog.cpp**: The app's file browser (over ImGuiFileDialog), for any panel that reads or writes a file
+  - **others/**: Widgets that belong to no one screen area
+    - **ui_kit.cpp**: The shared drawing kit — buttons, readout tiles, panel headers, tab headings, the popup frame and dialog style every panel draws with
+    - **sidebar_themes.cpp**: The SETTINGS tab's panel — themes and colours, and the app's settings
+    - **plugin_rail.cpp**: Button column driving the user plugins in `plugins/`
+    - **mcp_approval.cpp**: The ASSISTANT REQUEST dialog an agent's action waits on
+    - **file_dialog.cpp**: The app's file browser (over ImGuiFileDialog), for any panel that reads or writes a file
+    - **splash_screen.cpp** / **crt_overlay.cpp**: The start-up splash; the optional CRT treatment (scanlines in the plates, darkened edges)
   - **sidebar_left/**: The left panel's tabs (connection, flight, params, themes, mission, MAVLink, radio, sensors)
     - **rc/**: the RADIO tab's sections — the radio's monitor, calibration and bindings, and the joystick's axes, buttons, virtual channels and output; `tab_rc.cpp` lays them out
     - **params/**: the PARAMS tab's parts — the value editors (enum list, bitmask checkboxes, number field), the parameter info popup, and loading and saving .params files; `tab_params.cpp` keeps the list, staging and WRITE ALL
@@ -1576,6 +1581,13 @@ the serial handle, drains them.
 - **plugin_api.hpp**: What a plugin sees and how it registers — buttons, startup hooks, video-gesture handlers
 - **plugin_registry.cpp**: Registration lists, startup pass, and dispatch
 - **user_plugins.cpp**: Example slots, yours to edit — see [plugins/README.md](plugins/README.md)
+
+### Shared code (`lib/`)
+Code that more than one part of the app needs and that belongs to none of them. It depends on nothing in `backend/` or `frontend/`, so either may include it; a helper used in only one place stays where it is used.
+- **geo.cpp**: Positions on the earth — exact WGS84 distance (Vincenty), flat-earth distance and north/east offset for the short spans the map and the mission editor work over, and Web Mercator in world fractions and in tiles
+- **mav_result.cpp**: `MAV_RESULT` as its enum name for protocol traces, and as plain words for the log and the calibration panels
+- **text.cpp**: Case changes, comparing and searching without regard to case, and a duration as `hh:mm:ss`
+- **tile_fetch.cpp**: What the map imagery and the terrain heights share in fetching z/x/y tiles: splitting and filling the URL template, the on-disk cache layout, reading and saving cached tiles, and the HTTP client setup
 
 ### Code Generation
 - **scripts/gen_mavlink_display.py**: Parses MAVLink XML definitions to generate C++ field decoders for all message types
@@ -1604,10 +1616,13 @@ freebodyproblem/
 │   └── mcp/              # Built-in MCP server
 ├── frontend/             # ImGui UI, rendering; main.cpp is the entry point
 │   ├── source/           # Non-drawing support: settings, terrain, tiles, theme, layout
-│   ├── components/       # Reusable widgets: map, plugin rail, UI kit, dialogs
+│   ├── components/       # Widgets drawn inside a screen division
+│   │   ├── map/          # The map, flat and 3D
 │   │   ├── sidebar_left/ # Per-tab left sidebar modules
-│   │   └── sidebar_right/ # HUD, event log, telemetry grid
+│   │   ├── sidebar_right/ # HUD, event log, telemetry grid
+│   │   └── others/       # UI kit, theme editor, plugin rail, dialogs, splash
 │   └── elements/         # Major screen divisions: topbar, sidebars, centre view
+├── lib/                  # Shared code used across backend and frontend: geo, MAV_RESULT, text, tile fetching
 ├── plugins/              # User C++ functions bound to the button rail
 ├── adapter/              # freebodyproblem-mcp: stdio bridge for MCP hosts
 ├── scripts/              # Python code generators

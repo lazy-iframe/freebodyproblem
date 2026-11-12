@@ -28,7 +28,6 @@
 
 #include <mavlink/ardupilotmega/mavlink.h>
 
-#include "backend/mavlink/framer.hpp"
 #include "backend/mavlink/timesync.hpp"
 #include "backend/mission/download.hpp"
 #include "backend/vehicle/state.hpp"
@@ -58,14 +57,6 @@ public:
     uint8_t autopilot_compid() const { return autopilot_compid_; }
     bool    bound()            const { return bound_;            }
 
-    // Feed a raw UDP datagram. Returns number of complete messages parsed.
-    //
-    // Convenience for callers that own a whole byte stream to themselves. Where
-    // one link feeds several vehicles the framing belongs to the link — one
-    // MavlinkFramer per byte stream, its output routed by sysid — and those
-    // callers use handle() directly.
-    int parse(const uint8_t* buf, size_t len);
-
     // Feed one already-framed message. The routing decision of which parser a
     // message belongs to is the caller's; this only interprets it.
     void handle(const mavlink_message_t& msg);
@@ -75,8 +66,6 @@ public:
     const std::unordered_map<uint32_t, MessageStats>& msg_stats() const { return msg_stats_; }
 
     uint64_t total_messages() const { return total_messages_;          }
-    uint64_t total_bytes()    const { return framer_.total_bytes();    }
-    uint64_t parse_errors()   const { return framer_.parse_errors();   }
 
     // ACK queue — drained each frame by main.cpp, forwarded to MavlinkSender
     const std::vector<CommandAck>& pending_acks() const { return ack_queue_; }
@@ -128,12 +117,9 @@ public:
     { return timesync_replies_; }
     void clear_timesync_replies() { timesync_replies_.clear(); }
 
-    void print_stats();
-
 private:
     // Framing for the parse() convenience path only. A link that feeds several
     // vehicles frames upstream of here and never touches this one.
-    MavlinkFramer                              framer_;
     std::unordered_map<uint32_t, MessageStats> msg_stats_;
     VehicleState                               state_;
     std::unordered_map<std::string, ParamEntry> params_;

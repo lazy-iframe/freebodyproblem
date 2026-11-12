@@ -23,7 +23,7 @@
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/app_log.hpp"
 #include "frontend/source/audio.hpp"
 #include "frontend/source/mission_alt.hpp"

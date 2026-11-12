@@ -121,7 +121,8 @@ the button says so and stays off.
   terrain are marked as in the mission tab.
 - **The geofence** stands as walls: green for inclusion zones and the
   parameter cylinder, red for exclusion zones, up to `FENCE_ALT_MAX` above home
-  where a ceiling is set. A fence that is not enabled is not drawn.
+  where a ceiling is set. A fence the vehicle reports off has no walls: its
+  outlines are traced dotted on the ground instead.
 - **Placing a point** takes two clicks: the first on the ground fixes where,
   then the point rides its vertical line with the pointer and the second click
   sets its height, which can be below the terrain data: it warns in red and draws what is

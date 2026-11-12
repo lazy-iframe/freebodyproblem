@@ -22,7 +22,7 @@
 
 #include "frontend/components/map/map3d/map3d_internal.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/mission_alt.hpp"
 #include "frontend/source/terrain.hpp"
 
@@ -153,7 +153,7 @@ void edit_waypoints(ImDrawList* dl, const Frame& f, V3 eye, V3 target, double ra
         MissionItem& it = mission[s_wp_drag.index];
         if (!s_wp_drag.height) {
             if (auto hit = ray_plane(eye, ray, s_wp_drag.plane_z, range * 4.0))
-                unmerc(f.u0 + (hit->x + s_wp_drag.off_x) / f.m,
+                geo_unmercator(f.u0 + (hit->x + s_wp_drag.off_x) / f.m,
                        f.v0 - (hit->y + s_wp_drag.off_y) / f.m, it.lat, it.lon);
         } else if (const std::optional<float> ground = terrain_amsl(it.lat, it.lon)) {
             const V3 foot = f.world(it.lat, it.lon, *ground);

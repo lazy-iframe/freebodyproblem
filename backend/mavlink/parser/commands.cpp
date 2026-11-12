@@ -30,6 +30,7 @@
 
 #include "backend/mavlink/signing.hpp"
 #include "frontend/source/app_log.hpp"   // gcs_log — thread-safe, see the header
+#include "lib/mav_result.hpp"
 
 namespace {
 
@@ -52,20 +53,6 @@ const char* mag_cal_status_name(uint8_t s)
     case MAG_CAL_BAD_ORIENTATION:  return "BAD_ORIENTATION";
     case MAG_CAL_BAD_RADIUS:       return "BAD_RADIUS";
     default:                       return "?";
-    }
-}
-
-const char* mav_result_name(uint8_t r)
-{
-    switch (r) {
-    case MAV_RESULT_ACCEPTED:             return "ACCEPTED";
-    case MAV_RESULT_TEMPORARILY_REJECTED: return "TEMPORARILY_REJECTED";
-    case MAV_RESULT_DENIED:               return "DENIED";
-    case MAV_RESULT_UNSUPPORTED:          return "UNSUPPORTED";
-    case MAV_RESULT_FAILED:               return "FAILED";
-    case MAV_RESULT_IN_PROGRESS:          return "IN_PROGRESS";
-    case MAV_RESULT_CANCELLED:            return "CANCELLED";
-    default:                              return "?";
     }
 }
 

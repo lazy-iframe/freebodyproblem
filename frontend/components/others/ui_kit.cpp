@@ -16,8 +16,8 @@
  **************************************************************************/
 
 
-#include "frontend/components/ui_kit.hpp"
-#include "frontend/components/crt_overlay.hpp"
+#include "frontend/components/others/ui_kit.hpp"
+#include "frontend/components/others/crt_overlay.hpp"
 #include "backend/vehicle/vehicle.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -218,20 +218,50 @@ void ui_status_block(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 
 // ── Dialogs ──────────────────────────────────────────────────────────────────
 
-void ui_push_dialog_style()
+void ui_push_popup_frame()
 {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,     { 20.0f, 18.0f });
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,       {  8.0f, 10.0f });
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,  1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,     0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_PopupBg, g_theme.bg_panel);
     ImGui::PushStyleColor(ImGuiCol_Border,  ui_col(g_theme.accent, 0.55f));
 }
 
-void ui_pop_dialog_style()
+void ui_pop_popup_frame()
 {
     ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(4);
+    ImGui::PopStyleVar();
+}
+
+void ui_push_dialog_style()
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,     { 20.0f, 18.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,       {  8.0f, 10.0f });
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,     0.0f);
+    ui_push_popup_frame();
+}
+
+void ui_pop_dialog_style()
+{
+    ui_pop_popup_frame();
+    ImGui::PopStyleVar(3);
+}
+
+// ── Tab heading ──────────────────────────────────────────────────────────────
+
+void ui_tab_heading(const char* title, const char* note)
+{
+    ui_tab_heading(title, note, col_no_link_muted());
+}
+
+void ui_tab_heading(const char* title, const char* note, ImVec4 note_col)
+{
+    ImGui::Spacing();
+    ImGui::TextColored(accent_col(), "%s", title);
+    if (note) {
+        ImGui::SameLine(0, 6);
+        ImGui::TextColored(note_col, "%s", note);
+    }
+    themed_sep();
+    ImGui::Spacing();
 }
 
 void ui_dialog_title(const char* title, float width)

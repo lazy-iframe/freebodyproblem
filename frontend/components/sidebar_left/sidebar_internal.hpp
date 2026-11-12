@@ -20,7 +20,7 @@
 // Internal declarations shared between sidebar_left.cpp (orchestrator)
 // and the per-tab translation units. Not part of the public API.
 #include "frontend/elements/sidebar_left.hpp"  // ConnectionRequest, LinkStatus, VehicleState, ParamEntry, AppSettings
-#include "frontend/components/ui_kit.hpp"        // shared tactical chrome (headers, tiles, tab buttons)
+#include "frontend/components/others/ui_kit.hpp"        // shared tactical chrome (headers, tiles, tab buttons)
 #include <unordered_map>
 #include <string>
 #include <cstdint>

@@ -22,7 +22,7 @@
 
 #include "frontend/components/map/map3d/map3d_internal.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/mission_alt.hpp"
 #include "frontend/source/terrain.hpp"
 
@@ -130,18 +130,6 @@ void draw_trails(ImDrawList* dl, const Frame& f, const std::vector<MapVehicle>& 
         }
         flush();
     }
-}
-
-// Home's AMSL for the relative frames: the vehicle's, else the ground under
-// its home, else under the first placed item — a plan made with no vehicle
-// connected still stands on the ground it starts from.
-std::optional<float> plan_home_amsl(const MapVehicle* active, const std::vector<MissionItem>* mission)
-{
-    std::optional<float> reported;
-    if (active && active->has_home_alt) reported = active->home_alt_amsl;
-    const bool pos = active && active->has_home;
-    return plan_home_amsl(reported, pos ? &active->home_lat : nullptr,
-                          pos ? &active->home_lon : nullptr, mission);
 }
 
 // A path checked against the terrain: drawn over in amber where it comes

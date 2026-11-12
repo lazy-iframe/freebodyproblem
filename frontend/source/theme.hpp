@@ -18,7 +18,6 @@
 
 #pragma once
 #include "imgui.h"
-#include "backend/mavlink/sender/sender.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -34,8 +33,6 @@
 //   Danger     : salmon red  #EF8271
 //   Warning    : amber-orange  #E0913A
 // ─────────────────────────────────────────────────────────────────────────────
-
-enum class CmdFlashState;   // defined in backend/mavlink/sender/sender.hpp
 
 // ── Section 1: Runtime-mutable theme variables ────────────────────────────────
 //
@@ -86,7 +83,6 @@ struct ThemeVars {
     // ── Backgrounds ───────────────────────────────────────────────────────────
     ImVec4 bg_panel           = { 0.129f, 0.152f, 0.087f, 1.0f }; // #212716
     ImVec4 bg_topbar          = { 0.087f, 0.105f, 0.057f, 1.0f }; // #161B0F
-    ImVec4 bg_bottombar       = { 0.087f, 0.105f, 0.057f, 1.0f };
     ImVec4 bg_sidebar_left    = { 0.105f, 0.129f, 0.072f, 1.0f }; // #1B2112
     ImVec4 bg_video           = { 0.057f, 0.072f, 0.038f, 1.0f }; // #0F120A
     ImVec4 bg_map             = { 0.057f, 0.072f, 0.038f, 1.0f };
@@ -195,7 +191,6 @@ inline ImVec4 accent_col()        { return g_theme.accent; }
 inline ImVec4 panel_bg()          { return g_theme.bg_panel; }
 
 inline ImVec4 bg_topbar()         { return g_theme.bg_topbar; }
-inline ImVec4 bg_bottombar()      { return g_theme.bg_bottombar; }
 inline ImVec4 bg_sidebar_left()   { return g_theme.bg_sidebar_left; }
 inline ImVec4 bg_video()          { return g_theme.bg_video; }
 inline ImVec4 bg_map()            { return g_theme.bg_map; }
@@ -213,7 +208,6 @@ inline ImU32  col32_panel_border()
     return ImGui::ColorConvertFloat4ToU32(g_theme.panel_border);
 }
 
-inline ImVec4 col_app_header()    { return g_theme.accent; }
 inline ImVec4 col_armed()         { return g_theme.col_armed; }
 inline ImVec4 col_disarmed()      { return g_theme.col_disarmed; }
 inline ImVec4 col_no_link()       { return g_theme.col_no_link; }
@@ -282,61 +276,7 @@ inline ImVec4 btn_plugin_engaged_hov()
     return red;
 }
 
-// ── Section 5: Command flash push helpers ────────────────────────────────────
-
-inline void push_flash_colors(CmdFlashState fs)
-{
-    switch (fs) {
-    case CmdFlashState::Accepted:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_accepted_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_accepted_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_accepted_base);
-        break;
-    case CmdFlashState::Rejected:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_rejected_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_rejected_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_rejected_base);
-        break;
-    case CmdFlashState::Pending:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_pending_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_pending_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_pending_base);
-        break;
-    default: // Normal — dark plate with themed amber hover glow
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.btn_intlk_off_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_normal_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_normal_press);
-        break;
-    }
-}
-
-inline void push_solid_flash_colors(CmdFlashState fs, ImVec4 base_btn, ImVec4 base_hov)
-{
-    switch (fs) {
-    case CmdFlashState::Accepted:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_accepted_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_accepted_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_accepted_base);
-        break;
-    case CmdFlashState::Rejected:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_rejected_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_rejected_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_rejected_base);
-        break;
-    case CmdFlashState::Pending:
-        ImGui::PushStyleColor(ImGuiCol_Button,        g_theme.flash_pending_base);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_theme.flash_pending_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_theme.flash_pending_base);
-        break;
-    default:
-        ImGui::PushStyleColor(ImGuiCol_Button,        base_btn);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, base_hov);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  base_btn);
-        break;
-    }
-}
-
-// ── Section 6: Built-in theme factories ──────────────────────────────────────
+// ── Section 5: Built-in theme factories ──────────────────────────────────────
 
 // Retro Amber — the original phosphor-terminal palette (amber on warm black).
 inline ThemeVars retro_amber_theme_vars()
@@ -362,7 +302,6 @@ inline ThemeVars retro_amber_theme_vars()
     // ── Backgrounds ───────────────────────────────────────────────────────────
     t.bg_panel               = { 0.05f, 0.03f, 0.00f, 1.0f };
     t.bg_topbar              = { 0.04f, 0.02f, 0.00f, 1.0f };
-    t.bg_bottombar           = { 0.04f, 0.02f, 0.00f, 1.0f };
     t.bg_sidebar_left        = { 0.05f, 0.03f, 0.01f, 1.0f };
     t.bg_video               = { 0.03f, 0.02f, 0.00f, 1.0f };
     t.bg_map                 = { 0.04f, 0.02f, 0.00f, 1.0f };
@@ -459,7 +398,6 @@ inline ThemeVars matrix_theme_vars()
     // ── Backgrounds ───────────────────────────────────────────────────────────
     t.bg_panel          = { 0.012f, 0.047f, 0.012f, 1.0f }; // ~#030C03
     t.bg_topbar         = { 0.008f, 0.031f, 0.008f, 1.0f }; // ~#020803
-    t.bg_bottombar      = { 0.008f, 0.031f, 0.008f, 1.0f };
     t.bg_sidebar_left   = { 0.016f, 0.055f, 0.016f, 1.0f }; // ~#040E04
     t.bg_video          = { 0.004f, 0.020f, 0.004f, 1.0f };
     t.bg_map            = { 0.008f, 0.031f, 0.008f, 1.0f };
@@ -563,7 +501,6 @@ inline ThemeVars gruvbox_light_theme_vars()
     // ── Backgrounds ───────────────────────────────────────────────────────────
     t.bg_panel          = { 0.984f, 0.945f, 0.780f, 1.0f }; // bg0
     t.bg_topbar         = { 0.922f, 0.859f, 0.698f, 1.0f }; // bg1
-    t.bg_bottombar      = { 0.922f, 0.859f, 0.698f, 1.0f };
     t.bg_sidebar_left   = { 0.949f, 0.898f, 0.737f, 1.0f }; // bg0_s
     t.bg_video          = { 0.835f, 0.769f, 0.631f, 1.0f }; // bg2
     t.bg_map            = { 0.835f, 0.769f, 0.631f, 1.0f };

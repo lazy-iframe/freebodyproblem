@@ -16,9 +16,9 @@
  **************************************************************************/
 
 
-#include "frontend/components/plugin_rail.hpp"
+#include "frontend/components/others/plugin_rail.hpp"
 #include "frontend/elements/center_view.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/app_log.hpp"
 #include "plugins/plugin_api.hpp"
 #include "imgui.h"

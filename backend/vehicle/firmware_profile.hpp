@@ -186,6 +186,12 @@ const FirmwareProfile& firmware_profile(MAV_AUTOPILOT autopilot);
 inline const FirmwareProfile& firmware_profile(const VehicleState& vs)
 { return firmware_profile(vs.autopilot); }
 
+// The name of the mode the vehicle is in: its own, from AVAILABLE_MODES, when
+// it publishes a list; otherwise its stack's table, which has to be the right
+// one, since the numbers mean different things on each — a PX4 custom_mode is
+// a packed main/sub pair, not a flat ArduCopter number.
+std::string current_mode_name(const VehicleState& vs);
+
 // Put a vehicle in a mode, encoding it the way its stack expects.
 //
 // Declared here because this is the one place a profile and a sender meet. The

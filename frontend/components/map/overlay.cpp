@@ -20,7 +20,7 @@
 #include "frontend/components/map/map_internal.hpp"
 #include "frontend/source/terrain.hpp"
 #include "frontend/source/terrain_clearance.hpp"
-#include "frontend/source/geodesic.hpp"
+#include "lib/geo.hpp"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -28,13 +28,9 @@
 #include <utility>
 #include <vector>
 
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
-
 namespace map_detail {
 
-float s_ac_right = 0.0f;   // see map_ac_block_right()
+float s_ac_right = 0.0f;
 
 // `text` split into lines no wider than `wrap_w`, as the radio tab's notice
 // splits its own: the longest run of whole words that fits, a word too long
@@ -89,8 +85,6 @@ static bool clip_to_rect(ImVec2 a, ImVec2 b, ImVec2 r0, ImVec2 r1, double& t0, d
 
 using namespace map_detail;
 
-float map_ac_block_right() { return s_ac_right; }
-
 ImVec2 map_tag_size(const char* text)
 {
     const ImVec2 ts = ImGui::CalcTextSize(text);
@@ -113,19 +107,40 @@ void map_draw_tag(ImDrawList* dl, ImVec2 left_mid, const char* text, ImVec4 col,
 std::string map_home_distance(const MapVehicle* mv, double lat, double lon)
 {
     if (!mv || !mv->has_home) return {};
-    const double d = geodesic_distance_m(mv->home_lat, mv->home_lon, lat, lon);
+    const double d = geo_distance_m(mv->home_lat, mv->home_lon, lat, lon);
     char t[32];
     if (d < 1000.0) snprintf(t, sizeof(t), "HOME %.0f m", d);
     else            snprintf(t, sizeof(t), "HOME %.2f km", d / 1000.0);
     return t;
 }
 
+const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet)
+{
+    if (fleet)
+        for (const MapVehicle& mv : *fleet)
+            if (mv.active) return &mv;
+    return nullptr;
+}
+
+std::optional<float> plan_home_amsl(const MapVehicle* active,
+                                    const std::vector<MissionItem>* mission)
+{
+    std::optional<float> reported;
+    if (active && active->has_home_alt) reported = active->home_alt_amsl;
+    const bool pos = active && active->has_home;
+    return plan_home_amsl(reported, pos ? &active->home_lat : nullptr,
+                          pos ? &active->home_lon : nullptr, mission);
+}
+
+// A dot's length and the distance from one to the next, in pixels, whatever the
+// width, so a warning's dots land on the path's.
+constexpr double DOT_ON = 3.0, DOT_PERIOD = 8.0;
+
 void map_dotted_line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float w)
 {
-    // Only the part in view, and the dots always this far apart, whatever the width, so
-    // a warning's dots land on the path's. One end of a line can be very far off: cut
-    // at the camera plane in 3D, an end behind the camera lands millions of pixels away.
-    constexpr double ON = 3.0, PERIOD = 8.0;
+    // Only the part in view. One end of a line can be very far off: cut at the
+    // camera plane in 3D, an end behind the camera lands millions of pixels away.
+    constexpr double ON = DOT_ON, PERIOD = DOT_PERIOD;
     const double dx = (double)b.x - a.x, dy = (double)b.y - a.y;
     const double len = std::sqrt(dx * dx + dy * dy);
     if (len < 1.0) return;
@@ -139,6 +154,28 @@ void map_dotted_line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float w)
         const double u = std::max(s, 0.0), v = std::min(s + ON, len);
         dl->AddLine({ (float)(a.x + dx * u / len), (float)(a.y + dy * u / len) },
                     { (float)(a.x + dx * v / len), (float)(a.y + dy * v / len) }, col, w);
+    }
+}
+
+void map_dotted_polyline(ImDrawList* dl, const ImVec2* pts, int n, bool closed,
+                         ImU32 col, float w)
+{
+    if (n < 2) return;
+    double at = 0.0;   // distance along the line where this segment starts
+    const int segs = closed ? n : n - 1;
+    for (int i = 0; i < segs; ++i) {
+        const ImVec2 a = pts[i], b = pts[(i + 1) % n];
+        const double dx = (double)b.x - a.x, dy = (double)b.y - a.y;
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.0) continue;
+        // Every dot that overlaps this segment, the one carried over from the last included.
+        for (double s = std::floor(at / DOT_PERIOD) * DOT_PERIOD; s < at + len; s += DOT_PERIOD) {
+            const double u = std::max(s, at) - at, v = std::min(s + DOT_ON, at + len) - at;
+            if (v <= u) continue;
+            dl->AddLine({ (float)(a.x + dx * u / len), (float)(a.y + dy * u / len) },
+                        { (float)(a.x + dx * v / len), (float)(a.y + dy * v / len) }, col, w);
+        }
+        at += len;
     }
 }
 

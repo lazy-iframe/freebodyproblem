@@ -24,8 +24,6 @@
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
 #  include <shlobj.h>
-#else
-#  include <sys/stat.h>
 #endif
 
 std::string app_cache_dir(const char* name)
@@ -44,24 +42,4 @@ std::string app_cache_dir(const char* name)
         return std::string(home) + "/.cache/freebodyproblem/" + name;
     return std::string("./.") + name + "_cache";
 #endif
-}
-
-void mkdirs_for_file(const std::string& filepath)
-{
-    size_t sep = filepath.rfind('/');
-#ifdef _WIN32
-    if (sep == std::string::npos) sep = filepath.rfind('\\');
-#endif
-    if (sep == std::string::npos) return;
-    std::string dir = filepath.substr(0, sep);
-    for (size_t i = 1; i <= dir.size(); ++i) {
-        if (i == dir.size() || dir[i] == '/' || dir[i] == '\\') {
-            std::string sub = dir.substr(0, i);
-#ifdef _WIN32
-            CreateDirectoryA(sub.c_str(), nullptr);
-#else
-            mkdir(sub.c_str(), 0755);
-#endif
-        }
-    }
 }

@@ -24,6 +24,7 @@
 #include "frontend/components/sidebar_left/params/params_internal.hpp"
 #include "frontend/source/app_log.hpp"
 #include "frontend/source/audio.hpp"
+#include "lib/text.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -48,14 +49,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
     const uint8_t tsys      = connected ? vs->sysid  : 1;
     const uint8_t tcomp     = connected ? vs->compid : 1;
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "PARAMETERS");
-    if (!connected) {
-        ImGui::SameLine(0, 6);
-        ImGui::TextColored(col_no_link_muted(), "(no link)");
-    }
-    themed_sep();
-    ImGui::Spacing();
+    ui_tab_heading("PARAMETERS", connected ? nullptr : "(no link)");
 
     ImGui::BeginDisabled(!connected);
     if (ui_grid_button("FETCH ALL", { -1.0f, 26.0f }) && connected) {
@@ -248,11 +242,6 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
                              param_search, sizeof(param_search));
     ImGui::Spacing();
 
-    // Upper-cased search string for case-insensitive filtering
-    char search_upper[64] = {};
-    for (int i = 0; i < 63 && param_search[i]; ++i)
-        search_upper[i] = (char)toupper((unsigned char)param_search[i]);
-
     // Which page the rows are read against, so a mismatch is visible before
     // anyone opens an "i".
     if (docs) {
@@ -306,12 +295,7 @@ void draw_tab_params(MavlinkSender* sender, const VehicleState* vs,
             const ParamEntry& p = it->second;
 
             // Filter
-            if (search_upper[0] != '\0') {
-                char id_upper[17] = {};
-                for (int i = 0; i < 16 && p.param_id[i]; ++i)
-                    id_upper[i] = (char)toupper((unsigned char)p.param_id[i]);
-                if (strstr(id_upper, search_upper) == nullptr) continue;
-            }
+            if (!text_icontains(p.param_id, param_search)) continue;
 
             ImGui::PushID(p.param_id);
 

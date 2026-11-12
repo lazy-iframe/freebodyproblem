@@ -17,6 +17,7 @@
 
 
 #include "backend/calibration/accel.hpp"
+#include "lib/text.hpp"
 
 #include <cctype>
 #include <cstring>
@@ -33,23 +34,6 @@ const AccelCalPos kOrder[] = {
     AccelCalPos::Back,
 };
 constexpr int kOrderCount = (int)(sizeof(kOrder) / sizeof(kOrder[0]));
-
-// Case-insensitive substring search. The vehicle's wording is not stable
-// enough to match exactly — it has changed across releases and differs between
-// vehicle types — so the parse below looks for the distinguishing word only.
-bool contains(const std::string& haystack_lower, const char* needle_lower)
-{
-    return haystack_lower.find(needle_lower) != std::string::npos;
-}
-
-std::string lowered(const char* text)
-{
-    std::string out;
-    if (!text) return out;
-    for (const char* p = text; *p; ++p)
-        out += (char)std::tolower((unsigned char)*p);
-    return out;
-}
 
 } // namespace
 
@@ -76,45 +60,41 @@ AccelCalPos accel_cal_pos_at(int index)
     return kOrder[index];
 }
 
-int accel_cal_pos_index(AccelCalPos pos)
-{
-    for (int i = 0; i < kOrderCount; ++i)
-        if (kOrder[i] == pos) return i;
-    return -1;
-}
-
 // ── STATUSTEXT parsing ───────────────────────────────────────────────────────
 
 AccelCalPos AccelCalibration::parse_statustext(const char* text)
 {
-    const std::string t = lowered(text);
+    // Searched for the distinguishing word only, without regard to case: the
+    // vehicle's wording is not stable enough to match exactly — it has changed
+    // across releases and differs between vehicle types.
+    const std::string_view t = text ? text : "";
     if (t.empty()) return AccelCalPos::None;
 
     // Results first. "Calibration successful" and "Calibration FAILED" are
     // verdicts, and testing them before the orientations keeps a word that
     // happens to appear in both from being read as a request to move.
-    if (contains(t, "successful") || contains(t, "success"))
+    if (text_icontains(t, "successful") || text_icontains(t, "success"))
         return AccelCalPos::Success;
-    if (contains(t, "failed") || contains(t, "failure"))
+    if (text_icontains(t, "failed") || text_icontains(t, "failure"))
         return AccelCalPos::Failed;
 
     // Only lines that are actually asking for an orientation. Without this the
     // words below would match any passing message — a vehicle says "left" and
     // "up" for plenty of reasons that have nothing to do with a calibration.
-    if (!contains(t, "place") && !contains(t, "position"))
+    if (!text_icontains(t, "place") && !text_icontains(t, "position"))
         return AccelCalPos::None;
 
     // "nose down" / "nose up" before the bare directions: both contain a word
     // that on its own would be ambiguous, and the two-word form is the specific
     // one. "back" and "level" have no such overlap.
-    if (contains(t, "nose down") || contains(t, "nosedown")) return AccelCalPos::NoseDown;
-    if (contains(t, "nose up")   || contains(t, "noseup"))   return AccelCalPos::NoseUp;
-    if (contains(t, "level"))                                return AccelCalPos::Level;
-    if (contains(t, "left"))                                 return AccelCalPos::Left;
-    if (contains(t, "right"))                                return AccelCalPos::Right;
-    if (contains(t, "back"))                                 return AccelCalPos::Back;
-    if (contains(t, "down"))                                 return AccelCalPos::NoseDown;
-    if (contains(t, "up"))                                   return AccelCalPos::NoseUp;
+    if (text_icontains(t, "nose down") || text_icontains(t, "nosedown")) return AccelCalPos::NoseDown;
+    if (text_icontains(t, "nose up")   || text_icontains(t, "noseup"))   return AccelCalPos::NoseUp;
+    if (text_icontains(t, "level"))                                      return AccelCalPos::Level;
+    if (text_icontains(t, "left"))                                       return AccelCalPos::Left;
+    if (text_icontains(t, "right"))                                      return AccelCalPos::Right;
+    if (text_icontains(t, "back"))                                       return AccelCalPos::Back;
+    if (text_icontains(t, "down"))                                       return AccelCalPos::NoseDown;
+    if (text_icontains(t, "up"))                                         return AccelCalPos::NoseUp;
 
     return AccelCalPos::None;
 }

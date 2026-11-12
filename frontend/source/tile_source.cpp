@@ -17,6 +17,7 @@
 
 
 #include "frontend/source/tile_source.hpp"
+#include "lib/text.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -215,7 +216,7 @@ const char* tile_user_agent(const std::string& host)
     std::string name = scheme == std::string::npos ? host : host.substr(scheme + 3);
     name = name.substr(0, name.find(':'));
     if (!name.empty() && name.back() == '.') name.pop_back();
-    for (char& ch : name) ch = (char)std::tolower((unsigned char)ch);
+    name = text_lower(name);
 
     static const std::string OSM_DOMAIN = ".openstreetmap.org";
     if (name == "openstreetmap.org" ||

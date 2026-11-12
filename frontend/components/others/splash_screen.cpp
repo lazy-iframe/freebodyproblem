@@ -16,7 +16,7 @@
  **************************************************************************/
 
 
-#include "frontend/components/splash_screen.hpp"
+#include "frontend/components/others/splash_screen.hpp"
 #include "frontend/source/theme.hpp"
 
 #define _USE_MATH_DEFINES

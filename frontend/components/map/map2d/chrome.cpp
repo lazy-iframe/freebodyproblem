@@ -22,6 +22,7 @@
 // on the flat map, the scale bar.
 
 #include "frontend/components/map/map2d/map2d_internal.hpp"
+#include "frontend/source/coord_format.hpp"
 #include "frontend/components/map/map_view_3d.hpp"
 #include "frontend/source/terrain.hpp"
 #include <algorithm>
@@ -31,10 +32,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
 
 using namespace map_detail;
 
@@ -140,9 +137,7 @@ void draw_ac_block(ImDrawList* dl, ImVec2 wp, bool has_pos,
 
     char l1[64], l2[64];
     if (has_pos)
-        snprintf(l1, sizeof(l1), "A/C  %.5f%c %.5f%c",
-                 lat < 0 ? -lat : lat, lat < 0 ? 'S' : 'N',
-                 lon < 0 ? -lon : lon, lon < 0 ? 'W' : 'E');
+        snprintf(l1, sizeof(l1), "A/C  %s", format_lat_lon(lat, lon, 5).c_str());
     else
         snprintf(l1, sizeof(l1), "A/C  NO POSITION");
     snprintf(l2, sizeof(l2), "HDG %s  ALT %.0f AGL  GS %.0f",
@@ -269,9 +264,8 @@ void draw_tactical_overlay(const MapFrame& f)
     // Scale bar, bottom-left: 120 px of ground truth at this latitude.
     {
         constexpr float BAR_PX = 120.0f;
-        const double m_per_px = 156543.03392 *
-                                std::cos(g_map.center_lat * M_PI / 180.0) /
-                                (double)(1 << g_map.zoom);
+        const double m_per_px = geo_mercator_world_m(g_map.center_lat) /
+                                (256.0 * (double)(1 << g_map.zoom));
         const double span = m_per_px * BAR_PX;
         char scale_s[48];
         if (span >= 1000.0) snprintf(scale_s, sizeof(scale_s), "%.1f km  \xc2\xb7  Z%d", span / 1000.0, g_map.zoom);

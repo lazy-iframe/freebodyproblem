@@ -43,14 +43,6 @@ namespace map2d_detail {
 MapState g_map;
 bool     s_3d = false;
 
-const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet)
-{
-    if (fleet)
-        for (const MapVehicle& mv : *fleet)
-            if (mv.active) return &mv;
-    return nullptr;
-}
-
 void fleet_or_solo(MapFrame& f)
 {
     f.draw_list = f.fleet;
@@ -124,7 +116,6 @@ static bool draw_3d(MapFrame& f)
 {
     ImDrawList* dl = f.dl;
     const ImVec2 wp = f.wp;
-    const MissionPickState* pick = f.pick;
     GotoTargetState* go = f.go;
 
     fleet_or_solo(f);
@@ -134,11 +125,7 @@ static bool draw_3d(MapFrame& f)
     scene.pick    = f.pick;
     scene.go      = go;
     FencePlan downloaded;
-    scene.fence = (pick && pick->edit_fence) ? pick->edit_fence : nullptr;
-    if (!scene.fence && f.fence && !f.fence->empty()) {
-        downloaded  = fence_from_items(*f.fence);
-        scene.fence = &downloaded;
-    }
+    scene.fence   = f.shown_fence(downloaded);
     if (!map3d_draw(dl, wp, { f.win_w, f.win_h }, f.map_hovered,
                     { g_map.center_lat, g_map.center_lon, g_map.follow }, scene))
         return false;
@@ -175,7 +162,7 @@ static bool draw_3d(MapFrame& f)
 static void place_grid(MapFrame& f)
 {
     double cx, cy;
-    lat_lon_to_tile_frac(g_map.center_lat, g_map.center_lon, g_map.zoom, cx, cy);
+    geo_to_tile(g_map.center_lat, g_map.center_lon, g_map.zoom, cx, cy);
 
     f.tl_px = cx * TILE_PX - f.win_w * 0.5;
     f.tl_py = cy * TILE_PX - f.win_h * 0.5;

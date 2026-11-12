@@ -21,6 +21,8 @@
 #include "backend/mavlink/timesync.hpp"
 #include "frontend/source/app_log.hpp"   // gcs_log — thread-safe, see the header
 #include "frontend/source/audio.hpp"     // gcs_tone
+#include "lib/mav_result.hpp"
+#include "lib/text.hpp"
 
 void VehicleReports::tick(const VehicleState& ps, const std::deque<StatusText>& sts)
 {
@@ -30,8 +32,7 @@ void VehicleReports::tick(const VehicleState& ps, const std::deque<StatusText>& 
         logged_timesync_ = true;
         const int64_t up_s = (timesync_monotonic_ns() + ps.time_offset_ns)
                              / 1000000000;
-        gcs_log("[sys%u] clock synced \xe2\x80\x94 up %02d:%02d:%02d", tsys,
-                (int)(up_s / 3600), (int)((up_s / 60) % 60), (int)(up_s % 60));
+        gcs_log("[sys%u] clock synced \xe2\x80\x94 up %s", tsys, text_hms(up_s).c_str());
     }
 
     // New vehicle STATUSTEXT messages, to the bottom bar.
@@ -91,12 +92,8 @@ void VehicleReports::command_ack(const CommandAck& ack, bool tones) const
     if (tones)
         gcs_tone(ack.result == 0 ? GcsTone::Success : GcsTone::Failure);
 
-    const char* result = (ack.result == 0) ? "accepted"
-                       : (ack.result == 1) ? "temp. rejected"
-                       : (ack.result == 2) ? "denied"
-                       : (ack.result == 4) ? "failed"
-                                           : "rejected";
-    gcs_log("[sys%u] ack: %s \xe2\x86\x92 %s", (unsigned)sysid_, cname, result);
+    gcs_log("[sys%u] ack: %s \xe2\x86\x92 %s", (unsigned)sysid_, cname,
+            mav_result_text(ack.result));
 }
 
 void VehicleReports::param_ext_ack(const ParamExtAck& pa, bool tones) const

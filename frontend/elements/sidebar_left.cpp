@@ -17,9 +17,9 @@
 
 
 #include "frontend/elements/sidebar_left.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/layout.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "imgui.h"
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
 

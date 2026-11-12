@@ -72,9 +72,8 @@ void draw_attitude_ball(const VehicleState& vs, float size, float text_size,
 
 // The configurable 3x3 telemetry grid, with its header. `meta` replaces the
 // header's right-hand caption when given.
-float telemetry_panel_height();
-void  draw_telemetry_panel(const VehicleState& vs, MavlinkSender* sender,
-                           AppSettings* settings, const char* meta = nullptr);
+void draw_telemetry_panel(const VehicleState& vs, MavlinkSender* sender,
+                          AppSettings* settings, const char* meta = nullptr);
 
 // The fleet event log, with its header, filling the space left.
 void draw_event_log_panel(bool wrap);

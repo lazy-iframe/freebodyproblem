@@ -22,7 +22,8 @@
 #include "frontend/source/audio.hpp"
 #include "frontend/source/settings.hpp"
 #include "frontend/source/layout.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
+#include "lib/text.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "backend/input/rc_binding.hpp"   // rc_detect_moved_channel, rc_aux_option_label
 
@@ -330,15 +331,6 @@ void run_detection()
     gcs_tone(GcsTone::Success);
 }
 
-bool same_name(const std::string& a, const char* b)
-{
-    size_t i = 0;
-    for (; i < a.size() && b[i]; ++i)
-        if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
-            return false;
-    return i == a.size() && !b[i];
-}
-
 // The vehicle's own number for a named mode, or false if there is no telling.
 // Sending a number anyway is how a button labelled Loiter lands a Plane in
 // something else entirely.
@@ -348,14 +340,14 @@ bool resolve_mode(const JoyButtonBinding& b, const VehicleState& vs,
     standard = 0;
     if (!vs.available_modes.empty()) {
         for (const FlightModeInfo& m : vs.available_modes)
-            if (m.user_selectable() && same_name(b.mode_name, m.name.c_str())) {
+            if (m.user_selectable() && text_iequals(b.mode_name, m.name)) {
                 custom   = m.custom_mode;
                 standard = m.standard_mode;
                 return true;
             }
     } else {
         for (const FallbackMode& m : firmware_profile(vs).fallback_modes(vs.type))
-            if (same_name(b.mode_name, m.label)) {
+            if (text_iequals(b.mode_name, m.label)) {
                 custom = m.custom_mode;
                 return true;
             }

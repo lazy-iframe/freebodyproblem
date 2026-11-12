@@ -35,7 +35,7 @@ namespace map3d_detail {
 std::optional<double> ground_z(const Frame& f, double ex, double ey)
 {
     double lat, lon;
-    unmerc(f.u0 + ex / f.m, f.v0 - ey / f.m, lat, lon);
+    geo_unmercator(f.u0 + ex / f.m, f.v0 - ey / f.m, lat, lon);
     if (auto g = terrain_amsl(lat, lon)) return (*g - f.href) * f.exag - f.drop(ex, ey);
     return std::nullopt;
 }

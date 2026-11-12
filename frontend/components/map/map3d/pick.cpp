@@ -22,7 +22,7 @@
 
 #include "frontend/components/map/map3d/map3d_internal.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/mission_alt.hpp"
 #include "frontend/source/terrain.hpp"
 
@@ -185,7 +185,7 @@ static bool run_point_pick(PointPick& pp, ImDrawList* dl, const Frame& f, V3 eye
         if (!hovered) return false;
         const auto hit = ray_ground(f, eye, ray, range);
         if (!hit) return false;
-        unmerc(f.u0 + hit->x / f.m, f.v0 - hit->y / f.m, pp.lat, pp.lon);
+        geo_unmercator(f.u0 + hit->x / f.m, f.v0 - hit->y / f.m, pp.lat, pp.lon);
         pp.ground = f.amsl_at(*hit);
         // Where it would start, but never in the hill: over rising ground the
         // line has to reach down to the spot chosen.

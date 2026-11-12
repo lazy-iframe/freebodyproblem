@@ -73,6 +73,10 @@ std::optional<float> plan_home_amsl(std::optional<float> reported,
                                     const double* home_lat, const double* home_lon,
                                     const std::vector<MissionItem>* mission);
 
+// The same for a vehicle (nullptr for none): home_amsl() is what it reported.
+std::optional<float> plan_home_amsl(const VehicleState* vs,
+                                    const std::vector<MissionItem>* mission);
+
 // One leg of a mission: from the item at index `from` to the one at `to`,
 // both indices into the mission vector.
 struct MissionLeg {

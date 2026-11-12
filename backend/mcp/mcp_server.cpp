@@ -35,6 +35,8 @@
 #include "backend/link/fleet.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "frontend/source/app_log.hpp"
+#include "lib/geo.hpp"
+#include "lib/text.hpp"
 #include "plugins/plugin_api.hpp"
 
 using json = nlohmann::json;
@@ -91,15 +93,6 @@ json tool_text(const std::string& text, bool is_error = false)
 
 json tool_json(const json& j) { return tool_text(j.dump(2)); }
 
-bool iequals(const std::string& a, const std::string& b)
-{
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
-            return false;
-    return true;
-}
-
 // Loopback names only. Checked on Host as well as Origin: a page on some other
 // site can make the browser send a request here by pointing its own hostname at
 // 127.0.0.1 (DNS rebinding), and that request carries the other site's name.
@@ -112,7 +105,7 @@ bool is_loopback_host(std::string h)
     }
     const size_t colon = h.find(':');
     if (colon != std::string::npos) h.resize(colon);
-    return h == "127.0.0.1" || iequals(h, "localhost");
+    return h == "127.0.0.1" || text_iequals(h, "localhost");
 }
 
 bool origin_ok(const httplib::Request& req)
@@ -149,13 +142,6 @@ bool authorised(const httplib::Request& req, const std::string& token)
 }
 
 // ── Describing a vehicle ─────────────────────────────────────────────────────
-
-std::string mode_name(const VehicleState& vs)
-{
-    for (const auto& m : vs.available_modes)
-        if (m.custom_mode == vs.custom_mode) return m.name;
-    return firmware_profile(vs).mode_short_name(vs.custom_mode, vs.type);
-}
 
 const char* type_name(MAV_TYPE t)
 {
@@ -202,7 +188,7 @@ json telemetry_json(const Vehicle& v, const VehicleSnapshot& s)
         {"autopilot", firmware_profile(vs).name()},
         {"type",      type_name(vs.type)},
         {"armed",     vs.armed},
-        {"mode",      mode_name(vs)},
+        {"mode",      current_mode_name(vs)},
         {"stale",     v.stale()},
     };
     if (vs.has_global_pos)
@@ -250,17 +236,6 @@ json mission_item_json(const MissionItem& m)
     return { {"seq", m.seq}, {"command", m.command}, {"frame", m.frame},
              {"lat", m.lat}, {"lon", m.lon}, {"alt_m", m.alt},
              {"params", { m.param1, m.param2, m.param3, m.param4 }} };
-}
-
-// Great-circle distance, for telling the operator how far a goto goes.
-double distance_m(double lat1, double lon1, double lat2, double lon2)
-{
-    constexpr double R = 6371000.0, D2R = 3.14159265358979323846 / 180.0;
-    const double dlat = (lat2 - lat1) * D2R, dlon = (lon2 - lon1) * D2R;
-    const double a = std::sin(dlat / 2) * std::sin(dlat / 2) +
-                     std::cos(lat1 * D2R) * std::cos(lat2 * D2R) *
-                     std::sin(dlon / 2) * std::sin(dlon / 2);
-    return 2.0 * R * std::asin(std::sqrt((std::min)(1.0, a)));
 }
 
 // A mode the operator could pick, matched by `match` against its name and its
@@ -977,7 +952,7 @@ struct McpTools {
     {
         if (!vs.has_global_pos) return {};
         const double from_lat = vs.lat, from_lon = vs.lon, from_amsl = vs.alt_asl;
-        const double h_len = distance_m(from_lat, from_lon, to_lat, to_lon);
+        const double h_len = geo_distance_m(from_lat, from_lon, to_lat, to_lon);
         const double len   = std::sqrt(h_len * h_len + (to_amsl - from_amsl) * (to_amsl - from_amsl));
         const int    n     = (std::max)(1, (std::min)(PATH_SAMPLES_MAX, (int)std::ceil(len / PATH_SAMPLE_M)));
 
@@ -997,7 +972,7 @@ struct McpTools {
             const std::string name = "vehicle (" + std::to_string(o->number()) + ")";
             others.push_back({ os.lat, os.lon, os.alt_asl, name });
             auto t = targets.find(key(*o));
-            if (t != targets.end() && iequals(mode_name(os), "Guided"))
+            if (t != targets.end() && text_iequals(current_mode_name(os), "Guided"))
                 others.push_back({ t->second.lat, t->second.lon, t->second.amsl,
                                    "the point " + name + " is heading to" });
         }
@@ -1007,7 +982,7 @@ struct McpTools {
             double best_h = 1e9, best_v = 1e9;
             for (int i = 0; i <= n; ++i) {
                 const double f = (double)i / n;
-                const double h = distance_m(from_lat + f * (to_lat - from_lat),
+                const double h = geo_distance_m(from_lat + f * (to_lat - from_lat),
                                             from_lon + f * (to_lon - from_lon), p.lat, p.lon);
                 const double v = std::fabs(from_amsl + f * (to_amsl - from_amsl) - p.amsl);
                 if (h < SEPARATION_H_M && v < SEPARATION_V_M && h + v < best_h + best_v) {
@@ -1104,7 +1079,7 @@ struct McpTools {
                 v->snapshot(snap);
                 row["type"]      = type_name(snap.state.type);
                 row["autopilot"] = firmware_profile(snap.state).name();
-                row["mode"]      = mode_name(snap.state);
+                row["mode"]      = current_mode_name(snap.state);
                 row["claimed_by"] = claimed_by(*v);
                 break;
             }
@@ -1332,7 +1307,7 @@ struct McpTools {
         VehicleSnapshot snap;
         v->snapshot(snap);
         ModeChoice m;
-        if (!find_mode(snap.state, [&](const std::string& n, uint8_t) { return iequals(n, want); }, m))
+        if (!find_mode(snap.state, [&](const std::string& n, uint8_t) { return text_iequals(n, want); }, m))
             return mode_not_found(snap.state, "Not a selectable mode for this vehicle: " + want + ".");
         return switch_mode("set_mode", v, snap.state, m, "SET MODE \xe2\x86\x92 " + m.name, args);
     }
@@ -1347,7 +1322,7 @@ struct McpTools {
         ModeChoice m;
         if (!find_mode(snap.state, [](const std::string& n, uint8_t std_mode) {
                 return std_mode == MAV_STANDARD_MODE_MISSION ||
-                       iequals(n, "Auto") || iequals(n, "Mission");
+                       text_iequals(n, "Auto") || text_iequals(n, "Mission");
             }, m))
             return mode_not_found(snap.state, "This vehicle lists no mission mode.");
         return switch_mode("start_mission", v, snap.state, m,
@@ -1370,7 +1345,7 @@ struct McpTools {
         bool found = false;
         for (const char* want : { "Hold", "Guided", "Loiter" }) {
             if (find_mode(snap.state, [want](const std::string& n, uint8_t) {
-                    return iequals(n, want);
+                    return text_iequals(n, want);
                 }, m)) { found = true; break; }
         }
         if (!found)
@@ -1471,11 +1446,7 @@ struct McpTools {
         if (offset) {
             // Flat-earth about the vehicle: well inside a metre over the
             // few kilometres a goto covers.
-            constexpr double R = 6371000.0, R2D = 180.0 / 3.14159265358979323846;
-            lat = vs.lat + north / R * R2D;
-            lon = vs.lon + east / (R * std::cos(vs.lat / R2D)) * R2D;
-            if (lon > 180)  lon -= 360;
-            if (lon < -180) lon += 360;
+            geo_offset(vs.lat, vs.lon, north, east, lat, lon);
         }
         if (lat < -90 || lat > 90 || lon < -180 || lon > 180)
             return tool_text("lat/lon out of range", true);
@@ -1495,7 +1466,7 @@ struct McpTools {
                           std::fabs(east),  east  < 0 ? "W" : "E", lat, lon, alt);
         else if (vs.has_global_pos)
             std::snprintf(summary, sizeof summary, "GO TO %.6f, %.6f at %.1f m (%.0f m away)",
-                          lat, lon, alt, distance_m(vs.lat, vs.lon, lat, lon));
+                          lat, lon, alt, geo_distance_m(vs.lat, vs.lon, lat, lon));
         else
             std::snprintf(summary, sizeof summary, "GO TO %.6f, %.6f at %.1f m", lat, lon, alt);
 
@@ -1542,7 +1513,7 @@ struct McpTools {
             } else if (c.is_string()) {
                 bool known = false;
                 for (const auto& [n, id] : MISSION_COMMANDS)
-                    if (iequals(n, c.get<std::string>())) { m.command = id; known = true; }
+                    if (text_iequals(n, c.get<std::string>())) { m.command = id; known = true; }
                 if (!known) return tool_text(at + "unknown command " + c.get<std::string>(), true);
             } else {
                 return tool_text(at + "command is required", true);

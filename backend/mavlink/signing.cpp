@@ -372,8 +372,6 @@ void observe_timestamp(uint64_t ts)
     while (ts > last && !g_last_ts.compare_exchange_weak(last, ts, std::memory_order_relaxed)) {}
 }
 
-uint8_t link_id(const LinkKey* link) { return link ? link->id : 0; }
-
 bool sign_frame(LinkKey* link, const std::vector<uint8_t>& frame, std::vector<uint8_t>& out)
 {
     if (!active(link)) return false;

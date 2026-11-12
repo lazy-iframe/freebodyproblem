@@ -22,7 +22,7 @@
 #include "frontend/elements/center_view.hpp"
 #include "frontend/source/layout.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "imgui.h"
 #include "frontend/source/settings.hpp"
 #include <cstdio>

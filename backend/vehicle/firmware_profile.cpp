@@ -18,6 +18,7 @@
 
 #include "backend/vehicle/firmware_profile.hpp"
 #include "backend/mavlink/sender/sender.hpp"
+#include "lib/text.hpp"
 
 #include <cctype>
 #include <mavlink/ardupilotmega/mavlink.h>
@@ -108,13 +109,9 @@ public:
         // accident on anything that publishes one.
         for (const FlightModeInfo& m : vs.available_modes) {
             if (m.custom_mode != vs.custom_mode) continue;
-            std::string n;
-            n.reserve(m.name.size());
-            for (char c : m.name)
-                n.push_back((char)std::tolower((unsigned char)c));
             // "Guided" and "Guided NoGPS" are two different modes; the latter
             // takes attitude targets rather than positions.
-            return n == "guided" ? ok() : refused();
+            return text_iequals(m.name, "guided") ? ok() : refused();
         }
 
         // GUIDED's number in each firmware's Mode::Number.
@@ -271,6 +268,13 @@ void send_goto(MavlinkSender& sender, uint8_t tsys, uint8_t tcomp,
         sender.goto_position(tsys, tcomp, lat, lon, altitude_m);
         break;
     }
+}
+
+std::string current_mode_name(const VehicleState& vs)
+{
+    for (const FlightModeInfo& m : vs.available_modes)
+        if (m.custom_mode == vs.custom_mode) return m.name;
+    return firmware_profile(vs).mode_short_name(vs.custom_mode, vs.type);
 }
 
 void send_set_mode(MavlinkSender& sender, uint8_t tsys, uint8_t tcomp,

@@ -91,9 +91,9 @@ static void handle_input(bool hovered, ImVec2 size, Map3DCenter c)
     const double dn  =  d.x * mpp * std::sin(yaw) + fwd * std::cos(yaw);
 
     double u, v;
-    merc(c.lat, c.lon, u, v);
-    const double m = EARTH_C * std::cos(c.lat * DEG);
-    unmerc(u + de / m, v - dn / m, c.lat, c.lon);
+    geo_mercator(c.lat, c.lon, u, v);
+    const double m = geo_mercator_world_m(c.lat);
+    geo_unmercator(u + de / m, v - dn / m, c.lat, c.lon);
     c.follow = false;
 }
 
@@ -145,8 +145,7 @@ bool map3d_draw(ImDrawList* dl, ImVec2 p0, ImVec2 size, bool hovered,
         s_ground.reset();
     }
 
-    const MapVehicle* active = nullptr;
-    for (const MapVehicle& mv : *scene.fleet) if (mv.active) active = &mv;
+    const MapVehicle* active = active_vehicle(scene.fleet);
 
     if (center.follow && active && active->has_pos) {
         center.lat = active->lat;
@@ -165,8 +164,8 @@ bool map3d_draw(ImDrawList* dl, ImVec2 p0, ImVec2 size, bool hovered,
     // else the ground at the centre.
     if (auto gnd = terrain_amsl(center.lat, center.lon)) s_ground = gnd;
     Frame f;
-    merc(center.lat, center.lon, f.u0, f.v0);
-    f.m    = EARTH_C * std::cos(center.lat * DEG);
+    geo_mercator(center.lat, center.lon, f.u0, f.v0);
+    f.m    = geo_mercator_world_m(center.lat);
     f.exag = map3d_exaggeration();
     f.href = s_ground ? *s_ground : (active && active->has_alt ? active->alt_amsl : 0.0);
     f.p0   = p0;
@@ -253,6 +252,7 @@ bool map3d_draw(ImDrawList* dl, ImVec2 p0, ImVec2 size, bool hovered,
     dl->AddImage((ImTextureID)(intptr_t)g.color, p0, p1, { 0, 1 }, { 1, 0 });
 
     dl->PushClipRect(p0, p1, true);
+    draw_fence_off(dl, f, scene.fence, active);
     draw_trails(dl, f, *scene.fleet);
     if (scene.mission && !scene.mission->empty()) draw_mission(dl, f, eye, *scene.mission, active);
     if (scene.go && scene.go->has_target) draw_goto_target(dl, f, eye, *scene.go, scene.mission, active);

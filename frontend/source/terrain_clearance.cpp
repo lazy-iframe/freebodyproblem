@@ -19,15 +19,12 @@
 #include "frontend/source/terrain_clearance.hpp"
 #include "frontend/source/mission_alt.hpp"
 #include "frontend/source/terrain.hpp"
+#include "lib/geo.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
-
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846
-#endif
 
 namespace {
 
@@ -36,14 +33,6 @@ float g_clearance_m = 30.0f;
 // About the terrain's own spacing; finer would only re-read the same pixels.
 constexpr double STEP_M      = 25.0;
 constexpr int    MAX_SAMPLES = 200;   // a long leg is sampled coarser rather than slower
-
-double rough_metres(double lat0, double lon0, double lat1, double lon1)
-{
-    constexpr double M_PER_DEG = 111320.0;
-    const double dn = (lat1 - lat0) * M_PER_DEG;
-    const double de = (lon1 - lon0) * M_PER_DEG * std::cos(0.5 * (lat0 + lat1) * M_PI / 180.0);
-    return std::sqrt(dn * dn + de * de);
-}
 
 // The cache, keyed by the path's six numbers exactly. Cleared, not pruned,
 // when it grows: a mission is a few dozen legs, and the GO HERE line a few
@@ -67,7 +56,7 @@ Clearance compute(double lat0, double lon0, double amsl0, double lat1, double lo
                   double earth_radius_m = 0.0)
 {
     Clearance c;
-    const double len = rough_metres(lat0, lon0, lat1, lon1);
+    const double len = geo_rough_distance_m(lat0, lon0, lat1, lon1);
     const int n = std::clamp((int)std::ceil(len / STEP_M), 1, MAX_SAMPLES);
     c.complete = true;
     for (int i = 0; i <= n; ++i) {
@@ -126,6 +115,14 @@ std::optional<float> plan_home_amsl(std::optional<float> reported,
         for (const MissionItem& it : *mission)
             if (it.lat != 0.0 || it.lon != 0.0) return terrain_amsl(it.lat, it.lon);
     return std::nullopt;
+}
+
+std::optional<float> plan_home_amsl(const VehicleState* vs,
+                                    const std::vector<MissionItem>* mission)
+{
+    const bool pos = vs && vs->has_home;
+    return plan_home_amsl(home_amsl(vs), pos ? &vs->home_lat : nullptr,
+                          pos ? &vs->home_lon : nullptr, mission);
 }
 
 std::vector<MissionLeg> mission_legs(const std::vector<MissionItem>& mission,

@@ -67,13 +67,6 @@ void link_sockets_init()
 #endif
 }
 
-void link_sockets_cleanup()
-{
-#ifdef _WIN32
-    WSACleanup();
-#endif
-}
-
 
 Link::Link(uint32_t id, const LinkConfig& cfg)
     : id_(id), cfg_(cfg)

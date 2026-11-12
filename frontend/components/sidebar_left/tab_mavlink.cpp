@@ -18,7 +18,7 @@
 
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/components/sidebar_left/mavlink_display_generated.hpp"
 #include "imgui.h"
 #include <cstdio>

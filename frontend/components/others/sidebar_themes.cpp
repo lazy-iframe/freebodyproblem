@@ -16,20 +16,21 @@
  **************************************************************************/
 
 
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/settings.hpp"
 #include "frontend/source/terrain.hpp"
 #include "frontend/source/terrain_clearance.hpp"
 #include "frontend/source/audio.hpp"
 #include "frontend/components/map/map_view.hpp"
-#include "frontend/components/mcp_approval.hpp"
+#include "frontend/components/others/mcp_approval.hpp"
 #include "backend/mcp/mcp_server.hpp"
 #include "backend/mavlink/sender/sender.hpp"
 #include "backend/vehicle/vehicle.hpp"
 #include "frontend/source/app_log.hpp"
 #include "imgui.h"
+#include "lib/text.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -72,8 +73,7 @@ static bool theme_card(const std::string& name, const ThemeVars& t,
         name_right -= w + 8.0f;
     }
 
-    std::string upper = name;
-    for (char& ch : upper) ch = (char)std::toupper((unsigned char)ch);
+    const std::string upper = text_upper(name);
     dl->PushClipRect({ p0.x + 8.0f, p0.y }, { name_right, p1.y }, true);
     ui_tracked_text(dl, g_font_micro, UI_SZ_MICRO, { p0.x + 8.0f, p0.y + 7.0f },
                     ui_col(t.accent), upper.c_str());
@@ -243,7 +243,7 @@ static const BaseColor k_base_colors[] = {
     { "Background", "Panels and bars; wells, strips and backdrops follow",
       &ThemeVars::bg_panel, [](ThemeVars& t) {
         const ImVec4 c = t.bg_panel;
-        follow(t.bg_topbar, c, 0.67f);        follow(t.bg_bottombar, c, 0.67f);
+        follow(t.bg_topbar, c, 0.67f);
         follow(t.bg_param_list, c, 0.67f);    follow(t.bg_sidebar_left, c, 0.81f);
         follow(t.bg_video, c, 0.44f);         follow(t.bg_map, c, 0.44f);
         follow(t.map_tile_placeholder, c, 0.44f);
@@ -1083,7 +1083,6 @@ void draw_themes_panel(AppSettings& settings, const std::vector<VehicleChip>& ve
             if (ImGui::CollapsingHeader("BACKGROUNDS")) {
                 c4("Panel",            g_theme.bg_panel);
                 c4("Top Bar",          g_theme.bg_topbar);
-                c4("Bottom Bar",       g_theme.bg_bottombar);
                 c4("Left Sidebar",     g_theme.bg_sidebar_left);
                 c4("Video",            g_theme.bg_video);
                 c4("Map Backdrop",     g_theme.bg_map);

@@ -113,8 +113,7 @@ static void sample_edge(double alat, double alon, double blat, double blon, int 
                  Band& band, BandSet& set)
 {
     constexpr double STEP_M = 25.0;
-    const double m_lat = 111320.0, m_lon = 111320.0 * std::cos(alat * DEG);
-    const double len = std::hypot((blat - alat) * m_lat, (blon - alon) * m_lon);
+    const double len = geo_rough_distance_m(alat, alon, blat, blon);
     const int    n   = std::clamp((int)std::ceil(len / STEP_M), 1, max_n);
     std::vector<BandSample>* run = nullptr;
     for (int k = 0; k <= n; ++k) {
@@ -180,50 +179,71 @@ const BandSet& mission_bands(const std::vector<MissionItem>& mission, const MapV
     return s_set;
 }
 
-// The geofence as walls: every uploaded zone, and the parameter cylinder round
-// the active vehicle's home, standing on the terrain up to the ceiling —
-// FENCE_ALT_MAX above home. Inclusion zones and the cylinder green, exclusion
-// zones red. Without a ceiling the walls stand FENCE_DEFAULT_H above the
-// ground, so the zone still shows; with one, their tops are drawn too.
-// Sampled again when the zones, the cylinder or the ceiling have changed.
+// The geofence's outlines on the ground: every uploaded zone, and the
+// parameter cylinder round the active vehicle's home. [0] exclusion, [1]
+// inclusion, the cylinder among the latter.
+using FenceRing = std::vector<FenceVertex>;
+
+static FenceRing fence_circle(FenceVertex c, double r_m)
+{
+    constexpr int CIRCLE_SEG = 72;
+    FenceRing ring;
+    for (int i = 0; i < CIRCLE_SEG; ++i) {
+        const double a = 2 * GEO_PI * i / CIRCLE_SEG;
+        double lat, lon;
+        geo_offset(c.lat, c.lon, r_m * std::cos(a), r_m * std::sin(a), lat, lon);
+        ring.push_back({ lat, lon });
+    }
+    return ring;
+}
+
+static void fence_rings(const FencePlan* zones, const MapVehicle* active,
+                        std::vector<FenceRing> rings[2])
+{
+    if (zones)
+        for (const FenceShape& sh : zones->shapes) {
+            if (sh.kind == FenceShape::Kind::Circle) {
+                if (sh.radius_m > 0.0f) rings[sh.inclusion].push_back(fence_circle(sh.center, sh.radius_m));
+            } else if (sh.pts.size() >= 3) {
+                rings[sh.inclusion].push_back(sh.pts);
+            }
+        }
+    if (active && active->has_home && active->fence.circle_configured())
+        rings[1].push_back(fence_circle({ active->home_lat, active->home_lon },
+                                        active->fence.radius_m));
+}
+
+// Whether the active vehicle has said its fence is off. No vehicle, or none
+// whose parameters have been read, counts as on.
+static bool fence_off(const MapVehicle* active)
+{
+    return active && active->fence.disabled();
+}
+
+// The geofence as walls while it is on: every ring above, standing on the
+// terrain up to the ceiling — FENCE_ALT_MAX above home. Inclusion zones and the
+// cylinder green, exclusion zones red. Without a ceiling the walls stand
+// FENCE_DEFAULT_H above the ground, so the zone still shows; with one, their
+// tops are drawn too. Off, there are no walls: draw_fence_off() traces the
+// rings on the ground, dotted, instead. Sampled again when the rings or the
+// ceiling have changed.
 constexpr double FENCE_DEFAULT_H = 60.0;
 
 const BandSet& fence_bands(const FencePlan* zones, const MapVehicle* active,
                            const std::vector<MissionItem>* mission)
 {
-    using Ring = std::vector<FenceVertex>;
+    using Ring = FenceRing;
     static BandSet               s_set;
     static std::vector<Ring>     s_rings[2];   // [0] exclusion, [1] inclusion
     static std::optional<double> s_ceiling;
 
     const std::optional<float> home = plan_home_amsl(active, mission);
-    const bool fence_on = active && !active->fence.disabled();
     std::optional<double> ceiling;   // AMSL
-    if (fence_on && home && active->fence.ceiling_configured()) ceiling = *home + active->fence.alt_max_m;
+    if (active && !fence_off(active) && home && active->fence.ceiling_configured())
+        ceiling = *home + active->fence.alt_max_m;
 
     std::vector<Ring> rings[2];
-    const auto circle = [](FenceVertex c, double r_m) {
-        // Inside the lambda: it captures nothing, and MSVC will not read an
-        // enclosing constexpr local without a capture (C3493).
-        constexpr int CIRCLE_SEG = 72;
-        Ring ring;
-        const double m_lat = 111320.0, m_lon = 111320.0 * std::cos(c.lat * DEG);
-        for (int i = 0; i < CIRCLE_SEG; ++i) {
-            const double a = 2 * M_PI * i / CIRCLE_SEG;
-            ring.push_back({ c.lat + r_m * std::cos(a) / m_lat, c.lon + r_m * std::sin(a) / m_lon });
-        }
-        return ring;
-    };
-    if (zones)
-        for (const FenceShape& sh : zones->shapes) {
-            if (sh.kind == FenceShape::Kind::Circle) {
-                if (sh.radius_m > 0.0f) rings[sh.inclusion].push_back(circle(sh.center, sh.radius_m));
-            } else if (sh.pts.size() >= 3) {
-                rings[sh.inclusion].push_back(sh.pts);
-            }
-        }
-    if (fence_on && active->has_home && active->fence.circle_configured())
-        rings[1].push_back(circle({ active->home_lat, active->home_lon }, active->fence.radius_m));
+    if (!fence_off(active)) fence_rings(zones, active, rings);
 
     const auto same_rings = [](const std::vector<Ring>& x, const std::vector<Ring>& y) {
         if (x.size() != y.size()) return false;
@@ -259,6 +279,50 @@ const BandSet& fence_bands(const FencePlan* zones, const MapVehicle* active,
             }
     }
     return s_set;
+}
+
+void draw_fence_off(ImDrawList* dl, const Frame& f, const FencePlan* zones,
+                    const MapVehicle* active)
+{
+    if (!fence_off(active)) return;
+    std::vector<FenceRing> rings[2];
+    fence_rings(zones, active, rings);
+
+    constexpr double STEP_M = 25.0;   // about the terrain's own spacing
+    static std::vector<ImVec2> run;   // UI thread only
+    for (int kind = 0; kind < 2; ++kind) {
+        const ImU32 col = ui_col(kind ? g_theme.col_ok : g_theme.col_error, 0.95f);
+        for (const FenceRing& ring : rings[kind]) {
+            // Along the ground, a run at a time: a point without terrain, or behind
+            // the camera, ends one. A ring seen whole is closed.
+            run.clear();
+            bool whole = true;
+            const auto flush = [&] {
+                map_dotted_polyline(dl, run.data(), (int)run.size(), false, col, 2.0f);
+                run.clear();
+            };
+            for (size_t e = 0; e < ring.size(); ++e) {
+                const FenceVertex& a = ring[e];
+                const FenceVertex& b = ring[(e + 1) % ring.size()];
+                const double len = geo_rough_distance_m(a.lat, a.lon, b.lat, b.lon);
+                const int    n   = std::clamp((int)std::ceil(len / STEP_M), 1, 200);
+                for (int k = 0; k < n; ++k) {
+                    const double t   = (double)k / n;
+                    const double lat = a.lat + (b.lat - a.lat) * t, lon = a.lon + (b.lon - a.lon) * t;
+                    ImVec2 s;
+                    const std::optional<float> g = terrain_amsl(lat, lon);
+                    if (g && f.screen(f.world(lat, lon, *g), s)) {
+                        run.push_back(s);
+                    } else {
+                        whole = false;
+                        flush();
+                    }
+                }
+            }
+            if (whole && !run.empty()) run.push_back(run.front());
+            flush();
+        }
+    }
 }
 
 } // namespace map3d_detail

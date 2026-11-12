@@ -57,7 +57,6 @@ enum class RxResult { Data, Quiet, Closed, Failed };
 
 // Process-wide socket setup. No-ops off Windows; safe to call repeatedly.
 void link_sockets_init();
-void link_sockets_cleanup();
 
 // A link as the UI sees it: enough to list it and to name it for disconnection,
 // with none of the machinery behind it. Lives here rather than with the fleet so

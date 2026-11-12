@@ -18,7 +18,7 @@
 // RC tab: helpers both the radio and the joystick sections use.
 
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
 #include "frontend/source/app_log.hpp"
 #include "frontend/source/audio.hpp"

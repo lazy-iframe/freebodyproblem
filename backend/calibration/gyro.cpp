@@ -17,6 +17,7 @@
 
 
 #include "backend/calibration/gyro.hpp"
+#include "lib/mav_result.hpp"
 
 void GyroCalibration::begin(double now)
 {
@@ -61,14 +62,6 @@ void GyroCalibration::tick(double now)
 
 const char* GyroCalibration::result_text() const
 {
-    switch (result_) {
-    case 0:  return "accepted";
-    case 1:  return "temporarily rejected";
-    case 2:  return "denied";
-    case 3:  return "unsupported";
-    case 4:  return "failed";
-    case 6:  return "cancelled";
-    case kNoResult: return "no reply from the vehicle";
-    default: return "rejected";
-    }
+    if (result_ == kNoResult) return "no reply from the vehicle";
+    return mav_result_text(result_);
 }

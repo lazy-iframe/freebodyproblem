@@ -15,9 +15,19 @@
  * limitations under the License.
  **************************************************************************/
 
+// lib/mav_result.hpp
+//
+// MAV_RESULT, the verdict a COMMAND_ACK carries, as words. Two forms: the
+// enum's own name for protocol traces, where it is matched against the spec,
+// and plain words for what the operator reads.
 
 #pragma once
-#include <deque>
-#include <string>
 
-void draw_bottombar(const std::deque<std::string>& log);
+#include <cstdint>
+
+// "ACCEPTED", "TEMPORARILY_REJECTED", …; "?" for a value the spec does not have.
+const char* mav_result_name(uint8_t result);
+
+// "accepted", "temporarily rejected", …; "rejected" for a value the spec does
+// not have, since anything but ACCEPTED and IN_PROGRESS is a refusal.
+const char* mav_result_text(uint8_t result);

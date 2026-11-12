@@ -19,11 +19,13 @@
 #include "frontend/elements/topbar.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "frontend/source/layout.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
 #include "imgui.h"
 #include "frontend/source/app_log.hpp"
 #include "backend/mavlink/timesync.hpp"
+#include "frontend/source/coord_format.hpp"
+#include "lib/text.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -195,22 +197,11 @@ static void draw_swarm_command_buttons(ImDrawList* dl, ImVec2 wp,
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Resolve the current custom_mode to a display name, preferring the vehicle's
-// own AVAILABLE_MODES list over the Copter-only table above.
+// The current mode's name (current_mode_name()), upper-cased as the bar's
+// chrome is.
 std::string mode_display_name(const VehicleState& vs)
 {
-    for (const FlightModeInfo& m : vs.available_modes) {
-        if (m.custom_mode == vs.custom_mode) {
-            std::string out = m.name;
-            for (char& c : out)
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            return out;
-        }
-    }
-    // No published list. Each stack's own table then — and it has to be the
-    // right one, because these numbers do not mean the same thing twice: a PX4
-    // custom_mode is a packed main/sub pair, not a flat ArduCopter number.
-    return firmware_profile(vs).mode_short_name(vs.custom_mode, vs.type);
+    return text_upper(current_mode_name(vs));
 }
 
 static const char* link_status_text(LinkStatus s)
@@ -290,9 +281,7 @@ void draw_topbar(const VehicleState& vs,
         char clk_s[16];
         if (have_boot_time) {
             const int64_t boot_ns = timesync_monotonic_ns() + vs.time_offset_ns;
-            const int     clk     = (int)(boot_ns > 0 ? boot_ns / 1000000000 : 0);
-            snprintf(clk_s, sizeof(clk_s), "%02d:%02d:%02d",
-                     clk / 3600, (clk / 60) % 60, clk % 60);
+            snprintf(clk_s, sizeof(clk_s), "%s", text_hms(boot_ns / 1000000000).c_str());
         } else {
             // No exchange has completed, so there is no reading to show. A
             // zeroed clock would be a lie that ticks.
@@ -497,9 +486,7 @@ void draw_topbar(const VehicleState& vs,
         {
             char v[48];
             if (vs.has_global_pos)
-                snprintf(v, sizeof(v), "%.5f%c %.5f%c",
-                         vs.lat < 0 ? -vs.lat : vs.lat, vs.lat < 0 ? 'S' : 'N',
-                         vs.lon < 0 ? -vs.lon : vs.lon, vs.lon < 0 ? 'W' : 'E');
+                snprintf(v, sizeof(v), "%s", format_lat_lon(vs.lat, vs.lon, 5).c_str());
             else
                 snprintf(v, sizeof(v), "-- / --");
             cell("POSITION", v, C_LABEL, vs.has_global_pos ? C_TEXT : C_DIM, 2);

@@ -17,7 +17,7 @@
 
 
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/app_log.hpp"
 #include "frontend/source/settings.hpp"
 #include "backend/vehicle/sensor_inventory.hpp"

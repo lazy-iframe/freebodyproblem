@@ -22,8 +22,10 @@
 // shows. Both name their file through the app's file browser.
 
 #include "frontend/components/sidebar_left/params/params_internal.hpp"
-#include "frontend/components/file_dialog.hpp"
+#include "frontend/components/others/file_dialog.hpp"
 #include "frontend/source/param_file.hpp"
+#include "backend/vehicle/sensor_inventory.hpp"
+#include <cctype>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -40,21 +42,12 @@ static ParamFileHeader file_header(const VehicleState* vs)
 
     h.sysid = vs->sysid ? vs->sysid : 1;
 
-    if (vs->autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) h.stack = "ArduPilot";
-    else if (vs->autopilot == MAV_AUTOPILOT_PX4)      h.stack = "PX4";
-
-    switch (vs->type) {
-    case MAV_TYPE_QUADROTOR:      h.vehicle = "Quadrotor";   break;
-    case MAV_TYPE_HEXAROTOR:      h.vehicle = "Hexarotor";   break;
-    case MAV_TYPE_OCTOROTOR:      h.vehicle = "Octorotor";   break;
-    case MAV_TYPE_TRICOPTER:      h.vehicle = "Tricopter";   break;
-    case MAV_TYPE_HELICOPTER:     h.vehicle = "Helicopter";  break;
-    case MAV_TYPE_FIXED_WING:     h.vehicle = "Fixed Wing";  break;
-    case MAV_TYPE_GROUND_ROVER:   h.vehicle = "Ground Rover";break;
-    case MAV_TYPE_SURFACE_BOAT:   h.vehicle = "Boat";        break;
-    case MAV_TYPE_SUBMARINE:      h.vehicle = "Submarine";   break;
-    case MAV_TYPE_ANTENNA_TRACKER:h.vehicle = "Antenna Tracker"; break;
-    default: break;
+    // The names the connection panel shows, the vehicle's capitalised as a
+    // heading is. Left out for a value the table does not know.
+    if (const char* stack = mav_autopilot_name(vs->autopilot)) h.stack = stack;
+    if (const char* type = mav_vehicle_type_name(vs->type)) {
+        h.vehicle = type;
+        h.vehicle[0] = (char)std::toupper((unsigned char)h.vehicle[0]);
     }
 
     if (vs->has_fw_info) {

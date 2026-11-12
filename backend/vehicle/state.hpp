@@ -156,7 +156,6 @@ struct VehicleState {
     // read it through vehicle_kind() (vehicle/kind.hpp), which falls back on
     // the type until then.
     VehicleKind   banner_kind   = VehicleKind::Unknown;
-    MAV_STATE     mav_state     = MAV_STATE_UNINIT;
     uint32_t      custom_mode   = 0;
     bool          armed         = false;
     bool          has_heartbeat = false;
@@ -206,7 +205,6 @@ struct VehicleState {
     float   voltage_V         = 0;
     float   current_A         = 0;
     int8_t  battery_remaining = -1;
-    uint16_t load_pct         = 0;
     bool    has_sys_status    = false;
 
     // Estimator health, from whichever message the stack reports it in:

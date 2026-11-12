@@ -78,7 +78,6 @@ public:
                     ++unsigned_dropped_;
                     continue;
                 }
-                ++total_messages_;
                 ++parsed;
                 cb(static_cast<const mavlink_message_t&>(msg));
             } else if (result == MAVLINK_FRAMING_BAD_SIGNATURE) {
@@ -107,9 +106,7 @@ public:
                 //
                 // The id is readable either way: it comes out of the header,
                 // which is parsed before the CRC is checked.
-                if (mavlink_get_msg_entry(msg.msgid) == nullptr)
-                    ++unknown_msgs_;
-                else
+                if (mavlink_get_msg_entry(msg.msgid) != nullptr)
                     ++parse_errors_;
             }
         }
@@ -118,15 +115,10 @@ public:
     }
 
     uint64_t total_bytes()    const { return total_bytes_;    }
-    uint64_t total_messages() const { return total_messages_; }
 
     // Frames that failed their CRC and carried a message this build knows.
     // This is the one that means something is wrong with the link.
     uint64_t parse_errors()   const { return parse_errors_;   }
-
-    // Well-formed frames skipped for carrying a message this dialect does not
-    // define. Not an error — nothing is lost that this GCS could have used.
-    uint64_t unknown_msgs()   const { return unknown_msgs_;   }
 
     // Check signatures on this framer, with this connection's key. Left unset where
     // what is fed in is not live traffic.
@@ -184,7 +176,5 @@ private:
     bool              stale_pending_    = false;
 
     uint64_t total_bytes_    = 0;
-    uint64_t total_messages_ = 0;
     uint64_t parse_errors_   = 0;
-    uint64_t unknown_msgs_   = 0;
 };

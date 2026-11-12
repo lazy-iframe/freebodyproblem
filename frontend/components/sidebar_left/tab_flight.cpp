@@ -19,9 +19,10 @@
 #include "frontend/components/sidebar_left/sidebar_internal.hpp"
 #include "backend/vehicle/firmware_profile.hpp"
 #include "frontend/source/vehicle_ui_state.hpp"
-#include "frontend/components/sidebar_themes.hpp"
+#include "frontend/components/others/sidebar_themes.hpp"
 #include "frontend/source/app_log.hpp"
 #include "backend/input/rc_binding.hpp"
+#include "lib/text.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -135,12 +136,7 @@ void draw_ekf_bars(const VehicleState& vs, float bar_h, bool small_labels)
 // tracking ui_grid_button draws with, or the fit would be off.
 static std::string mode_button_label(const std::string& name, float button_w)
 {
-    std::string out;
-    out.reserve(name.size());
-    for (char c : name) {
-        out.push_back(static_cast<char>(
-            std::toupper(static_cast<unsigned char>(c))));
-    }
+    std::string out = text_upper(name);
     if (out.empty()) return "?";
 
     const float budget = button_w - ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -197,13 +193,6 @@ struct ModeGroup {
     std::vector<ModeBtn>   modes;
 };
 
-static std::string to_upper(std::string s)
-{
-    for (char& c : s)
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    return s;
-}
-
 static bool target_connected(const FlightTarget& t)
 {
     return t.vs && t.vs->has_heartbeat;
@@ -232,7 +221,7 @@ static std::vector<ModeGroup> collect_modes(const std::vector<FlightTarget>& tar
 
         const auto add = [&](const std::string& raw, uint32_t mode,
                              uint8_t standard_mode, bool advanced) {
-            const std::string name = to_upper(raw);
+            const std::string name = text_upper(raw);
             for (ModeBtn& b : g->modes) {
                 if (b.name != name) continue;
                 // A vehicle reporting two modes of one name gets the first:
@@ -335,23 +324,17 @@ void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_tar
         if (target_connected(targets[i])) any_connected = true;
     }
 
-    ImGui::Spacing();
-    ImGui::TextColored(accent_col(), "FLIGHT");
-    if (name_targets) {
-        // Who the buttons below will reach, always in view. A batch command
-        // aimed at the wrong set is the one mistake this section can make that
-        // the single-vehicle tab cannot.
-        ImGui::SameLine(0, 6);
-        if (targets.empty())
-            ImGui::TextColored(col_no_link_muted(), "\xe2\x86\x92 NO VEHICLES CHECKED");
-        else
-            ImGui::TextColored(col_ok(), "\xe2\x86\x92%s", target_numbers(targets, all).c_str());
-    } else if (!any_connected) {
-        ImGui::SameLine(0, 6);
-        ImGui::TextColored(col_no_link_muted(), "(no link)");
+    // Who the buttons below will reach, always in view when there are several.
+    // A batch command aimed at the wrong set is the one mistake this section
+    // can make that the single-vehicle tab cannot.
+    if (name_targets && !targets.empty()) {
+        const std::string note = "\xe2\x86\x92" + target_numbers(targets, all);
+        ui_tab_heading("FLIGHT", note.c_str(), col_ok());
+    } else if (name_targets) {
+        ui_tab_heading("FLIGHT", "\xe2\x86\x92 NO VEHICLES CHECKED");
+    } else {
+        ui_tab_heading("FLIGHT", any_connected ? nullptr : "(no link)");
     }
-    themed_sep();
-    ImGui::Spacing();
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, FRAME_BORDER_NORMAL);
@@ -432,7 +415,7 @@ void draw_flight_section(const std::vector<FlightTarget>& targets, bool name_tar
         if (groups.size() > 1) {
             if (g > 0) ImGui::Spacing();
             ImGui::TextColored(col_no_link_muted(), "%s",
-                               to_upper(grp.prof->name()).c_str());
+                               text_upper(grp.prof->name()).c_str());
         }
 
         for (size_t i = 0; i < grp.modes.size(); ++i) {
@@ -653,11 +636,6 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                                  aux_search, sizeof(aux_search));
         ImGui::Spacing();
 
-        // Upper-case search string for case-insensitive matching
-        char srch_up[64] = {};
-        for (int k = 0; k < 63 && aux_search[k]; ++k)
-            srch_up[k] = (char)toupper((unsigned char)aux_search[k]);
-
         const float aux_list_h = ImGui::GetContentRegionAvail().y;
         ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_child_dark());
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   FRAME_ROUNDING_SM);
@@ -680,14 +658,11 @@ void draw_tab_flight(MavlinkSender* sender, const VehicleState* vs)
                 if (!fn.supported(fw)) continue;
 
                 // Search filter — match on name or numeric ID
-                if (srch_up[0] != '\0') {
-                    char name_up[64] = {};
-                    for (int k = 0; k < 63 && fn.label[k]; ++k)
-                        name_up[k] = (char)toupper((unsigned char)fn.label[k]);
+                if (aux_search[0] != '\0') {
                     char id_str[8];
                     snprintf(id_str, sizeof(id_str), "%u", (unsigned)fn.value);
-                    if (strstr(name_up, srch_up) == nullptr &&
-                        strstr(id_str, srch_up) == nullptr) continue;
+                    if (!text_icontains(fn.label, aux_search) &&
+                        !text_icontains(id_str, aux_search)) continue;
                 }
 
                 ImGui::PushID(i);

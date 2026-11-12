@@ -380,7 +380,6 @@ void gcs_progress(const char* channel, float fraction)
 }
 
 void audio_set_enabled(bool on) { g_enabled.store(on); }
-bool audio_enabled()            { return g_enabled.load(); }
 
 void audio_set_volume(float v)
 {
@@ -389,4 +388,3 @@ void audio_set_volume(float v)
     g_volume.store(v);
 }
 
-float audio_volume() { return g_volume.load(); }

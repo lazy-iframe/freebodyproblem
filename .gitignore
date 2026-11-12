@@ -10,3 +10,7 @@ frontend/components/sidebar_left/mavlink_display_generated.cpp
 frontend/components/sidebar_left/mavlink_display_generated.hpp
 frontend/components/sidebar_left/mavlink_field_catalog_generated.cpp
 frontend/components/sidebar_left/mavlink_field_catalog_generated.hpp
+
+# Python bytecode
+__pycache__/
+*.pyc

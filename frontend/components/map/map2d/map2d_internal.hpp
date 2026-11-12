@@ -90,7 +90,7 @@ struct MapFrame {
     ImVec2 to_screen(double plat, double plon) const
     {
         double px, py;
-        map_detail::lat_lon_to_tile_frac(plat, plon, g_map.zoom, px, py);
+        geo_to_tile(plat, plon, g_map.zoom, px, py);
         return { wp.x + (float)(px * TILE_PX - tl_px),
                  wp.y + (float)(py * TILE_PX - tl_py) };
     }
@@ -100,7 +100,7 @@ struct MapFrame {
     {
         const double tx = ((double)(p.x - wp.x) + tl_px) / TILE_PX;
         const double ty = ((double)(p.y - wp.y) + tl_py) / TILE_PX;
-        map_detail::tile_frac_to_lat_lon(tx, ty, g_map.zoom, plat, plon);
+        geo_from_tile(tx, ty, g_map.zoom, plat, plon);
     }
 
     // The mission to draw: the live edit vector while there is one, so the map
@@ -108,6 +108,17 @@ struct MapFrame {
     const std::vector<MissionItem>* shown_mission() const
     {
         return (pick && pick->edit_mission) ? pick->edit_mission : mission;
+    }
+
+    // The uploaded fence zones to draw, by both views: the fence editor's plan
+    // while it has one, else the active vehicle's fence as last downloaded,
+    // converted into `scratch`. nullptr for neither.
+    const FencePlan* shown_fence(FencePlan& scratch) const
+    {
+        if (pick && pick->edit_fence) return pick->edit_fence;
+        if (!fence || fence->empty()) return nullptr;
+        scratch = fence_from_items(*fence);
+        return &scratch;
     }
 };
 
@@ -126,9 +137,6 @@ void in_draw_order(const MapFrame& f, Fn&& fn)
     for (const MapVehicle& mv : *f.draw_list) if (!mv.active) fn(mv);
     for (const MapVehicle& mv : *f.draw_list) if ( mv.active) fn(mv);
 }
-
-// The vehicle every other panel is showing, from the map's fleet list.
-const MapVehicle* active_vehicle(const std::vector<MapVehicle>* fleet);
 
 // ── input.cpp ─────────────────────────────────────────────────────────────────
 

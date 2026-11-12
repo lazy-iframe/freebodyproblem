@@ -20,6 +20,7 @@
 // The GO HERE and CLEAR menus the map opens at the pointer, from either view.
 
 #include "frontend/components/map/map2d/map2d_internal.hpp"
+#include "frontend/source/coord_format.hpp"
 #include "frontend/source/terrain_clearance.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -60,14 +61,12 @@ static void push_menu_style()
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    { 8.0f, 6.0f });
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      { 6.0f, 4.0f });
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     { 5.0f, 2.0f });
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, g_theme.bg_panel);
-    ImGui::PushStyleColor(ImGuiCol_Border,  ui_col(g_theme.accent, 0.55f));
+    ui_push_popup_frame();
 }
 static void pop_menu_style()
 {
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(4);
+    ui_pop_popup_frame();
+    ImGui::PopStyleVar(3);
 }
 
 // `active` and `mission` put the target in height for the terrain check: the
@@ -85,13 +84,10 @@ void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
         // what other tools paste. It says COPIED for a moment so the click is
         // seen to land.
         {
-            char coords[80];
-            snprintf(coords, sizeof(coords), "%.6f%c  %.6f%c",
-                     s_ctx_lat < 0 ? -s_ctx_lat : s_ctx_lat, s_ctx_lat < 0 ? 'S' : 'N',
-                     s_ctx_lon < 0 ? -s_ctx_lon : s_ctx_lon, s_ctx_lon < 0 ? 'W' : 'E');
+            const std::string coords = format_lat_lon(s_ctx_lat, s_ctx_lon, 6, "  ");
             const bool  copied = ImGui::GetTime() - s_ctx_copied_at < 1.2;
-            const char* shown  = copied ? "COPIED" : coords;
-            const ImVec2 sz = ImGui::CalcTextSize(coords);
+            const char* shown  = copied ? "COPIED" : coords.c_str();
+            const ImVec2 sz = ImGui::CalcTextSize(coords.c_str());
             const ImVec2 p  = ImGui::GetCursorScreenPos();
             if (ImGui::InvisibleButton("##ctx_coords", sz)) {
                 char clip[64];
@@ -134,11 +130,7 @@ void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
         // stays live — the terrain data is ~30 m SRTM, and the operator may
         // know the ground better than it does.
         if (active && active->has_pos && active->has_alt) {
-            std::optional<float> reported;
-            if (active->has_home_alt) reported = active->home_alt_amsl;
-            const std::optional<float> home =
-                plan_home_amsl(reported, active->has_home ? &active->home_lat : nullptr,
-                               active->has_home ? &active->home_lon : nullptr, mission);
+            const std::optional<float> home = plan_home_amsl(active, mission);
             if (home) {
                 const Clearance c = path_clearance(active->lat, active->lon, active->alt_amsl,
                                                    s_ctx_lat, s_ctx_lon, *home + s_goto_alt_m);

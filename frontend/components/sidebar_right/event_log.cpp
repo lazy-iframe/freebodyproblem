@@ -25,10 +25,11 @@
 #include "frontend/source/vehicle_ui_state.hpp"
 #include "frontend/source/layout.hpp"
 #include "frontend/source/theme.hpp"
-#include "frontend/components/ui_kit.hpp"
+#include "frontend/components/others/ui_kit.hpp"
 #include "imgui.h"
 #include "frontend/components/sidebar_left/mavlink_field_catalog_generated.hpp"
 #include "frontend/source/settings.hpp"
+#include "lib/text.hpp"
 #include <vector>
 #include <cstdio>
 #include <cstring>
@@ -70,7 +71,6 @@ static std::unordered_map<VehicleId, FleetLogCursor, VehicleIdHash> g_fleet_log_
 
 static std::string wall_stamp()
 {
-    char stamp[16];
     const std::time_t t = std::time(nullptr);
     std::tm            lt{};
 #ifdef _WIN32
@@ -78,9 +78,7 @@ static std::string wall_stamp()
 #else
     localtime_r(&t, &lt);
 #endif
-    snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d",
-             lt.tm_hour, lt.tm_min, lt.tm_sec);
-    return stamp;
+    return text_hms(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec);
 }
 
 static void fleet_log_trim()
