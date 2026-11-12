@@ -228,6 +228,15 @@ void draw_goto_marker(const MapFrame& f)
         if (f.has_pos)
             dl->AddLine(f.to_screen(f.lat, f.lon), tp, map_amber_u32(0.45f), 1.5f);
     }
+
+    // The point the open GO HERE menu is for, so dragging the menu shows where
+    // it is being moved to: a ring with a dot, lighter than a target sent.
+    if (ImGui::IsPopupOpen("##map_go")) {
+        const ImVec2 pp = f.to_screen(s_ctx_lat, s_ctx_lon);
+        constexpr float R = 7.0f;
+        dl->AddCircle(pp, R, map_amber_u32(0.9f), 0, 1.5f);
+        dl->AddCircleFilled(pp, 2.0f, map_amber_u32(0.9f));
+    }
 }
 
 // ── Pick-mode / EDIT hint banner ──────────────────────────────────────────────

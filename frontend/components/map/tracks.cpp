@@ -52,12 +52,19 @@ constexpr size_t TRACK_MAX_POINTS = 6000;
 
 void map_track_pump(const VehicleState& vs)
 {
+    VehicleTrack& track = g_tracks.by_vehicle[ui_bound_vehicle()];
+    if (vs.has_heartbeat) {
+        if (track.armed_known && !track.armed && vs.armed) track.pts.clear();
+        track.armed       = vs.armed;
+        track.armed_known = true;
+    }
+
     if (!vs.has_global_pos)              return;
     // A fix the vehicle has not got yet reads as the origin, and a trail
     // through Null Island is worse than no trail.
     if (vs.lat == 0.0 && vs.lon == 0.0)  return;
 
-    auto& pts = g_tracks.by_vehicle[ui_bound_vehicle()].pts;
+    auto& pts = track.pts;
     // Height counts as movement too: the 3D view draws the climb out of a
     // vertical takeoff, which never moves the aircraft across the ground.
     if (!pts.empty() &&

@@ -245,7 +245,7 @@ void goto_and_clear_clicks(const MapFrame& f)
     if (go && !pick_active && map_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
         ImGui::OpenPopup("##map_clear");
     if (go) {
-        draw_goto_menu(*go, active_vehicle(f.fleet), f.shown_mission());
+        draw_goto_menu(*go, active_vehicle(f.fleet), f.shown_mission(), &f);
         draw_clear_menu(*go);
     }
 }

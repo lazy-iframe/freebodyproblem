@@ -169,7 +169,7 @@ inline constexpr float GOTO_ALT_MIN_M = -10000.0f;
 inline constexpr float GOTO_ALT_MAX_M = 10000.0f;
 
 void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
-                    const std::vector<MissionItem>* mission);
+                    const std::vector<MissionItem>* mission, const MapFrame* flat = nullptr);
 void draw_clear_menu(GotoTargetState& go);
 
 // ── chrome.cpp ────────────────────────────────────────────────────────────────

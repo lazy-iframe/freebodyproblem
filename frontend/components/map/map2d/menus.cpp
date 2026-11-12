@@ -22,6 +22,7 @@
 #include "frontend/components/map/map2d/map2d_internal.hpp"
 #include "frontend/source/coord_format.hpp"
 #include "frontend/source/terrain_clearance.hpp"
+#include "imgui_internal.h"   // GImGui->MovingWindow: a drag, told from ImGui placing the popup itself
 #include <algorithm>
 #include <cstdio>
 #include <optional>
@@ -69,17 +70,45 @@ static void pop_menu_style()
     ImGui::PopStyleVar(3);
 }
 
+// In the flat map the menu carries its point: dragged by its body, the point
+// moves with it across the map, for setting it more finely than a click put
+// it. Measured from where the drag began rather than added up frame by frame,
+// so a long drag does not drift. Only a drag the operator makes moves it —
+// ImGui also places a popup itself, to keep it on screen, and that is not one.
+static void drag_point_with_menu(const MapFrame& f)
+{
+    static bool   s_dragging = false;
+    static ImVec2 s_start_menu, s_start_point;
+
+    const ImVec2 pos    = ImGui::GetWindowPos();
+    const bool   moving = GImGui->MovingWindow == ImGui::GetCurrentWindow();
+    if (moving && !s_dragging) {
+        s_dragging    = true;
+        s_start_menu  = pos;
+        s_start_point = f.to_screen(s_ctx_lat, s_ctx_lon);
+    } else if (!moving) {
+        s_dragging = false;
+    }
+    if (s_dragging)
+        f.to_lat_lon({ s_start_point.x + (pos.x - s_start_menu.x),
+                       s_start_point.y + (pos.y - s_start_menu.y) }, s_ctx_lat, s_ctx_lon);
+}
+
 // `active` and `mission` put the target in height for the terrain check: the
 // target's altitude is above home, and home's AMSL comes from them by the
-// planning rule of plan_home_amsl().
+// planning rule of plan_home_amsl(). `flat` is the 2D map's frame, for
+// dragging the point with the menu; the 3D view passes none, as its point is
+// picked in place and height and a drag across the screen would lose that.
 void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
-                    const std::vector<MissionItem>* mission)
+                    const std::vector<MissionItem>* mission, const MapFrame* flat)
 {
     constexpr float ROW_H = 22.0f;
 
     push_menu_style();
     if (ImGui::BeginPopup("##map_go", ImGuiWindowFlags_AlwaysAutoResize |
                                       ImGuiWindowFlags_NoTitleBar)) {
+        if (flat) drag_point_with_menu(*flat);
+
         // The point, as a heading. Click to copy, as signed decimal degrees —
         // what other tools paste. It says COPIED for a moment so the click is
         // seen to land.
@@ -123,6 +152,7 @@ void draw_goto_menu(GotoTargetState& go, const MapVehicle* active,
                 ImGui::TextUnformatted(home_dist.c_str());
                 ImGui::PopStyleColor();
             }
+            if (flat) ImGui::TextDisabled("Drag this menu to move the point");
         }
 
         // The straight line from the vehicle to the target, against the

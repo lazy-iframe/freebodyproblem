@@ -169,6 +169,11 @@ bool draw_fallback_tile(ImDrawList* dl,
 // tracks.cpp
 struct VehicleTrack {
     std::deque<TrackPoint> pts;
+    // The arm state last heard, to clear the trail when the vehicle arms: a
+    // new flight starts a new trail. Unknown until the first heartbeat, so
+    // connecting to a vehicle already armed keeps what it has.
+    bool armed_known = false;
+    bool armed       = false;
 };
 
 // Every vehicle's trail, not just the bound one's — the map draws the whole
