@@ -179,7 +179,7 @@ Both get the usual `ctx` plus the gesture:
 ```cpp
 void gcs_camera_start(const char* url);      // rtsp://… or udp://host:port
 void gcs_camera_stop();
-bool gcs_camera_snapshot(const char* path);  // current frame → PNG
+bool gcs_camera_snapshot(const char* path);  // current frame → PNG; a relative path lands in <save folder>/snapshots
 ```
 
 ## Rules

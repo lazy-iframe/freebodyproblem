@@ -29,7 +29,9 @@
 void file_dialog_open(const FileDialogSpec& spec, const std::string& last_path)
 {
     IGFD::FileDialogConfig cfg;
-    if (!last_path.empty())
+    if (!spec.filters)
+        cfg.path = last_path.empty() ? "." : last_path;
+    else if (!last_path.empty())
         cfg.filePathName = last_path;   // IGFD splits this into path + name
     else
         cfg.fileName = spec.default_name;
@@ -54,8 +56,11 @@ bool file_dialog_poll(const char* key, std::string& path_out)
     if (ImGuiFileDialog::Instance()->Display(key, ImGuiWindowFlags_NoCollapse,
                                              { 640.0f, 420.0f })) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
+            // Empty when it is a folder being chosen: that one is the folder
+            // selected, or the one being browsed when none is.
             path_out = ImGuiFileDialog::Instance()->GetFilePathName();
-            ok = true;
+            if (path_out.empty()) path_out = ImGuiFileDialog::Instance()->GetCurrentPath();
+            ok = !path_out.empty();
         }
         ImGuiFileDialog::Instance()->Close();
     }

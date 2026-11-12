@@ -332,12 +332,17 @@ void draw_topbar(const VehicleState& vs,
             // symbol carries on the map and its row carries in the switcher.
             // Looked up here rather than read off VehicleState: the number is
             // the GCS's own bookkeeping, not something the aircraft reports.
-            uint32_t chip_num = 0;
+            uint32_t    chip_num  = 0;
+            const char* chip_name = "";
             for (const auto& v : vehicles)
-                if (v.id == active) { chip_num = v.number; break; }
+                if (v.id == active) { chip_num = v.number; chip_name = v.name; break; }
 
-            char id_s[32];
-            if (vs.has_heartbeat && chip_num != 0)
+            // A name the operator gave it stands in for the sysid: it is what
+            // they know the aircraft by, and the switcher still lists both.
+            char id_s[48];
+            if (vs.has_heartbeat && chip_num != 0 && chip_name[0])
+                snprintf(id_s, sizeof(id_s), "(%u) %s", (unsigned)chip_num, chip_name);
+            else if (vs.has_heartbeat && chip_num != 0)
                 snprintf(id_s, sizeof(id_s), "(%u) SYS%d\xc2\xb7%d",
                          (unsigned)chip_num, (int)vs.sysid, (int)vs.compid);
             else if (vs.has_heartbeat)

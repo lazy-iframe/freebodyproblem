@@ -60,14 +60,55 @@ int64_t now_ns()
 } // namespace
 
 
-Vehicle::Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number)
+// "v1_sys1", or "v1_sys1_alpha" for a vehicle with a name. The number and sysid
+// stay in beside the name because they are what keeps two logs apart: nothing
+// stops an operator calling two aircraft the same thing. Only what is safe in a
+// file name anywhere is let through.
+static std::string tlog_stem(uint32_t number, uint8_t sysid, const std::string& name)
+{
+    std::string s = "v" + std::to_string(number) + "_sys" + std::to_string(sysid);
+    if (name.empty()) return s;
+    s += '_';
+    for (const char c : name) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                        (c >= 'A' && c <= 'Z') || c == '-' || c == '_';
+        s += ok ? c : '_';
+    }
+    return s;
+}
+
+Vehicle::Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number, std::string name)
     : id_(id)
     , number_(number)
     , autopilot_compid_(autopilot_compid)
     , parser_(id.sysid, autopilot_compid)
-{}
+    , tlog_(Tlog::open(tlog_stem(number, id.sysid, name)))
+    , name_(std::move(name))
+{
+    sender_.set_tlog(tlog_.get());
+}
 
-Vehicle::~Vehicle() { stop(); }
+Vehicle::~Vehicle()
+{
+    stop();
+    tlog_->close();
+}
+
+std::string Vehicle::name() const
+{
+    std::lock_guard<std::mutex> lk(name_mtx_);
+    return name_;
+}
+
+void Vehicle::set_name(const std::string& name)
+{
+    {
+        std::lock_guard<std::mutex> lk(name_mtx_);
+        if (name_ == name) return;
+        name_ = name;
+    }
+    tlog_->rename(tlog_stem(number_, id_.sysid, name));
+}
 
 void Vehicle::start()
 {
@@ -89,6 +130,8 @@ void Vehicle::stop()
 
 void Vehicle::deliver(const mavlink_message_t& msg)
 {
+    tlog_->add(msg);
+
     bool first_drop = false;
     {
         std::lock_guard<std::mutex> lk(inbox_mtx_);
@@ -148,6 +191,7 @@ VehicleChip Vehicle::chip() const
     VehicleChip c;
     c.id     = id_;
     c.number = number_;
+    std::snprintf(c.name, sizeof(c.name), "%s", name().c_str());
     c.compid = autopilot_compid_;
     c.stale  = stale();
     {

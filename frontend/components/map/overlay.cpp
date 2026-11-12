@@ -250,8 +250,9 @@ void map_draw_vehicle_tags(ImDrawList* dl, ImVec2 centre, float above, const Map
                      agl < 0.0f ? g_theme.col_error : col_ok(), A);
         bottom -= ts.y + 2.0f;
     }
-    char lbl[32];
-    snprintf(lbl, sizeof(lbl), "(%u) SYS %u", (unsigned)mv.number, (unsigned)mv.sysid);
+    char lbl[48];
+    if (mv.name[0]) snprintf(lbl, sizeof(lbl), "(%u) %s", (unsigned)mv.number, mv.name);
+    else            snprintf(lbl, sizeof(lbl), "(%u) SYS %u", (unsigned)mv.number, (unsigned)mv.sysid);
     const ImVec2 ls = map_tag_size(lbl);
     map_draw_tag(dl, { centre.x - ls.x * 0.5f, bottom - ls.y * 0.5f }, lbl, col_ok(), A);
 }

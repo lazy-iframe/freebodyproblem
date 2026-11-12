@@ -162,7 +162,7 @@ static void draw_vehicle_list(ConnectionRequest* conn_out,
         ImGui::PushID((int)v.id.link_id);
         ImGui::PushID((int)v.id.sysid);
 
-        const float  text_w = ImGui::GetContentRegionAvail().x - btn_w * 2.0f - 4.0f - 6.0f;
+        const float  text_w = ImGui::GetContentRegionAvail().x - btn_w * 3.0f - 8.0f - 6.0f;
         const ImVec2 r0     = ImGui::GetCursorScreenPos();
         ImGui::Dummy({ text_w, row_h });
         ui_vehicle_row(v, v.id == active_vehicle, r0, { r0.x + text_w, r0.y + row_h },
@@ -175,6 +175,42 @@ static void draw_vehicle_list(ConnectionRequest* conn_out,
         // it anyway, but the button should not offer what the vehicle will
         // decline. Not while silent either — the command would go nowhere.
         const bool can_reboot = v.has_heartbeat && !v.armed && !v.stale;
+
+        // A name of the operator's own — "alpha", "bravo" — shown wherever the
+        // vehicle is labelled and put in its telemetry log's file name. Kept to
+        // letters, digits, space, dash and underscore: it has to survive
+        // being part of a file name on every platform.
+        ImGui::SameLine(0, 4);
+        static char s_name[VEHICLE_NAME_MAX + 1];
+        if (ui_grid_button("NAME", { btn_w, row_h })) {
+            snprintf(s_name, sizeof(s_name), "%s", v.name);
+            ImGui::OpenPopup("##name_vehicle");
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Call vehicle %u something of your own", (unsigned)v.number);
+        ui_push_popup_frame();
+        if (ImGui::BeginPopup("##name_vehicle")) {
+            ImGui::TextDisabled("NAME FOR VEHICLE %u (empty for none)", (unsigned)v.number);
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            ImGui::SetNextItemWidth(220.0f);
+            const auto name_chars = [](ImGuiInputTextCallbackData* d) -> int {
+                const ImWchar c = d->EventChar;
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       c == ' ' || c == '-' || c == '_' ? 0 : 1;
+            };
+            const bool entered = ImGui::InputText("##name", s_name, sizeof(s_name),
+                                                  ImGuiInputTextFlags_EnterReturnsTrue |
+                                                  ImGuiInputTextFlags_CallbackCharFilter,
+                                                  name_chars);
+            ImGui::SameLine(0, 4);
+            if (ui_grid_button("SET", { 0.0f, 0.0f }) || entered) {
+                conn_out->rename_vehicle = v.id;
+                snprintf(conn_out->rename_to, sizeof(conn_out->rename_to), "%s", s_name);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ui_pop_popup_frame();
 
         ImGui::SameLine(0, 4);
         ImGui::BeginDisabled(!can_reboot);

@@ -16,6 +16,8 @@
  **************************************************************************/
 
 
+#include <filesystem>
+#include "frontend/source/cache_dir.hpp"
 #include "frontend/elements/center_view.hpp"
 #include "frontend/source/layout.hpp"
 #include "frontend/components/others/ui_kit.hpp"
@@ -851,9 +853,17 @@ bool gcs_camera_snapshot(const char* path)
         rgb = s_vp.frame_data;
     }
 
-    if (!stbi_write_png(path, w, h, 3, rgb.data(), w * 3)) {
-        gcs_log("snapshot: write failed (%s)", path);
+    // A bare file name goes in the operator's snapshot folder; a path that says
+    // where it wants to be is taken at its word.
+    std::filesystem::path out(path);
+    if (out.is_relative()) out = std::filesystem::path(save_dir("snapshots")) / out;
+    std::error_code ec;
+    std::filesystem::create_directories(out.parent_path(), ec);
+
+    if (!stbi_write_png(out.string().c_str(), w, h, 3, rgb.data(), w * 3)) {
+        gcs_log("snapshot: write failed (%s)", out.string().c_str());
         return false;
     }
+    gcs_log("snapshot: %s", out.string().c_str());
     return true;
 }

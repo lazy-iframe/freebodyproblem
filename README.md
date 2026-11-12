@@ -123,6 +123,7 @@ This GCS is designed for UAV professionals and enthusiasts already familiar with
 - **Real-time vehicle state**: attitude, GPS, altitude, speed, battery, EKF health
 - **HUD**: a full-panel flight display — horizon edge to edge, a ±60° roll arc, and moving tapes for ground speed (left), heading (top) and altitude (right) — or the classic attitude ball, chosen separately for the main view and the swarm cards in the settings tab
 - **MAVLink inspector**: live message stream viewer with field-level decoding for all message types
+- **Telemetry logs**: every message to and from each vehicle recorded to a `.tlog` in a folder you choose, one file per vehicle carrying its name, readable by Mission Planner, MAVProxy, QGroundControl and pymavlink
 - **Parameter management**: fetch, search, edit, and write parameters, each with its ArduPilot Copter, ArduPilot Plane or PX4 documentation one click away and an editor that fits its type — dropdowns for enums, hex and checkboxes for bitmasks
 - **Parameter files**: save and load the `.params` format Mission Planner and QGroundControl use, picking per-parameter what a loaded file may change, then **WRITE ALL** to upload every staged edit in one go
 - **Flight modes**: quick mode switching with visual feedback (ArduCopter/Plane/Rover/Sub)
@@ -568,6 +569,14 @@ usable as a name — two airframes fresh off the bench both answer to 1 — so t
 number is what the chip, the switcher rows and the symbols on the map all agree
 on. Numbers are freed when a vehicle goes, so a fleet of three reads 1, 2, 3
 rather than climbing all session.
+
+**Naming a vehicle.** In the **CONNECTION** tab's **VEHICLES** list, **NAME**
+gives an aircraft a name of your own — `alpha`, `bravo` — up to 16 letters,
+digits, spaces, dashes and underscores. The chip, the map label and the swarm
+card then read `(1) alpha` in place of the sysid, the switcher rows show both,
+and the vehicle's telemetry log carries the name in its file name. A name is
+remembered for that sysid on that connection, so it is there the next time the
+aircraft is heard; an empty name takes it away.
 
 Everything follows the selection: telemetry, parameters, mission, radio,
 sensors, the inspector and the map. Panel state does not — a calibration or a
@@ -1231,6 +1240,33 @@ abandoned with a log line if the link drops.
   <a href="screens/mavlink.png"><img src="screens/mavlink.png" alt="MAVLINK tab" width="260"></a>
 </p>
 
+### Telemetry Logs
+
+Every vehicle gets a `.tlog` from the moment it is discovered until its link is
+disconnected: each MAVLink frame it sent and each frame sent to it, exactly as it
+crossed the link, stamped with the time it did. It is the format Mission Planner,
+MAVProxy, QGroundControl and pymavlink (`mavlogdump.py`, MAVExplorer) read.
+
+- One file per vehicle per connection, named for when it started and who it is:
+  `2026-11-12_16-05-33_v1_sys1.tlog` is vehicle (1), system ID 1. A vehicle you
+  have named carries the name too, `…_v1_sys1_alpha.tlog`, and a log being
+  written is renamed when its vehicle is
+- Written once a second, so a crash or a pulled plug loses at most the last second
+- Turn it off or on in **SETTINGS → FILES → Telemetry logs**; it takes effect at once
+- Nothing is ever deleted. A telemetry radio fills about 20 MB an hour and a
+  fast UDP link several times that, so clear the folder out now and then
+
+Logs go in the `tlogs` folder of the save folder, which **SETTINGS → FILES →
+CHANGE** moves to anywhere you pick; **DEFAULT** puts it back. Video snapshots
+go in `snapshots` beside it, and the parameter file browser starts there. A log
+already being written stays where it is; the next one goes to the new folder.
+
+| Platform | Default save folder |
+|----------|--------|
+| Linux    | `$XDG_DATA_HOME/freebodyproblem`, or `~/.local/share/freebodyproblem` |
+| macOS    | `~/Documents/freebodyproblem` |
+| Windows  | `Documents\freebodyproblem` |
+
 ### Video Streaming
 1. Navigate to the **VIDEO** area
 2. Enter stream URL:
@@ -1507,6 +1543,7 @@ the serial handle, drains them.
 - **mavlink/**: MAVLink wire protocol: framing, decoding, sending, signing, clock sync. **Every message received is decoded by `MavlinkParser` and every message sent is packed by `MavlinkSender`**; nothing else in the GCS touches the wire
   - **framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
   - **parser/**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system. `parser.cpp` dispatches each message to a handler in the file for its family: `telemetry.cpp`, `params.cpp`, `modes.cpp`, `commands.cpp`, `mission.cpp`
+  - **tlog.cpp**: The telemetry log — each vehicle's frames, both ways, copied into memory as they pass and written to its `.tlog` by one background thread, so no link thread waits on a disk
   - **sender/**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds. `sender.cpp` holds the queue, transport, signing, ACK feedback and retries; `commands.cpp`, `params.cpp` and `mission.cpp` the messages themselves
 - **mission/**: The mission protocol's logic, link-free: fed decoded messages, it says what the vehicle loop should send
   - **types.hpp**: `MissionItem` and `FenceParams`
@@ -1605,7 +1642,7 @@ Code that more than one part of the app needs and that belongs to none of them. 
 ```
 freebodyproblem/
 ├── backend/              # Links, vehicles, MAVLink parsing, command queue
-│   ├── mavlink/          # Wire protocol: framer, signing, timesync
+│   ├── mavlink/          # Wire protocol: framer, signing, timesync, telemetry log
 │   │   ├── parser/       # Every message received is decoded here
 │   │   └── sender/       # Every message sent is packed here
 │   ├── mission/          # Mission protocol logic: download, watch, geofence
@@ -1649,10 +1686,17 @@ safe — tiles are refetched on demand.
 Each map source caches in its own folder there, except Google with an API key, whose tiles are
 not written to disk.
 
+Telemetry logs and video snapshots go to the save folder, in `tlogs` and `snapshots`:
+`$XDG_DATA_HOME`/`~/.local/share/freebodyproblem` on Linux, `~/Documents/freebodyproblem`
+on macOS and `Documents\freebodyproblem` on Windows, unless `save_dir` names another.
+Nothing clears that folder but you.
+
 Settings contents:
 - **Active theme**: Selected color scheme
 - **Custom themes**: User-defined color palettes
 - **Map source**: `tile_provider` (0 Esri, 1 OpenStreetMap, 2 Google, 3 Custom, 4 Sentinel-2, 5 NASA GIBS), `tile_kind` (0 satellite, 1 hybrid, 2 terrain), `tile_gibs_layer` and `tile_gibs_date`, `tile_key_esri`, `tile_key_google` and `tile_key_custom`, with `tile_url` and `tile_attribution` for the custom source. Keys are stored in plain text
+- **Files**: `save_dir`, the save folder, empty for the default, and `tlog_enabled`, default on. Both set in **SETTINGS → FILES**
+- **Vehicle names**: `vehicle_names`, link and sysid (`udp:0.0.0.0:14550/1`) → the name given in the **CONNECTION** tab's **VEHICLES** list
 - **Video URL**: Last used stream source
 - **Joystick**: `joystick_profiles`, one per device GUID: calibration, stick and button bindings, virtual channels and RC override bindings
 - **MCP server**: `mcp_enabled`, `mcp_port` (default 8737), `mcp_token`, `mcp_actions_enabled`, `mcp_auto_allow` (action name → runs without asking) and `mcp_instructions` — all set from the SETTINGS tab's **ASSISTANT (MCP)** section, and read by the `freebodyproblem-mcp` adapter for the port and token
@@ -1681,6 +1725,7 @@ Example `settings.json`:
 - **Parallel per-vehicle work**: framing is cheap and stays on the link thread; the message dispatch, parameter table, mission state and protocol timers run per vehicle and overlap, so a slow conversation with one aircraft does not hold up another
 - **One message copy at the hand-off**: a framed message is copied once into the owning vehicle's inbox. The inbox is bounded, and a vehicle that falls far enough behind to drop from it says so in the log rather than losing telemetry silently
 - **Rate-capped snapshots**: each vehicle publishes its state at ~20 Hz rather than on every datagram, and the UI copies only the vehicle on screen
+- **Telemetry logging off the hot path**: recording a frame is a clock read and a copy into memory, some tens of nanoseconds; one background thread writes every vehicle's log once a second, so a slow disk costs log records, never telemetry
 - **Threaded tile fetching**: Map tiles load asynchronously without blocking the render loop
 - **Exponential moving average rates**: Message rate display decays gracefully when telemetry stops
 - **Parameter retransmit logic**: Automatically re-requests dropped PARAM_VALUE packets after 2s stall

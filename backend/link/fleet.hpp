@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -54,6 +55,16 @@ public:
     std::vector<VehicleChip>              chips()    const;
     std::vector<LinkInfo>                 links()    const;
 
+    // What the operator calls each vehicle, kept from one connection to the
+    // next. Keyed by vehicle_key(): the link's name and the sysid, the same pair
+    // a vehicle is told apart by, so two aircraft that both answer to sysid 1 on
+    // different links do not end up sharing a name.
+    static std::string vehicle_key(const std::string& link_name, uint8_t sysid);
+    void set_names(std::map<std::string, std::string> names);
+    // Names one vehicle, or with an empty name un-names it. Returns its key for
+    // the caller to save the name under, empty if there is no such vehicle.
+    std::string rename(VehicleId id, const std::string& name);
+
     std::shared_ptr<Vehicle> active() const;
     void                     set_active(VehicleId id);
     VehicleId                active_id() const;
@@ -74,13 +85,14 @@ private:
 
     // Called on a link thread when a message arrives for a sysid with no vehicle
     // yet. Creates one only for a heartbeat from a real autopilot.
-    std::shared_ptr<Vehicle> route(const mavlink_message_t& msg, uint32_t link_id);
+    std::shared_ptr<Vehicle> route(const mavlink_message_t& msg, const Link& link);
 
     void retune_tones();   // only the active vehicle makes noise
 
     mutable std::mutex mtx_;
     std::vector<std::shared_ptr<LinkSlot>> links_;
     std::unordered_map<VehicleId, std::shared_ptr<Vehicle>, VehicleIdHash> vehicles_;
+    std::map<std::string, std::string> names_;   // under mtx_; see set_names()
 
     std::atomic<uint32_t> next_link_id_{1};
     std::atomic<uint32_t> last_link_id_{0};

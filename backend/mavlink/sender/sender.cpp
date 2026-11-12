@@ -17,6 +17,7 @@
 
 #include "backend/mavlink/sender/sender.hpp"
 #include "backend/mavlink/signing.hpp"
+#include "backend/mavlink/tlog.hpp"
 
 #ifdef _WIN32
 #  include <winsock2.h>
@@ -112,9 +113,16 @@ void MavlinkSender::drain(Write write)
     // the vehicle hears them. See signing.hpp. A frame the transport refuses is signed
     // afresh on its next try.
     signing::LinkKey* const link = signing_link_.load(std::memory_order_relaxed);
+    //
+    // Logged here too, and only once sent: the telemetry log holds what went on the
+    // wire, signature and all, not what was meant to.
     const auto send = [&](const std::vector<uint8_t>& frame) {
-        return signing::sign_frame(link, frame, signed_frame_) ? write(signed_frame_)
-                                                               : write(frame);
+        const std::vector<uint8_t>& wire =
+            signing::sign_frame(link, frame, signed_frame_) ? signed_frame_ : frame;
+        const auto written = write(wire);
+        if (tlog_ && frame_sent((int)written, wire.size()))
+            tlog_->add(wire.data(), wire.size());
+        return written;
     };
 
     if (!manual_frame_.empty() &&

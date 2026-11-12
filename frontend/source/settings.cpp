@@ -415,6 +415,13 @@ void settings_load(AppSettings& out)
 
     if (root.contains("gcs_sysid") && root["gcs_sysid"].is_number_integer())
         out.gcs_sysid = std::clamp(root["gcs_sysid"].get<int>(), 0, 255);
+    if (root.contains("tlog_enabled") && root["tlog_enabled"].is_boolean())
+        out.tlog_enabled = root["tlog_enabled"].get<bool>();
+    if (root.contains("save_dir") && root["save_dir"].is_string())
+        out.save_dir = root["save_dir"].get<std::string>();
+    if (root.contains("vehicle_names") && root["vehicle_names"].is_object())
+        for (const auto& [key, name] : root["vehicle_names"].items())
+            if (name.is_string()) out.vehicle_names[key] = name.get<std::string>();
 
     if (root.contains("terrain_clearance_m") && root["terrain_clearance_m"].is_number())
         out.terrain_clearance_m = std::clamp(root["terrain_clearance_m"].get<float>(), 0.0f, 1000.0f);
@@ -487,6 +494,9 @@ void settings_save(const AppSettings& s)
     root["grid_cells"] = jcells;
 
     root["gcs_sysid"]           = s.gcs_sysid;
+    root["tlog_enabled"]        = s.tlog_enabled;
+    root["save_dir"]            = s.save_dir;
+    root["vehicle_names"]       = s.vehicle_names;
     root["terrain_clearance_m"] = s.terrain_clearance_m;
     root["terrain_url"]         = s.terrain_url;
     root["terrain_encoding"]    = s.terrain_encoding;

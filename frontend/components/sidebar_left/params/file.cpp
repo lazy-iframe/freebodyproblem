@@ -21,6 +21,8 @@
 // the differences for review before staging any; SAVE writes what the list
 // shows. Both name their file through the app's file browser.
 
+#include <filesystem>
+#include "frontend/source/cache_dir.hpp"
 #include "frontend/components/sidebar_left/params/params_internal.hpp"
 #include "frontend/components/others/file_dialog.hpp"
 #include "frontend/source/param_file.hpp"
@@ -77,19 +79,24 @@ void draw_param_file(const VehicleState* vs,
     // an absolute path is a thing to find, not to remember and retype. What is
     // kept between presses is only the last file touched, which seeds the
     // browser so a save after a load lands next to what was loaded.
-    static std::string s_param_path = "parameters.params";
+    // Until then it is the operator's save folder (SETTINGS, FILES).
+    static std::string s_param_path;
+    const auto seed = [&] {
+        return !s_param_path.empty() ? s_param_path
+             : (std::filesystem::path(save_dir()) / "parameters.params").string();
+    };
 
     ImGui::TextDisabled("PARAM FILE");
     {
         const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
 
         if (ui_grid_button("LOAD", { half, 24.0f }))
-            file_dialog_open(LOAD_DLG, s_param_path);
+            file_dialog_open(LOAD_DLG, seed());
 
         ImGui::SameLine(0, 4);
 
         if (ui_grid_button("SAVE", { -1.0f, 24.0f }))
-            file_dialog_open(SAVE_DLG, s_param_path);
+            file_dialog_open(SAVE_DLG, seed());
     }
 
     // ── The two browsers ──────────────────────────────────────────────────────

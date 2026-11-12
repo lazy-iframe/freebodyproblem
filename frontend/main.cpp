@@ -72,6 +72,8 @@
 #include "backend/vehicle/vehicle.hpp"
 #include "backend/link/fleet.hpp"
 #include "backend/mavlink/signing.hpp"
+#include "backend/mavlink/tlog.hpp"
+#include "frontend/source/cache_dir.hpp"
 
 #include <filesystem>
 #include "backend/mcp/mcp_server.hpp"
@@ -430,6 +432,8 @@ static void render_ui()
             MapVehicle mv;
             mv.id      = v->id();
             mv.number  = v->number();
+            const std::string vname = v->name();
+            snprintf(mv.name, sizeof(mv.name), "%s", vname.c_str());
             mv.sysid   = v->sysid();   // from the id, so it is set before the first snapshot
             mv.lat     = vsnap.state.lat;
             mv.lon     = vsnap.state.lon;
@@ -458,7 +462,7 @@ static void render_ui()
 
             if (swarm)
                 g_swarm_fleet.push_back({ v, std::move(vsnap.state), v->number(),
-                                          link_up && !v->stale() });
+                                          link_up && !v->stale(), vname });
         }
 
         // Fleet::vehicles() comes out of a hash map, so the order changes as
@@ -645,6 +649,10 @@ int main()
     map_view_set_icon_style((MapIconStyle)g_settings.map_icon_style);
     set_terrain_clearance_m(g_settings.terrain_clearance_m);
     MavlinkSender::set_gcs_sysid((uint8_t)g_settings.gcs_sysid);
+    save_dir_set(g_settings.save_dir);
+    Tlog::set_dir(save_dir("tlogs"));
+    g_fleet.set_names(g_settings.vehicle_names);
+    Tlog::set_enabled(g_settings.tlog_enabled);
     terrain_set_source(g_settings.terrain_url, (TerrainEncoding)g_settings.terrain_encoding,
                        g_settings.terrain_attribution);
     if (!theme_lookup(g_settings, g_settings.active_theme, g_theme)) {
@@ -783,6 +791,17 @@ int main()
                 gcs_log("reboot requested for vehicle (%u) sys%u",
                         (unsigned)v->number(), (unsigned)v->sysid());
                 break;
+            }
+        }
+
+        if (g_conn_req.rename_vehicle.valid()) {
+            // Fleet holds the name for the session; settings hold it for the next.
+            const std::string name = g_conn_req.rename_to;
+            const std::string key  = g_fleet.rename(g_conn_req.rename_vehicle, name);
+            if (!key.empty()) {
+                if (name.empty()) g_settings.vehicle_names.erase(key);
+                else              g_settings.vehicle_names[key] = name;
+                settings_save(g_settings);
             }
         }
 

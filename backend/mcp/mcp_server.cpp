@@ -184,6 +184,7 @@ json telemetry_json(const Vehicle& v, const VehicleSnapshot& s)
     const VehicleState& vs = s.state;
     json j = {
         {"vehicle",   v.number()},
+        {"name",      v.name()},
         {"sysid",     v.sysid()},
         {"autopilot", firmware_profile(vs).name()},
         {"type",      type_name(vs.type)},
@@ -1070,7 +1071,7 @@ struct McpTools {
         const VehicleId active = s.fleet_.active_id();
         json out = json::array();
         for (const auto& c : s.fleet_.chips()) {
-            json row = { {"vehicle", c.number}, {"sysid", c.id.sysid},
+            json row = { {"vehicle", c.number}, {"name", c.name}, {"sysid", c.id.sysid},
                          {"link", c.link_name}, {"armed", c.armed},
                          {"stale", c.stale}, {"selected", c.id == active} };
             for (const auto& v : s.fleet_.vehicles()) {

@@ -597,9 +597,15 @@ void ui_vehicle_row(const VehicleChip& v, bool is_active, ImVec2 rmin, ImVec2 rm
     // Led by the GCS's own number for this vehicle, the same "(2)" its symbol
     // carries on the map — which is what makes two rows reading SYS1 tellable
     // apart at a glance, rather than only by the link name on the line below.
-    char row[48];
-    snprintf(row, sizeof(row), "(%u) SYS%d\xc2\xb7%d",
-             (unsigned)v.number, (int)v.id.sysid, (int)v.compid);
+    // A vehicle the operator has named leads with the name, and keeps the sysid
+    // after it: this row is where a name is matched to an aircraft.
+    char row[72];
+    if (v.name[0])
+        snprintf(row, sizeof(row), "(%u) %s  SYS%d\xc2\xb7%d",
+                 (unsigned)v.number, v.name, (int)v.id.sysid, (int)v.compid);
+    else
+        snprintf(row, sizeof(row), "(%u) SYS%d\xc2\xb7%d",
+                 (unsigned)v.number, (int)v.id.sysid, (int)v.compid);
     dl->AddText({ rmin.x + 4.0f, rmin.y + 1.0f },
                 is_active ? ui_col_accent() : ui_col(g_theme.col_text_on_dark),
                 row);

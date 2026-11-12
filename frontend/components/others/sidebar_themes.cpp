@@ -27,6 +27,9 @@
 #include "frontend/components/others/mcp_approval.hpp"
 #include "backend/mcp/mcp_server.hpp"
 #include "backend/mavlink/sender/sender.hpp"
+#include "backend/mavlink/tlog.hpp"
+#include "frontend/components/others/file_dialog.hpp"
+#include "frontend/source/cache_dir.hpp"
 #include "backend/vehicle/vehicle.hpp"
 #include "frontend/source/app_log.hpp"
 #include "imgui.h"
@@ -408,6 +411,58 @@ void draw_themes_panel(AppSettings& settings, const std::vector<VehicleChip>& ve
                                "joystick, RC override and GCS failsafe will not work.");
         else
             ImGui::TextDisabled("255 is the usual value, and what ArduPilot expects by default.");
+        ImGui::PopTextWrapPos();
+    }
+
+    section("FILES");
+
+    // ── Save folder ───────────────────────────────────────────────────────────
+    // One folder for everything the app saves on the operator's behalf, chosen
+    // in the file browser rather than typed.
+    {
+        static const FileDialogSpec DIR_DLG = { "save_dir_dlg", "SAVE FOLDER", nullptr, "",
+                                                /*for_save=*/false };
+        const auto apply = [&](const std::string& dir) {
+            settings.save_dir = dir;
+            save_dir_set(dir);
+            Tlog::set_dir(save_dir("tlogs"));
+            settings_save(settings);
+            gcs_log("saving to %s", save_dir().c_str());
+        };
+
+        ImGui::TextDisabled("Save folder");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(save_dir().c_str());
+        ImGui::PopTextWrapPos();
+
+        const float half = (ImGui::GetContentRegionAvail().x - 4.0f) * 0.5f;
+        if (ui_grid_button("CHANGE##save_dir", { half, 0.0f }))
+            file_dialog_open(DIR_DLG, save_dir());
+        ImGui::SameLine(0, 4);
+        ImGui::BeginDisabled(settings.save_dir.empty());
+        if (ui_grid_button("DEFAULT##save_dir", { -1.0f, 0.0f })) apply({});
+        ImGui::EndDisabled();
+
+        std::string chosen;
+        if (file_dialog_poll(DIR_DLG.key, chosen)) apply(chosen);
+
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Telemetry logs go in tlogs/ and video snapshots in snapshots/. "
+                            "A log already being written stays where it is.");
+        ImGui::PopTextWrapPos();
+    }
+
+    // ── Telemetry logs ────────────────────────────────────────────────────────
+    // Takes effect at once, on the vehicles already connected too.
+    {
+        bool on = settings.tlog_enabled;
+        if (ImGui::Checkbox("Telemetry logs (.tlog)", &on)) {
+            settings.tlog_enabled = on;
+            Tlog::set_enabled(on);
+            settings_save(settings);
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("One file per vehicle, every message both ways.");
         ImGui::PopTextWrapPos();
     }
 

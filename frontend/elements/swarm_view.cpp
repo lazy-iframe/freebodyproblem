@@ -284,9 +284,12 @@ static CardInput draw_card(const SwarmVehicle& v, ImVec2 p0, ImVec2 size,
 
     ImFont* const fm = g_font_micro ? g_font_micro : ImGui::GetFont();
     {
-        char title[32];
-        snprintf(title, sizeof(title), "#%u  SYS %u",
-                 (unsigned)v.number, (unsigned)v.vehicle->sysid());
+        char title[48];
+        if (!v.name.empty())
+            snprintf(title, sizeof(title), "#%u  %s", (unsigned)v.number, v.name.c_str());
+        else
+            snprintf(title, sizeof(title), "#%u  SYS %u",
+                     (unsigned)v.number, (unsigned)v.vehicle->sysid());
         ui_tracked_text(dl, fm, UI_SZ_MICRO,
                         { wp.x + CARD_PAD * 2.0f + CHECK_SZ + 2.0f,
                           wp.y + (CARD_HEAD_H - UI_SZ_MICRO) * 0.5f - 1.0f },

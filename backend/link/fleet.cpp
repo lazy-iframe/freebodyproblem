@@ -141,8 +141,41 @@ void Fleet::disconnect_all()
 
 // ── Routing ───────────────────────────────────────────────────────────────────
 
-std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t link_id)
+std::string Fleet::vehicle_key(const std::string& link_name, uint8_t sysid)
 {
+    return link_name + "/" + std::to_string(sysid);
+}
+
+void Fleet::set_names(std::map<std::string, std::string> names)
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    names_ = std::move(names);
+}
+
+std::string Fleet::rename(VehicleId id, const std::string& name)
+{
+    std::shared_ptr<Vehicle> v;
+    std::string key;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = vehicles_.find(id);
+        if (it == vehicles_.end()) return {};
+        v = it->second;
+        for (const auto& s : links_)
+            if (s->link && s->link->id() == id.link_id)
+                key = vehicle_key(s->link->name(), id.sysid);
+        if (key.empty()) return {};
+        if (name.empty()) names_.erase(key);
+        else              names_[key] = name;
+    }
+    // Outside the lock: this renames the vehicle's log file on disk.
+    v->set_name(name);
+    return key;
+}
+
+std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, const Link& link)
+{
+    const uint32_t link_id = link.id();
     const VehicleId vid{link_id, msg.sysid};
 
     {
@@ -188,7 +221,9 @@ std::shared_ptr<Vehicle> Fleet::route(const mavlink_message_t& msg, uint32_t lin
                            }))
             ++number;
 
-        created = std::make_shared<Vehicle>(vid, msg.compid, number);
+        const auto named = names_.find(vehicle_key(link.name(), msg.sysid));
+        created = std::make_shared<Vehicle>(vid, msg.compid, number,
+                                            named == names_.end() ? std::string() : named->second);
         vehicles_[vid] = created;
         first = (vehicles_.size() == 1);
     }
@@ -270,7 +305,7 @@ void Fleet::rx_loop(std::shared_ptr<LinkSlot> slot)
                     if (c->sysid() == msg.sysid) { v = c; break; }
 
                 if (!v) {
-                    v = route(msg, link.id());
+                    v = route(msg, link);
                     if (!v) return;
                     v->sender().set_signing_link(signing_link);
                     mine.push_back(v);

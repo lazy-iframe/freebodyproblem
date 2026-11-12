@@ -49,6 +49,11 @@ struct ConnectionRequest {
     // aircraft in the fleet, not only the one on screen.
     VehicleId reboot_vehicle{};
 
+    // Set for one frame when a vehicle in the VEHICLES list is given a name;
+    // an empty name takes its name away.
+    VehicleId rename_vehicle{};
+    char      rename_to[VEHICLE_NAME_MAX + 1] = {};
+
     // Set for one frame when SEND KEY (true) or STOP SIGNING (false) has been confirmed,
     // for any vehicle on the link whose signing section is open.
     VehicleId signing_vehicle{};

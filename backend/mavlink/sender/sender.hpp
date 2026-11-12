@@ -51,6 +51,7 @@ enum class CmdFlashState { Normal, Pending, Accepted, Rejected };
 // compid=190 (MissionPlanner).
 
 namespace signing { struct LinkKey; }
+class Tlog;
 
 class MavlinkSender {
 public:
@@ -340,6 +341,11 @@ public:
     // The connection this sender signs for. Nothing is signed until it is set.
     void set_signing_link(signing::LinkKey* link) { signing_link_.store(link, std::memory_order_relaxed); }
 
+    // Where each frame is recorded once the transport has taken it. Set before
+    // the sender is shared between threads, and left unset on one that belongs
+    // to no vehicle.
+    void set_tlog(Tlog* log) { tlog_ = log; }
+
     // How many reboots have been asked of this vehicle, from any panel. The
     // event log marks each one, so the operator can see where the messages
     // they asked for a restart after begin — whichever button did the asking.
@@ -543,6 +549,7 @@ private:
     mavlink_status_t                        tx_status_ {};
     std::atomic<signing::LinkKey*>          signing_link_ { nullptr };
     std::vector<uint8_t>                    signed_frame_;   // under mtx_; see drain()
+    Tlog*                                   tlog_ = nullptr;
     std::mutex                              tx_mtx_;
 
     mutable std::mutex                      mtx_;

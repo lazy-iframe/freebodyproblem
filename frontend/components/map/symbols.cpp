@@ -350,7 +350,8 @@ void draw_aircraft(ImDrawList* dl, ImVec2 c, const MapVehicle& mv,
     }
 
     // ── Label ────────────────────────────────────────────────────────────────
-    // "(2) SYS 1" — Fleet's number, then what the aircraft calls itself. The
+    // "(2) SYS 1" — Fleet's number, then what the aircraft calls itself, or
+    // "(2) ALPHA" once the operator has given it a name of their own. The
     // number is there because the sysid is not a name: two airframes fresh off
     // the bench both answer to 1, and the map would show two identical labels.
     // Under it, its height above the terrain data.

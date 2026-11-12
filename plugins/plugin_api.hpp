@@ -97,7 +97,9 @@ void gcs_camera_start(const char* url);
 // Tear the pipeline down and release the texture.
 void gcs_camera_stop();
 
-// Write the frame currently on screen to `path` as a PNG. Returns false when
+// Write the frame currently on screen to `path` as a PNG. A relative path lands
+// in the snapshots folder of the operator's save folder (SETTINGS, FILES), and
+// the full path is logged. Returns false when
 // nothing is streaming or the file could not be written (reason is logged).
 bool gcs_camera_snapshot(const char* path);
 

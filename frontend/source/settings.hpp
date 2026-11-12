@@ -129,6 +129,16 @@ struct AppSettings {
     // ── MAVLink ───────────────────────────────────────────────────────────────
     // The sysid this ground station sends as, 0 to 255.
     int gcs_sysid = 255;
+    // What the operator calls each vehicle, by Fleet::vehicle_key().
+    std::map<std::string, std::string> vehicle_names;
+
+    // ── Files ─────────────────────────────────────────────────────────────────
+    // Where telemetry logs and snapshots are saved; empty for the platform's
+    // default. See save_dir() in frontend/source/cache_dir.hpp.
+    std::string save_dir;
+    // Whether each vehicle's traffic is recorded to a .tlog; see
+    // backend/mavlink/tlog.hpp.
+    bool tlog_enabled = true;
 
     // ── Terrain ───────────────────────────────────────────────────────────────
     // The least height above the terrain data a planned path may come: a

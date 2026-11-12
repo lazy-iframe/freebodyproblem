@@ -49,6 +49,7 @@ struct SwarmVehicle {
     VehicleState             state;
     uint32_t                 number = 0;
     bool                     online = false;   // link up and heartbeat fresh
+    std::string              name;             // the operator's name for it, or empty
 };
 
 // Size the screen for this frame's fleet: the card column's width from the

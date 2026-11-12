@@ -41,7 +41,10 @@ struct FileDialogSpec {
     // (settings->ID == window->ID) the next time it writes imgui.ini.
     const char* key;
     const char* title;
-    const char* filters;        // ImGuiFileDialog's form: "Parameter files (*.params){.params},All files{.*}"
+    // ImGuiFileDialog's form: "Parameter files (*.params){.params},All files{.*}".
+    // Null to choose a folder instead of a file: `last_path` is then the folder
+    // to start in, and the poll hands back the folder chosen.
+    const char* filters;
     const char* default_name;   // the file offered when there is no last path
     bool        for_save;       // asks before overwriting
 };

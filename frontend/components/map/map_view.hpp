@@ -56,6 +56,7 @@ struct MapVehicle {
     VehicleId id;                 // keys this vehicle's trail
     uint32_t  number  = 0;        // Fleet's display number — the "(2)" in the label
     uint8_t   sysid   = 0;
+    char      name[VEHICLE_NAME_MAX + 1] = {};   // the operator's name for it, or empty
     double    lat     = 0.0;
     double    lon     = 0.0;
     bool      has_pos = false;

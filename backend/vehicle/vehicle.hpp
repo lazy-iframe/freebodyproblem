@@ -39,6 +39,7 @@
 
 #include "backend/mavlink/parser/parser.hpp"
 #include "backend/mavlink/sender/sender.hpp"
+#include "backend/mavlink/tlog.hpp"
 
 // Which vehicle, on which link.
 //
@@ -81,6 +82,9 @@ struct VehicleSnapshot {
     uint64_t parse_errors   = 0;
 };
 
+// The longest name an operator can give a vehicle, in bytes.
+constexpr size_t VEHICLE_NAME_MAX = 16;
+
 // The small, cheap view the vehicle switcher draws. Deliberately not a
 // VehicleSnapshot: the switcher renders one row per vehicle every frame, and a
 // snapshot carries the parameter table and the inspector's raw-message cache.
@@ -103,6 +107,8 @@ struct VehicleChip {
     // link names; a fixed buffer rather than a std::string because this is built
     // fresh for every vehicle on every frame.
     char      link_name[48] = {};
+    // What the operator calls it, empty until they have; see Vehicle::name().
+    char      name[VEHICLE_NAME_MAX + 1] = {};
 };
 
 // One vehicle, with the thread that talks to it.
@@ -116,7 +122,7 @@ struct VehicleChip {
 // the reading of another.
 class Vehicle {
 public:
-    Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number);
+    Vehicle(VehicleId id, uint8_t autopilot_compid, uint32_t number, std::string name = {});
     ~Vehicle();
 
     Vehicle(const Vehicle&)            = delete;
@@ -153,6 +159,12 @@ public:
     // of the object. Lowest-free rather than ever-increasing so a fleet of three
     // reads 1, 2, 3 rather than 1, 4, 7 after a morning of reconnects.
     uint32_t       number()  const { return number_; }
+    // What the operator calls this aircraft — "alpha", "bravo" — or empty when
+    // they have not said. Shown beside the number wherever the vehicle is
+    // labelled, and part of its telemetry log's file name. Given by Fleet, which
+    // remembers names from one connection to the next.
+    std::string    name() const;
+    void           set_name(const std::string& name);
     uint8_t        sysid()   const { return id_.sysid; }
     uint8_t        compid()  const { return autopilot_compid_; }
     // Fixed for the object's life: a vehicle is identified by the link it was
@@ -182,6 +194,13 @@ private:
 
     MavlinkParser parser_;
     MavlinkSender sender_;
+
+    // Every frame from this vehicle's system and every frame sent to it; see
+    // backend/mavlink/tlog.hpp.
+    const std::shared_ptr<Tlog> tlog_;
+
+    mutable std::mutex name_mtx_;
+    std::string        name_;
 
     // Inbox — link thread pushes, protocol thread drains.
     mutable std::mutex             inbox_mtx_;

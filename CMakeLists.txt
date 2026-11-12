@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.13)
 # assets/Info.plist.in. Has to be set before project(); ignored elsewhere.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(freebodyproblem VERSION 0.8.2 LANGUAGES CXX)
+project(freebodyproblem VERSION 0.8.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -440,6 +440,7 @@ add_executable(freebodyproblem MACOSX_BUNDLE
     backend/vehicle/reports.cpp
     backend/link/link.cpp
     backend/mavlink/signing.cpp
+    backend/mavlink/tlog.cpp
     backend/link/fleet.cpp
     backend/link/connection.cpp
     backend/calibration/rc.cpp

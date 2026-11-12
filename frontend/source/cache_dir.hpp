@@ -31,3 +31,19 @@
 // Nothing is created here: tile_disk_save() (lib/tile_fetch.hpp) makes the
 // folders a tile goes in as it saves it.
 std::string app_cache_dir(const char* name);
+
+// Where what the app saves for the operator goes: telemetry logs in tlogs/,
+// video snapshots in snapshots/, and where the parameter file browser starts.
+// Not under the cache: a tile can be fetched again and a flight cannot, so this
+// is somewhere nothing clears on its own. Unless the operator has chosen a
+// folder (SETTINGS, FILES):
+//   Windows   Documents\freebodyproblem
+//   macOS     ~/Documents/freebodyproblem
+//   elsewhere $XDG_DATA_HOME/freebodyproblem, else ~/.local/share/freebodyproblem
+// Falls back to the working directory. Folders are made by the first file saved.
+std::string app_default_save_dir();
+
+// The folder in use: `chosen`, or the default when that is empty. UI thread.
+void        save_dir_set(const std::string& chosen);
+// That folder, or the `sub` folder of it: save_dir("tlogs").
+std::string save_dir(const char* sub = nullptr);

@@ -62,6 +62,7 @@ export default defineConfig({
 						'guides/sensors',
 						'guides/video',
 						'guides/mavlink',
+						'guides/tlogs',
 						'guides/audio',
 						'guides/themes',
 						'guides/agents',

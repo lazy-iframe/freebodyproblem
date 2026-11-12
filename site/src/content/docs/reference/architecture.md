@@ -27,6 +27,7 @@ the serial handle, drains them.
 - **mavlink/**: MAVLink wire protocol: framing, decoding, sending, signing, clock sync. **Every message received is decoded by `MavlinkParser` and every message sent is packed by `MavlinkSender`**; nothing else in the GCS touches the wire
   - **framer.hpp**: Byte stream to whole messages, with the reassembly buffer held per link rather than in the library's per-channel globals, so links can frame concurrently
   - **parser/**: MAVLink message decoder with per-ID stats tracking; one per vehicle, and it accepts only that vehicle's system. `parser.cpp` dispatches each message to a handler in the file for its family: `telemetry.cpp`, `params.cpp`, `modes.cpp`, `commands.cpp`, `mission.cpp`
+  - **tlog.cpp**: The telemetry log — each vehicle's frames, both ways, copied into memory as they pass and written to its `.tlog` by one background thread, so no link thread waits on a disk
   - **sender/**: Command queue with ACK tracking and retransmit logic; one per vehicle, each keeping its own outgoing sequence counter, so there is no cap on how many vehicles the fleet holds. `sender.cpp` holds the queue, transport, signing, ACK feedback and retries; `commands.cpp`, `params.cpp` and `mission.cpp` the messages themselves
 - **mission/**: The mission protocol's logic, link-free: fed decoded messages, it says what the vehicle loop should send
   - **types.hpp**: `MissionItem` and `FenceParams`
@@ -125,7 +126,7 @@ Code that more than one part of the app needs and that belongs to none of them. 
 ```
 freebodyproblem/
 ├── backend/              # Links, vehicles, MAVLink parsing, command queue
-│   ├── mavlink/          # Wire protocol: framer, signing, timesync
+│   ├── mavlink/          # Wire protocol: framer, signing, timesync, telemetry log
 │   │   ├── parser/       # Every message received is decoded here
 │   │   └── sender/       # Every message sent is packed here
 │   ├── mission/          # Mission protocol logic: download, watch, geofence
